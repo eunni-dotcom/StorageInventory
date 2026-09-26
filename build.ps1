@@ -13,12 +13,14 @@
     Test     - Debug build, then the unit tests and the integration tests (including PowerShell parity)
     Bench    - Release build, then the C# benchmarks
     Publish  - self-contained single-file win-x64 Release build into dist\
+    Dotnet   - run any dotnet command in the repo-local environment, e.g. -Target Dotnet -DotnetArgs sln,list
 .EXAMPLE
     .\build.ps1 -Target Test
 #>
 param(
-    [ValidateSet('Build', 'Test', 'Publish', 'Bench')] [string] $Target = 'Build',
-    [string[]] $TestArgs = @()
+    [ValidateSet('Build', 'Test', 'Publish', 'Bench', 'Dotnet')] [string] $Target = 'Build',
+    [string[]] $TestArgs = @(),
+    [string[]] $DotnetArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $repo   = $PSScriptRoot
@@ -58,21 +60,24 @@ try {
     }
 
     switch ($Target) {
-        'Build' { Invoke-Dotnet build $sln -c Debug -nodeReuse:false }
+        'Dotnet' { Invoke-Dotnet @DotnetArgs }
+        'Build' { Invoke-Dotnet build $sln -c Debug '-nodeReuse:false' }
         'Test' {
-            Invoke-Dotnet build $sln -c Debug -nodeReuse:false
-            Invoke-Dotnet run --no-build -c Debug --project (Join-Path $repo 'tests\StorageInventory.Core.Tests') -- @TestArgs
-            Invoke-Dotnet run --no-build -c Debug --project (Join-Path $repo 'tests\StorageInventory.IntegrationTests') -- @TestArgs
+            Invoke-Dotnet build $sln -c Debug '-nodeReuse:false'
+            foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.IntegrationTests')) {
+                $dir = Join-Path $repo "tests\$testProject"
+                if (Test-Path -LiteralPath $dir) { Invoke-Dotnet run --no-build -c Debug --project $dir -- @TestArgs }
+            }
         }
         'Bench' {
-            Invoke-Dotnet build $sln -c Release -nodeReuse:false
+            Invoke-Dotnet build $sln -c Release '-nodeReuse:false'
             Invoke-Dotnet run --no-build -c Release --project (Join-Path $repo 'tests\StorageInventory.IntegrationTests') -- --benchmark @TestArgs
         }
         'Publish' {
             $dist = Join-Path $repo 'dist'
             Invoke-Dotnet publish (Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj') -c Release -r win-x64 `
-                --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
-                -o $dist -nodeReuse:false
+                --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=none' `
+                -o $dist '-nodeReuse:false'
             Get-ChildItem -LiteralPath $dist | Select-Object Name, Length | Format-Table -AutoSize
         }
     }
