@@ -1,20 +1,24 @@
 namespace StorageInventory.Core;
 
 /// <summary>
-/// One file, as read from the directory listing. Produced and written out one at a time; the scanner never keeps a
+/// One file, as read from the directory listing. Produced and handed on one at a time; the scanner never keeps a
 /// collection of these (the Files report is streamed).
 /// </summary>
+/// <remarks>
+/// Raw observation values only: timestamps are UTC (null when the stored value is not a valid date), sizes are bytes.
+/// Presentation (local time, KB/MB/GB, file-type category, the Excel formula guard) belongs to the report layer, so
+/// that a future snapshot format is never coupled to report columns.
+/// </remarks>
 public readonly record struct FileInventoryRecord(
     string FileName,
     string Extension,
-    string FileType,
     string RelativePath,
     string RelativeDirectory,
     string FullPath,
     long SizeBytes,
-    DateTime? CreatedLocal,
-    DateTime? ModifiedLocal,
-    DateTime? LastAccessLocal,
+    DateTime? CreatedUtc,
+    DateTime? ModifiedUtc,
+    DateTime? LastAccessUtc,
     FileAttributes Attributes);
 
 /// <summary>A row of the ScanErrors report.</summary>
@@ -51,8 +55,10 @@ public sealed record FolderInventoryRecord
     /// <summary>Share of the parent's total size, 0-100; null for the root.</summary>
     public double? PercentOfParent { get; init; }
 
-    public DateTime? CreatedLocal { get; init; }
-    public DateTime? ModifiedLocal { get; init; }
+    /// <summary>UTC; null when the stored value is not a valid date.</summary>
+    public DateTime? CreatedUtc { get; init; }
+    /// <summary>UTC; null when the stored value is not a valid date.</summary>
+    public DateTime? ModifiedUtc { get; init; }
     public required FileAttributes Attributes { get; init; }
 
     /// <summary>What happened to this folder itself.</summary>
