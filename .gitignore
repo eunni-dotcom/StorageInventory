@@ -1,0 +1,13 @@
+# downloaded toolchain (see tools/fetch-tools.ps1)
+tools/*
+!tools/fetch-tools.ps1
+
+# build output
+bin/
+obj/
+dist/
+artifacts/
+packages/
+TestResults/
+*.user
+.vs/
