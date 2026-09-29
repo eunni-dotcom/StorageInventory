@@ -65,11 +65,38 @@ public static class TestEnvironment
     public static ProcessResult RunTestLib(string code)
     {
         RequirePwsh();
-        var script = $". '{TestLib.Replace("'", "''")}'; $ErrorActionPreference = 'Continue'; {code}";
+        // UTF-8 console output, or non-ASCII names (Korean, emoji) in JSON results arrive as '?'.
+        var script = $"[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); . '{TestLib.Replace("'", "''")}'; $ErrorActionPreference = 'Continue'; {code}";
         return Run(Pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script);
     }
 
     public static string Quote(string s) => "'" + s.Replace("'", "''") + "'";
+
+    /// <summary>Removes a test tree created by this run. Plain trees are deleted directly; any tree containing a
+    /// reparse point (or a deny-ACL folder, which makes it unreadable) goes through TestLib's junction-safe remover.</summary>
+    public static void RemoveTree(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        if (!path.StartsWith(WorkRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Refusing to remove '{path}': not a test work folder.");
+        }
+
+        var stack = new Stack<DirectoryInfo>();
+        stack.Push(new DirectoryInfo(path));
+        while (stack.Count > 0)
+        {
+            FileSystemInfo[] items;
+            try { items = stack.Pop().GetFileSystemInfos(); }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException) { PhaseAFixture.Remove(path); return; }
+            foreach (var item in items)
+            {
+                if (item.Attributes.HasFlag(FileAttributes.ReparsePoint)) { PhaseAFixture.Remove(path); return; }
+                if (item is DirectoryInfo d) stack.Push(d);
+            }
+        }
+        Directory.Delete(path, recursive: true);
+    }
 
     public static bool CreateJunction(string link, string target)
     {
