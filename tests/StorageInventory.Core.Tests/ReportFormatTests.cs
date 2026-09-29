@@ -172,6 +172,30 @@ public static class ReportRunTests
     }
 
     [Test]
+    public static void CreateNew_refuses_if_the_output_folder_became_a_link()
+    {
+        var parent = NewFolder();
+        var target = NewFolder();
+        var output = Path.Combine(parent, "out");
+        try
+        {
+            Directory.CreateDirectory(output);
+            var run = ReportRun.Prepare(output, DateTime.Now);
+            Directory.Delete(output);
+            using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{output}\" \"{target}\"") { UseShellExecute = false, CreateNoWindow = true })!) p.WaitForExit();
+            Assert.True(File.GetAttributes(output).HasFlag(FileAttributes.ReparsePoint), "test could not create the junction");
+            Assert.Throws<IOException>(() => run.CreateNew(run.ErrorsCsv).Dispose());
+            Assert.Equal(0, Directory.GetFiles(target).Length, "nothing was written through the link");
+        }
+        finally
+        {
+            if (Directory.Exists(output)) Directory.Delete(output);   // removes the junction itself, never its target
+            Directory.Delete(parent, true);
+            Directory.Delete(target, true);
+        }
+    }
+
+    [Test]
     public static void Workbook_publish_never_replaces_an_existing_file()
     {
         var folder = NewFolder();

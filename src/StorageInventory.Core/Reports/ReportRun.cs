@@ -90,6 +90,11 @@ internal sealed class ReportRun
     public FileStream CreateNew(string path)
     {
         if (!IsOwnPathInOutputFolder(path)) throw new InvalidOperationException($"Internal safety check failed: refusing to create '{path}'.");
+        // Defence in depth: the folder was validated before the run, but must not have been swapped for a link since.
+        if (File.GetAttributes(OutputFolder).HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new IOException($"The report folder '{OutputFolder}' has become a link since it was checked; nothing was written.");
+        }
         var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, bufferSize: 1 << 20);
         _created.Add(path);
         return stream;
