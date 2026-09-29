@@ -16,9 +16,9 @@ See [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap
 | Path | What it is | Status |
 |---|---|---|
 | `powershell/` | `StorageInventory.ps1`, the hardened PowerShell implementation and **behavioural reference**, plus its regression suite | Phase A complete ([report](docs/phase-a-report.md)) |
-| `src/StorageInventory.Core/` | Native filesystem-observation engine (C#, .NET 10): path policy, enumeration, aggregation, reports | 1.0 in progress |
-| `src/StorageInventory.App/` | WPF application, a client of Core | 1.0, planned |
-| `tests/` | Core unit tests and integration tests, including parity with the PowerShell reference | 1.0 in progress |
+| `src/StorageInventory.Core/` | Native filesystem-observation engine (C#, .NET 10): path policy, enumeration, aggregation, reports | 1.0 complete ([parity](docs/native-parity-report.md), [security](docs/native-security-review.md)) |
+| `src/StorageInventory.App/` | WPF application, a client of Core | 1.0 complete ([release](docs/release.md)) |
+| `tests/` | Core unit tests, integration/parity/UI/security tests, release smoke test | 1.0 complete |
 | `docs/` | Architecture, roadmap, reports, benchmarks, security and release documentation | |
 
 ## Safety contract

@@ -77,7 +77,7 @@ try {
             $dist = Join-Path $repo 'dist'
             Invoke-Dotnet publish (Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj') -c Release -r win-x64 `
                 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=none' `
-                -o $dist '-nodeReuse:false'
+                '-p:EnableSingleFileAnalyzer=false' -o $dist '-nodeReuse:false'   # analyzer would need the extra Microsoft.NET.ILLink.Tasks package
             Get-ChildItem -LiteralPath $dist | Select-Object Name, Length | Format-Table -AutoSize
         }
     }

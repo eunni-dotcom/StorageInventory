@@ -18,5 +18,7 @@
     <!-- No package references anywhere: everything builds offline with the SDK alone. The only packages ever
          restored are Microsoft's runtime packs for a self-contained publish (see nuget.config). -->
     <DisableImplicitNuGetFallbackFolder>true</DisableImplicitNuGetFallbackFolder>
+    <!-- Don't pre-fetch runtime packs for frameworks we never use (e.g. ASP.NET Core) during a self-contained publish. -->
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
   </PropertyGroup>
 </Project>
