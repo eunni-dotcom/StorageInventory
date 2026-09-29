@@ -11,6 +11,13 @@ public static class TestEnvironment
 {
     public static string RepoRoot { get; } = FindRepoRoot();
     public static string Pwsh => Path.Combine(RepoRoot, "tools", "pwsh", "pwsh.exe");
+
+    /// <summary>The shell that runs the PowerShell reference for parity: the repo-local PowerShell 7 by default, or
+    /// SI_REFERENCE_SHELL=powershell for Windows PowerShell 5.1.</summary>
+    public static string ReferenceShell =>
+        string.Equals(Environment.GetEnvironmentVariable("SI_REFERENCE_SHELL"), "powershell", StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe")
+            : Pwsh;
     public static string ReferenceScript => Path.Combine(RepoRoot, "powershell", "StorageInventory.ps1");
     public static string TestLib => Path.Combine(RepoRoot, "powershell", "tests", "TestLib.ps1");
     public static string WorkRoot { get; } = Path.Combine(Path.GetTempPath(), "StorageInventoryTests");
