@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The WPF application: a client of StorageInventory.Core. It contains no scanning or path-safety logic. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>StorageInventory.App</RootNamespace>
+    <AssemblyName>StorageInventory</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyTitle>StorageInventory</AssemblyTitle>
+    <Description>Read-only storage inventory for Windows.</Description>
+    <!-- WPF's Fluent theme (ThemeMode) is marked experimental in the SDK. -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StorageInventory.Core\StorageInventory.Core.csproj" />
+  </ItemGroup>
+
+</Project>

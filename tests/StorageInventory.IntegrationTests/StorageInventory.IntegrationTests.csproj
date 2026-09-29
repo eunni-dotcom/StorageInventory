@@ -5,14 +5,21 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>StorageInventory.IntegrationTests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- UI tests host the real WPF app in-process (test code only). -->
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+    <!-- WPF projects drop System.IO from implicit usings (it clashes with System.Windows.Shapes.Path). -->
+    <Using Include="System.IO" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
+    <ProjectReference Include="..\..\src\StorageInventory.App\StorageInventory.App.csproj" />
   </ItemGroup>
 
 </Project>
