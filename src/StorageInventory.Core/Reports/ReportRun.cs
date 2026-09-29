@@ -69,6 +69,15 @@ internal sealed class ReportRun
         return run;
     }
 
+    /// <summary>The names of an already-finished run, for post-processing (the optional workbook). Nothing is
+    /// recorded as created, so this instance can only delete or rename files it creates itself.</summary>
+    public static ReportRun ForFinishedRun(string outputFolder, string runId)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(runId, @"^\d{8}_\d{6}_[0-9a-f]{6}$"))
+            throw new ArgumentException($"'{runId}' is not a StorageInventory run ID.", nameof(runId));
+        return new ReportRun(outputFolder, runId);
+    }
+
     /// <summary>Creates the output folder if it does not exist. Returns true if it was created.</summary>
     public bool EnsureOutputFolder()
     {
