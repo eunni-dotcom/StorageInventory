@@ -14,7 +14,7 @@ public static class UiSetupTests
     private static PhaseAFixture Fx => PhaseAFixture.Shared;
 
     private static string ScreenshotFolder =>
-        Environment.GetEnvironmentVariable("SI_SCREENSHOTS") is { Length: > 0 } dir ? dir : Path.Combine(TestEnvironment.WorkRoot, "screenshots");
+        Environment.GetEnvironmentVariable("SI_SCREENSHOTS") is { Length: > 0 } dir ? dir : Path.Combine(Fx.Base, "screenshots");   // removed with the shared fixture
 
     internal static (MainWindow Window, MainViewModel Vm) OpenWindow()
     {

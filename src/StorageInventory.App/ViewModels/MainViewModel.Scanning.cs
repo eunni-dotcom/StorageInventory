@@ -77,6 +77,7 @@ public sealed partial class MainViewModel
 
         Results = new ResultsViewModel(result, workbook, _scanClock.Elapsed);
         Stage = AppStage.Results;
+        if (result.Finished) _ = Results.Exploration.LoadAsync(result, CancellationToken.None);
         _scanCancellation?.Dispose();
         _scanCancellation = null;
         CommandManager.InvalidateRequerySuggested();

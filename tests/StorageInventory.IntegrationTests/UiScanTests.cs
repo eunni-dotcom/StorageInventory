@@ -11,7 +11,7 @@ public static class UiScanTests
     private static PhaseAFixture Fx => PhaseAFixture.Shared;
 
     private static string ScreenshotFolder =>
-        Environment.GetEnvironmentVariable("SI_SCREENSHOTS") is { Length: > 0 } dir ? dir : Path.Combine(TestEnvironment.WorkRoot, "screenshots");
+        Environment.GetEnvironmentVariable("SI_SCREENSHOTS") is { Length: > 0 } dir ? dir : Path.Combine(Fx.Base, "screenshots");   // removed with the shared fixture
 
     /// <summary>A tree big enough to take a few seconds: the kept 60k benchmark tree, else the fixture.</summary>
     private static string LargeTree

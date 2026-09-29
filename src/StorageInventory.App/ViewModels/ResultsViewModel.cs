@@ -1,4 +1,7 @@
+using System.IO;
+using System.Windows.Input;
 using StorageInventory.App.Mvvm;
+using StorageInventory.App.Services;
 using StorageInventory.Core;
 using StorageInventory.Core.Reports;
 
@@ -10,9 +13,19 @@ public sealed record TopFolderRow(string Folder, string Size, long SizeBytes, st
 /// <summary>What the finished screen shows. Built only from Core's <see cref="StorageScanResult"/>.</summary>
 public sealed class ResultsViewModel : ObservableObject
 {
-    public ResultsViewModel(StorageScanResult result, WorkbookExportResult? workbook, TimeSpan elapsed)
+    private string _actionStatus = "";
+
+    public ResultsViewModel(StorageScanResult result, WorkbookExportResult? workbook, TimeSpan elapsed, IReportOpener? opener = null)
     {
         Result = result;
+        var workbookPath = workbook?.State == WorkbookExportState.Created ? workbook.WorkbookPath : null;
+        _opener = opener ?? new ReportOpener(result, workbookPath);
+        OpenFilesReportCommand = new RelayCommand(() => Open(result.Reports?.FilesCsv), () => result.Finished);
+        OpenFoldersReportCommand = new RelayCommand(() => Open(result.Reports?.FoldersCsv), () => result.Finished);
+        OpenErrorsReportCommand = new RelayCommand(() => Open(result.Reports?.ErrorsCsv), () => result.Finished);
+        OpenReportFolderCommand = new RelayCommand(() => Open(result.OutputPath), () => result.Finished);
+        OpenWorkbookCommand = new RelayCommand(() => Open(workbookPath), () => workbookPath is not null);
+        HasWorkbook = workbookPath is not null;
         Workbook = workbook;
         Elapsed = Format.Elapsed(elapsed);
         (Headline, Explanation) = result.State switch
@@ -46,7 +59,35 @@ public sealed class ResultsViewModel : ObservableObject
         };
     }
 
+    private readonly IReportOpener _opener;
+
     public StorageScanResult Result { get; }
+    public ExplorationViewModel Exploration { get; } = new();
+
+    public ICommand OpenFilesReportCommand { get; }
+    public ICommand OpenFoldersReportCommand { get; }
+    public ICommand OpenErrorsReportCommand { get; }
+    public ICommand OpenReportFolderCommand { get; }
+    public ICommand OpenWorkbookCommand { get; }
+    public bool HasWorkbook { get; }
+
+    /// <summary>Feedback if a report could not be opened (never a silent failure).</summary>
+    public string ActionStatus { get => _actionStatus; private set { if (Set(ref _actionStatus, value)) OnPropertyChanged(nameof(HasActionStatus)); } }
+    public bool HasActionStatus => ActionStatus.Length > 0;
+
+    private void Open(string? path)
+    {
+        if (path is null) return;
+        try
+        {
+            _opener.Open(path);
+            ActionStatus = "";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        {
+            ActionStatus = $"Could not open '{path}': {ex.Message}";
+        }
+    }
     public WorkbookExportResult? Workbook { get; }
     public string Headline { get; }
     public string Explanation { get; }
