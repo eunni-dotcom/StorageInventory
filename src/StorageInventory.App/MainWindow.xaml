@@ -165,6 +165,111 @@
                     <AccessText Text="_Start scan" />
                 </Button>
             </StackPanel>
+            <!-- ============================== SCANNING ============================== -->
+            <StackPanel Grid.Row="1" Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" DataContext="{Binding}">
+                <Border Style="{StaticResource Card}" DataContext="{Binding Progress}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Scanning" />
+                        <TextBlock Text="{Binding Phase}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                   AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="{Binding Phase}" />
+                        <ProgressBar Height="6" Margin="0,0,0,18" IsIndeterminate="{Binding IsIndeterminate}" Value="{Binding PercentDone, Mode=OneWay}"
+                                     AutomationProperties.Name="Scan progress"
+                                     AutomationProperties.HelpText="Shows movement only; the total number of files is not known until the scan ends" />
+                        <UniformGrid Columns="3" Margin="0,0,0,8">
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Files found" />
+                                <TextBlock Text="{Binding Files}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Files, StringFormat='Files found: {0}'}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Folders found" />
+                                <TextBlock Text="{Binding Folders}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Folders, StringFormat='Folders found: {0}'}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Data found" />
+                                <TextBlock Text="{Binding Data}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Data, StringFormat='Data found: {0}'}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Could not read" />
+                                <TextBlock Text="{Binding Errors}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Errors, StringFormat='Items that could not be read: {0}'}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Links skipped" />
+                                <TextBlock Text="{Binding LinksSkipped}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding LinksSkipped, StringFormat='Links skipped: {0}'}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,14">
+                                <TextBlock Style="{StaticResource FactName}" Text="Elapsed" />
+                                <TextBlock Text="{Binding Elapsed}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Elapsed, StringFormat='Elapsed: {0}'}" />
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Style="{StaticResource FactName}" Text="Current folder" />
+                        <TextBlock Text="{Binding CurrentFolder}" TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentFolder}" />
+                    </StackPanel>
+                </Border>
+                <TextBlock Style="{StaticResource Secondary}" Margin="2,0,2,16"
+                           Text="Only names, sizes, dates and attributes are being read. Cancelling is safe: the report files are closed and clearly marked incomplete." />
+                <Button HorizontalAlignment="Right" MinWidth="160" Padding="20,8" Command="{Binding CancelScanCommand}"
+                        AutomationProperties.Name="Cancel scan">
+                    <AccessText Text="_Cancel scan" />
+                </Button>
+            </StackPanel>
+
+            <!-- ============================== RESULTS ============================== -->
+            <StackPanel Grid.Row="1" Visibility="{Binding IsResults, Converter={StaticResource BoolToVisibility}}">
+                <Border Style="{StaticResource Card}" DataContext="{Binding Results}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock FontFamily="{StaticResource IconFont}" FontSize="20" VerticalAlignment="Center" Text="{Binding Glyph}"
+                                       AutomationProperties.Name="{Binding Headline}" />
+                            <TextBlock Margin="10,0,0,0" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding Headline}"
+                                       AutomationProperties.LiveSetting="Assertive" AutomationProperties.Name="{Binding Headline}" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,14" Text="{Binding Explanation}" />
+                        <TextBlock FontWeight="SemiBold" Margin="0,0,0,6" Text="Counted before the scan stopped (partial, not totals):"
+                                   Visibility="{Binding CountsArePartial, Converter={StaticResource BoolToVisibility}}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Style="{StaticResource FactName}" Text="Files" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Files}" />
+                            <TextBlock Grid.Row="1" Style="{StaticResource FactName}" Text="Folders" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Folders}" />
+                            <TextBlock Grid.Row="2" Style="{StaticResource FactName}" Text="Total data" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding TotalData}" />
+                            <TextBlock Grid.Row="3" Style="{StaticResource FactName}" Text="Could not read" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Errors}" />
+                            <TextBlock Grid.Row="4" Style="{StaticResource FactName}" Text="Links skipped" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding LinksSkipped}" />
+                            <TextBlock Grid.Row="5" Style="{StaticResource FactName}" Text="Elapsed" />
+                            <TextBlock Grid.Row="5" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Elapsed}" />
+                            <TextBlock Grid.Row="6" Style="{StaticResource FactName}" Text="Completeness" />
+                            <TextBlock Grid.Row="6" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Completeness}" FontWeight="SemiBold" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,10,0,0" Text="{Binding WorkbookStatus}"
+                                   Visibility="{Binding HasWorkbookStatus, Converter={StaticResource BoolToVisibility}}" />
+                        <StackPanel Margin="0,12,0,0" Visibility="{Binding HasIncompleteArtifacts, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock FontWeight="SemiBold" TextWrapping="Wrap"
+                                       Text="These files were created by this run but are INCOMPLETE. They are not valid reports and are safe to delete:" />
+                            <ItemsControl ItemsSource="{Binding IncompleteArtifacts}" Margin="0,4,0,0" AutomationProperties.Name="Incomplete files">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBox Text="{Binding Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                                 FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Incomplete file" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Button HorizontalAlignment="Right" MinWidth="160" Padding="20,8" Command="{Binding NewScanCommand}" AutomationProperties.Name="New scan">
+                    <AccessText Text="_New scan" />
+                </Button>
+            </StackPanel>
         </Grid>
     </ScrollViewer>
 </Window>
