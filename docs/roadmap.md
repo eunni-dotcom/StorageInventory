@@ -9,7 +9,7 @@ The audited native replacement for the PowerShell reference.
 
 | Gate | Scope | Status |
 |---|---|---|
-| Phase A | Hardened PowerShell reference and regression suite | Done (`0eeb636`) |
+| Phase A | Hardened PowerShell reference and regression suite | Done (`2715dfa`) |
 | B0 | Repository reconciliation, Phase A report, build bootstrap | Done |
 | B1 | Core contracts and models | Done |
 | B2 | Safe paths and filesystem policy | Done |

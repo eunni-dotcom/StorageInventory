@@ -2,7 +2,7 @@
 
 **STATUS: PASS**
 
-The oracle is the hardened reference `powershell/StorageInventory.ps1` (Phase A, `0eeb636`), unmodified. Each parity
+The oracle is the hardened reference `powershell/StorageInventory.ps1` (Phase A, `2715dfa`), unmodified. Each parity
 test scans **the same tree** with both implementations and compares the reports:
 
 | Report | Comparison |

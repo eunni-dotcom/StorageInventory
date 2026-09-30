@@ -9,7 +9,8 @@ changed between observations and which volume they came from.
 - **`StorageInventory.Core` is the primary product.** It is a UI-independent .NET library.
 - **`StorageInventory.App` (WPF) is its first user-facing consumer.** It has no privileged access to anything.
 - **Other consumers** are expected to use Core's contracts rather than reimplement filesystem discovery: a future CLI,
-  downstream catalogue tools (the primary integration target) and other local data tools.
+  and downstream tools such as media catalogues or other local data tools that need an accurate picture of what
+  exists.
 
 StorageInventory is deliberately **ignorant of file contents**. It never opens, reads, hashes, previews or classifies
 files. Media understanding, duplicate judgement and organisation belong downstream (see
@@ -129,5 +130,5 @@ or file watchers) unless snapshot performance proves it necessary.
 
 ## Behavioural reference
 
-`powershell/StorageInventory.ps1` (Phase A, commit `0eeb636`) is the behavioural oracle. Native behaviour is proven
+`powershell/StorageInventory.ps1` (Phase A, commit `2715dfa`) is the behavioural oracle. Native behaviour is proven
 against it by parity tests on shared fixtures (Gate B6), and intentional differences are documented.

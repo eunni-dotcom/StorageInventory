@@ -2,7 +2,7 @@
 
 **STATUS: PASS**
 
-**Reference commit:** `0eeb636`, "Harden PowerShell reference implementation (Phase A)"
+**Reference commit:** `2715dfa`, "Harden PowerShell reference implementation (Phase A)"
 
 ## Implementation
 

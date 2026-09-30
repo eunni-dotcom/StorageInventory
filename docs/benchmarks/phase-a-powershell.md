@@ -1,6 +1,6 @@
 # Phase A benchmark: PowerShell reference implementation
 
-Measured on 2026-09-26 with `powershell/tests/Measure-Performance.ps1` at commit `0eeb636`.
+Measured on 2026-09-26 with `powershell/tests/Measure-Performance.ps1` at commit `2715dfa`.
 
 ## Environment
 
