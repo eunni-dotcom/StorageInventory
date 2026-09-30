@@ -112,7 +112,7 @@ public static class ReportPipelineTests
         var (r, _) = SortedRun.Value;
         var rows = ReportCsvReader.ReadAll(r.Reports!.ErrorsCsv);
         Assert.Equal(2, rows.Count(x => x["ErrorType"] == "AccessDenied"));
-        Assert.Equal(2, rows.Count(x => x["ErrorType"] == "ReparsePointSkipped"));
+        Assert.Equal(Fx.SymlinksCreated ? 3 : 2, rows.Count(x => x["ErrorType"] == "ReparsePointSkipped"));   // + Links\dir-link where symlinks can be created
         Assert.Equal(1, rows.Count(x => x["ErrorType"] == "InvalidTimestamp"));
         Assert.Equal(r.Totals.ScanErrors, (long)rows.Count(x => x["ErrorType"] is not ("ReparsePointSkipped" or "ReparsePointFile")));
         Assert.False(rows.Any(x => x["Message"].Contains('\n')), "messages are one line");

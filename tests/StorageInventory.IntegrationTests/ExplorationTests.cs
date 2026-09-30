@@ -64,7 +64,7 @@ public static class ExplorationTests
         Assert.Equal(2, errors.Rows.Count, "row limit respected");
         Assert.Equal(scan.ErrorCounts.Values.Sum(), errors.TotalRows);
         Assert.Equal(2L, errors.CountsByType["AccessDenied"]);
-        Assert.Equal(2L, errors.CountsByType["ReparsePointSkipped"]);
+        Assert.Equal(Fx.SymlinksCreated ? 3L : 2L, errors.CountsByType["ReparsePointSkipped"]);   // + Links\dir-link where symlinks can be created
     }
 
     [Test]
