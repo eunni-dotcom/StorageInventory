@@ -71,5 +71,22 @@ Reflection is used only by the test runner (`tests/Shared/MiniTest.cs`) and the 
 ## Evidence
 
 - `SecurityAuditTests`: 9/9 PASS.
-- The full suites were re-run against the **Release configuration** (the code that ships): Core unit tests **55/0/0**, integration **88/0/4**. The integration suite covers the adversarial Phase A fixture, PowerShell parity, the report pipeline, cancellation and write failures, UI and security audit. The 4 skips are symlink creation and 8.3 names (unavailable here) and the opt-in large-tree parity. No test folders were left behind.
+- The full suites were re-run against the **Release configuration** (the code that ships): Core unit tests **55/0/0**, integration **89/0/4**. The integration suite covers the adversarial Phase A fixture, PowerShell parity, the report pipeline, cancellation and write failures, UI and security audit. The 4 skips are symlink creation and 8.3 names (unavailable here) and the opt-in large-tree parity. No test folders were left behind.
 - Phase A reference suite: 105/0/5 on both shells (unchanged).
+
+## Merge-readiness review (v1.0.0)
+
+An independent pre-merge review re-read the shipped code for source-drive writes, delete/rename/move paths, link
+traversal, output containment, cancellation and close races, partial-file publication, and network, registry,
+elevation, shell or persistence behaviour. It found no safety defect. It found and fixed one robustness defect
+(medium):
+
+- **Unreadable CSV report during the optional workbook step.** The workbook step counted the Files CSV rows outside its
+  error handling. If that report could not be read (locked, removed or malformed), the exception escaped. The app then
+  stayed on "Creating the optional Excel workbook" with no message.
+- **Impact.** The CSV reports were complete and the scanned tree was unaffected.
+- **Fix.** The failure is now reported as a failed workbook export, with a regression test that fails on the old
+  code.
+
+The release executable was also checked for embedded build paths and machine or account names (none), and was
+smoke-tested from outside the repository.

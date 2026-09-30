@@ -1,29 +1,36 @@
-# Release build (Gate B11)
+# Release build
 
-**STATUS: PASS**
-
-## Output
+## v1.0.0
 
 | Item | Value |
 |---|---|
-| File | `dist\StorageInventory.exe` (the only file) |
-| Size | 130,948,073 bytes (124.9 MB) |
-| SHA-256 | `A5EE77F81251880F838A55141D318F87734DFBC8AE2B1FA56B07448EEC9D4B5B` (build of 2026-09-29) |
+| File | `StorageInventory.exe` (the only file needed) |
+| Version | 1.0.0 (file version 1.0.0.0, product version 1.0.0) |
+| Size | 130,947,561 bytes (124.9 MB) |
+| SHA-256 | `20178D5FBAC49B921A023DA39133A79FF8FB6B53B475FCA7FBE7A1A1CD3FC5B4` |
 | Target | `win-x64`, Release, **self-contained**, **single-file**, .NET 10.0.12 runtime bundled |
-| Requirements | Windows 10/11 x64. No .NET install, no PowerShell, no ImportExcel, no administrator rights |
-| Signing | **Not code-signed**; no signing setup exists. Windows SmartScreen may warn on first run. |
-| Machine paths | None embedded (`PathMap`); checked by searching the binary for the build path |
+| Requirements | Windows 10 or 11 x64. No .NET installation, PowerShell, Excel or administrator rights |
+| Signing | **Not code-signed.** Windows SmartScreen may warn on first run |
+| Embedded paths | None: `PathMap` replaces the build directory, and no PDB is produced (`DebugType=none`). The binary was searched for the build path and machine and account names |
+| Licences | Bundled .NET runtime: MIT. See [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) |
 
-`dist\` is git-ignored: release binaries are **not** committed. No GitHub Release has been created.
+Release binaries are **not committed** (`dist/` is git-ignored); they are attached to the GitHub Release. Ship
+`LICENSE` and `THIRD-PARTY-NOTICES.md` alongside the executable.
 
 ## Reproducing the build
 
 ```powershell
-.\tools\fetch-tools.ps1         # once: repo-local .NET SDK 10.0.401 (hash-verified), not installed machine-wide
-.\build.ps1 -Target Publish     # restores 2 packages, then publishes to dist\
+.\tools\fetch-tools.ps1         # once: repo-local .NET SDK 10.0.401 (hash-verified), nothing installed machine-wide
+.\build.ps1 -Target Publish     # restore, clean, publish to dist\, print the SHA-256
 ```
 
-`build.ps1 -Target Publish` runs:
+A publish from clean intermediate output is **reproducible byte for byte** with the pinned SDK and runtime packs.
+Several clean publishes on the development machine, and one from a fresh clone of the release commit, all gave the
+SHA-256 above. `build.ps1 -Target Publish` therefore cleans before publishing. Reusing a Core library compiled earlier
+by a solution build gives a different, equally valid binary. The version is `1.0.0` without a `+<commit>` suffix, so
+documentation-only commits don't change the executable.
+
+`build.ps1 -Target Publish` runs, after `dotnet restore` and `dotnet clean`:
 
 ```
 dotnet publish src\StorageInventory.App\StorageInventory.App.csproj -c Release -r win-x64 --self-contained true
@@ -33,23 +40,23 @@ dotnet publish src\StorageInventory.App\StorageInventory.App.csproj -c Release -
 
 ### What gets downloaded
 
-It downloads exactly **two** packages, both Microsoft's official .NET runtime packs, from nuget.org into the repo-local
-`packages\` folder:
+Exactly **two** packages are downloaded, both Microsoft's official .NET runtime packs, from nuget.org into the
+repo-local `packages\` folder:
 
 - `Microsoft.NETCore.App.Runtime.win-x64` 10.0.12
 - `Microsoft.WindowsDesktop.App.Runtime.win-x64` 10.0.12
 
-`nuget.config` uses package source mapping, so NuGet **refuses anything else**. The first publish attempt proved this:
-two further packages were refused and never downloaded.
+`nuget.config` uses package source mapping, so NuGet **refuses anything else**. Two further packages the SDK would
+otherwise request are switched off:
 
-- **`Microsoft.AspNetCore.App.Runtime.win-x64`** was a pre-fetch for frameworks we don't use. It's switched off by
+- `Microsoft.AspNetCore.App.Runtime.win-x64` is a pre-fetch for frameworks the app doesn't use. It's switched off with
   `DisableTransitiveFrameworkReferenceDownloads`.
-- **`Microsoft.NET.ILLink.Tasks`** is needed only by the single-file compatibility *analyzer*, which gives warnings and
-  never changes the output. It's switched off with `EnableSingleFileAnalyzer=false`. The code avoids the APIs it checks
-  for (such as `Assembly.Location` in the product).
+- `Microsoft.NET.ILLink.Tasks` is needed only by the single-file compatibility *analyzer*, which produces warnings and
+  never changes the output. It's switched off with `EnableSingleFileAnalyzer=false`. The code avoids the APIs that
+  analyzer checks, such as `Assembly.Location` in the product.
 
-`build.ps1` keeps all .NET and NuGet state inside the repo, turns off CLI telemetry, and restores the caller's
-environment afterwards. Your user profile was verified untouched: no `~\.dotnet`, no `%APPDATA%\NuGet`, no `~\.nuget`.
+`build.ps1` keeps all .NET and NuGet state inside the repository, turns off CLI telemetry, and restores the caller's
+environment afterwards.
 
 ### Single-file behaviour to know about
 
@@ -58,20 +65,20 @@ host unpacks them on first run to **`%TEMP%\.net\StorageInventory\<hash>\`**, an
 
 - This is .NET runtime behaviour, not application code.
 - It never touches the scanned tree or the report folder.
-- The folder can be deleted at any time; it will be recreated.
+- The folder can be deleted at any time, and will be recreated.
 
-A deployment that must avoid it would publish without `IncludeNativeLibrariesForSelfExtract`, giving the exe plus a
-few native DLLs alongside it, at the cost of not being a single file.
+A deployment that must avoid it can publish without `IncludeNativeLibrariesForSelfExtract`. That gives the exe plus a
+few native DLLs alongside it, at the cost of no longer being a single file.
 
 ## Smoke test
 
 `tests\smoke\Invoke-ReleaseSmokeTest.ps1` copies the exe **outside the repository**, starts it with **no
-`DOTNET_ROOT`**, and drives it through UI Automation. Run on 2026-09-29, it gave **15/15 PASS**:
+`DOTNET_ROOT`**, and drives it through UI Automation. For v1.0.0 it gave **15/15 PASS**:
 
 | Check | Result |
 |---|---|
 | Starts from outside the repo with no `DOTNET_ROOT` | PASS |
-| Uses its bundled runtime: none of its 74 loaded modules come from an installed or the repo-local .NET. The machine only has .NET 8 installed, so a .NET 10 app can only run on its own runtime | PASS |
+| Uses its bundled runtime: no loaded module comes from an installed or repo-local .NET | PASS |
 | Browse opens the folder picker | PASS |
 | Pre-flight blocks a report folder inside the source; Start scan disabled | PASS |
 | Pre-flight READY for a valid pair | PASS |
@@ -81,15 +88,17 @@ few native DLLs alongside it, at the cost of not being a single file.
 | Large scan (250k files) runs with Cancel available; Cancel stops it and says so; no report file left open | PASS |
 | Exits cleanly when closed (exit code 0) | PASS |
 
-Reproduce:
+To reproduce (the second folder must be large enough to cancel mid-scan):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source <small folder> -LargeSource <folder with ~250k files>
 ```
 
-## Test status of the shipped code
+## Test status of the release
 
-- Unit **55/0/0** and integration **88/0/4** against the Release configuration (Gate B10).
-- PowerShell parity: identical reports on every fixture (Gate B6).
-- Security audit: 9/9 (Gate B10).
+- Unit tests **55/0/0** and integration tests **89/0/4** (4 skipped for missing privileges, 8.3 names or opt-in large
+  trees), in the Release configuration.
+- PowerShell reference suite **105/0/5** on Windows PowerShell 5.1 and PowerShell 7.6.6.
+- PowerShell parity: identical reports on every fixture ([native-parity-report.md](native-parity-report.md)).
+- Security audit tests: pass ([native-security-review.md](native-security-review.md)).
 - Performance: [benchmarks/native.md](benchmarks/native.md).

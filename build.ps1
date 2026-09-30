@@ -81,9 +81,10 @@ try {
             $app = Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj'
             # Clean first: a publish from clean intermediate output is byte-for-byte reproducible, whereas reusing a
             # library compiled by an earlier solution build gives a different (equally valid) binary.
+            # (clean needs restored assets, also in a fresh clone; publish then restores with its own runtime settings)
+            Invoke-Dotnet restore $sln '-nodeReuse:false'
             Invoke-Dotnet clean $sln -c Release '-nodeReuse:false'
-            Invoke-Dotnet clean $app -c Release -r win-x64 '-nodeReuse:false'
-            Invoke-Dotnet publish (Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj') -c Release -r win-x64 `
+            Invoke-Dotnet publish $app -c Release -r win-x64 `
                 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=none' `
                 '-p:EnableSingleFileAnalyzer=false' -o $dist '-nodeReuse:false'   # analyzer would need the extra Microsoft.NET.ILLink.Tasks package
             Get-ChildItem -LiteralPath $dist | Select-Object Name, Length | Format-Table -AutoSize
