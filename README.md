@@ -151,7 +151,7 @@ reproducible byte for byte. See [docs/release.md](docs/release.md).
   published exe from outside the repository.
 
 CI builds, tests and publishes every change on GitHub Actions. Tests that need something a hosted runner lacks
-(symbolic-link privileges, 8.3 names, large benchmark trees) report SKIP with a reason.
+(8.3 names, large benchmark trees) report SKIP with a reason. The hosted runner can create symbolic links, so CI exercises the symbolic-link cases that need privileges locally.
 
 ## Documentation
 
@@ -169,8 +169,9 @@ CI builds, tests and publishes every change on GitHub Actions. Tests that need s
 
 ## Known limitations
 
-- **Symbolic links, mount points and 8.3 short-name aliases** go through the same code paths as the junctions and
-  aliases that are tested, but couldn't be created on the development machine without extra privileges.
+- **Mount points and 8.3 short-name aliases** go through the same code paths as the tested junctions and aliases,
+  but aren't created by the test suite. (Symbolic links are tested in CI, where the runner has the privilege to create
+  them.)
 - **A folder swapped for a link mid-scan** (in the moment between being listed and being entered) can still be
   followed. The window is very small, and the worst case is a read-only listing of the link's target.
 - **`\\localhost\C$`-style aliases** of the source can't be resolved in advance. A tripwire stops the scan if it meets

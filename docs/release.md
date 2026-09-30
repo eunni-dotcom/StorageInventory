@@ -25,8 +25,8 @@ Release binaries are **not committed** (`dist/` is git-ignored); they are attach
 ```
 
 A publish from clean intermediate output is **reproducible byte for byte** with the pinned SDK and runtime packs.
-Several clean publishes on the development machine, and one from a fresh clone of the release commit with an empty
-package cache, all gave the SHA-256 above. Three things make that hold:
+Several clean publishes on the development machine, one from a fresh clone of the release commit with an empty package
+cache, and the GitHub Actions CI build on a hosted runner all gave the SHA-256 above. Three things make that hold:
 
 - **`build.ps1 -Target Publish` cleans before publishing.** Reusing a Core library compiled earlier by a solution
   build gives a different, equally valid binary.
@@ -103,6 +103,8 @@ powershell -ExecutionPolicy Bypass -File tests\smoke\Invoke-ReleaseSmokeTest.ps1
 
 - Unit tests **55/0/0** and integration tests **89/0/4** (4 skipped for missing privileges, 8.3 names or opt-in large
   trees), in the Release configuration.
+- CI (GitHub-hosted Windows runner): unit 55/0/0 and integration 86/0/7. The runner lacks the local benchmark trees and
+  8.3 names, but can create symbolic links, so the symbolic-link cases run there.
 - PowerShell reference suite **105/0/5** on Windows PowerShell 5.1 and PowerShell 7.6.6.
 - PowerShell parity: identical reports on every fixture ([native-parity-report.md](native-parity-report.md)).
 - Security audit tests: pass ([native-security-review.md](native-security-review.md)).
