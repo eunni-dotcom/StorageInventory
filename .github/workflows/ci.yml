@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-publish:
+    name: Build, test and publish (Release, win-x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      # Actions are pinned to full commit SHAs; Dependabot proposes updates.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same repo-local, hash-verified toolchain contributors use (tools/fetch-tools.ps1).
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+
+      # Unit tests, then integration tests (path policy, engine, reports, PowerShell parity, UI, security audit).
+      # Tests whose prerequisites a hosted runner lacks report SKIP with a reason. The PowerShell reference suite
+      # (powershell/tests) and the benchmarks are run locally; see CONTRIBUTING.md.
+      - name: Build and test (Release)
+        shell: powershell
+        run: .\build.ps1 -Target Test -Configuration Release
+
+      - name: Publish self-contained executable
+        shell: powershell
+        run: .\build.ps1 -Target Publish
+
+      - name: Upload executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: StorageInventory-win-x64
+          path: dist/StorageInventory.exe
+          if-no-files-found: error
+          retention-days: 14

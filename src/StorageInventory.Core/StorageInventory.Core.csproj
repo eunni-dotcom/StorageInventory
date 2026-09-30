@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Core must never depend on WPF or any UI technology: the app is a client of this library. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>StorageInventory.Core</RootNamespace>
+    <AssemblyName>StorageInventory.Core</AssemblyName>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="StorageInventory.Core.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

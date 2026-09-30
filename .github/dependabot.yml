@@ -1,0 +1,7 @@
+# The code has no package references; only the pinned GitHub Actions need update proposals.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
