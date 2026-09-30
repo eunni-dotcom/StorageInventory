@@ -1,0 +1,66 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem.
+
+        **Privacy:** inventory reports and screenshots contain your file and folder names. Please **don't attach them**
+        unless you've reviewed and redacted them. Synthetic names ("Folder A\\file1.txt") are fine for describing a
+        layout.
+
+        **Security problems** (for example, a scanned file was changed, a link was followed, or a file was overwritten):
+        please use the private reporting route in [SECURITY.md](https://github.com/eunni-dotcom/StorageInventory/blob/main/SECURITY.md) instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: StorageInventory version
+      description: Right-click StorageInventory.exe > Properties > Details > Product version.
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2 (26100)
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: What did the scan end with?
+      options:
+        - SCAN COMPLETE
+        - SCAN FINISHED, BUT INCOMPLETE
+        - SCAN CANCELLED
+        - SCAN FAILED
+        - The scan did not start (pre-flight)
+        - The app did not start or crashed
+    validations:
+      required: true
+  - type: input
+    id: drive
+    attributes:
+      label: Source and report locations (type only)
+      description: What kind of drive or folder, without real names.
+      placeholder: Internal NTFS SSD; external exFAT USB drive; network share; OneDrive folder
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Choose a folder containing ...
+        2. Choose a report folder on ...
+        3. Start scan ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: Include the exact on-screen message. If the Errors report is relevant, paste only the ErrorType column counts or redacted rows.
+    validations:
+      required: true
