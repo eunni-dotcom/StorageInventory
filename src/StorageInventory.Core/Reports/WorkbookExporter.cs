@@ -42,14 +42,18 @@ public static class WorkbookExporter
         }
 
         var run = ReportRun.ForFinishedRun(scan.OutputPath, scan.RunId);
-        var filesRows = CountDataRows(scan.Reports.FilesCsv);
-        var omitFiles = filesRows > maxDataRows;
-        var sheets = new List<XlsxWorkbookWriter.Sheet>();
-        if (!omitFiles) sheets.Add(new("Files", scan.Reports.FilesCsv, FilesNumeric));
-        sheets.Add(new("Folders", scan.Reports.FoldersCsv, FoldersNumeric));
+        var omitFiles = false;
 
         try
         {
+            // Reading the CSV reports can fail too (locked, removed, malformed): that must become a Failed result,
+            // never an exception escaping to the caller.
+            var filesRows = CountDataRows(scan.Reports.FilesCsv);
+            omitFiles = filesRows > maxDataRows;
+            var sheets = new List<XlsxWorkbookWriter.Sheet>();
+            if (!omitFiles) sheets.Add(new("Files", scan.Reports.FilesCsv, FilesNumeric));
+            sheets.Add(new("Folders", scan.Reports.FoldersCsv, FoldersNumeric));
+
             using (var stream = run.CreateNew(run.WorkbookPartial))
             {
                 XlsxWorkbookWriter.Write(stream, sheets, cancellationToken);

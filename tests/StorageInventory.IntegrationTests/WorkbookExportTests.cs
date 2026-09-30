@@ -165,6 +165,25 @@ public static class WorkbookExportTests
         Assert.SequenceEqual(before, File.ReadAllBytes(scan.Reports.FilesCsv), "CSV unchanged");
     }
 
+    /// <summary>Regression (merge-readiness review): an unreadable Files CSV used to throw out of Export, leaving the
+    /// app stuck on "Creating the optional Excel workbook" with no message. It must be a Failed result instead.</summary>
+    [Test]
+    public static void Unreadable_csv_report_fails_the_export_instead_of_throwing()
+    {
+        var scan = ScanFixture();
+        WorkbookExportResult export;
+        using (new FileStream(scan.Reports!.FilesCsv, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            export = WorkbookExporter.Export(scan);
+        }
+        Assert.Equal(WorkbookExportState.Failed, export.State, export.Message);
+        Assert.Null(export.WorkbookPath);
+        Assert.Null(export.UnfinishedPath);
+        Assert.True(export.Message.Contains("The CSV reports are complete and unaffected.", StringComparison.Ordinal), export.Message);
+        Assert.False(File.Exists(Path.Combine(scan.OutputPath, $"StorageInventory_{scan.RunId}.xlsx")), "no workbook");
+        Assert.False(File.Exists(Path.Combine(scan.OutputPath, $"StorageInventory_{scan.RunId}.xlsx.partial")), "no partial workbook");
+    }
+
     [Test]
     public static void Only_finished_scans_can_be_exported()
     {
