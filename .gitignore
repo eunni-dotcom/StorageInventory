@@ -1,13 +1,51 @@
-# downloaded toolchain (see tools/fetch-tools.ps1)
+# Repo-local toolchain and its state (see tools/fetch-tools.ps1)
 tools/*
 !tools/fetch-tools.ps1
 
-# build output
+# Build output and package cache
 bin/
 obj/
 dist/
 artifacts/
 packages/
 TestResults/
-*.user
+*.binlog
+
+# StorageInventory reports and working files, if a scan is ever pointed inside the repo by mistake.
+# They list real file names and paths: never commit them.
+Files_*.csv
+Folders_*.csv
+ScanErrors_*.csv
+StorageInventory_*.xlsx
+*.xlsx.partial
+*.unsorted.tmp
+
+# Test and development residue (tests write to %TEMP%; these guard against local runs elsewhere)
+screenshots/
+*.log
+results_*.csv
+
+# Crash dumps, backups and bundles
+*.dmp
+*.bundle
+*.bak
+*.orig
+
+# Environment and secrets
+.env
+.env.*
+*.pfx
+*.p12
+*.snk
+*.pem
+*.key
+
+# IDE and OS state
 .vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+Thumbs.db
+desktop.ini

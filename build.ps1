@@ -9,16 +9,19 @@
     The environment variables are set only for the duration of this script and are restored afterwards, even on
     failure, so running .\build.ps1 from an interactive window does not change that window's environment.
 .PARAMETER Target
-    Build    - Debug build of the whole solution
-    Test     - Debug build, then the unit tests and the integration tests (including PowerShell parity)
+    Build    - build the whole solution
+    Test     - build, then the unit tests and the integration tests (including PowerShell parity)
     Bench    - Release build, then the C# benchmarks
-    Publish  - self-contained single-file win-x64 Release build into dist\
+    Publish  - clean, then a self-contained single-file win-x64 Release build into dist\ (prints its SHA-256)
     Dotnet   - run any dotnet command in the repo-local environment, e.g. -Target Dotnet -DotnetArgs sln,list
+.PARAMETER Configuration
+    Debug (default) or Release, for Build and Test.
 .EXAMPLE
-    .\build.ps1 -Target Test
+    .\build.ps1 -Target Test -Configuration Release
 #>
 param(
     [ValidateSet('Build', 'Test', 'Publish', 'Bench', 'Dotnet')] [string] $Target = 'Build',
+    [ValidateSet('Debug', 'Release')] [string] $Configuration = 'Debug',
     [string[]] $TestArgs = @(),
     [string[]] $DotnetArgs = @()
 )
@@ -61,12 +64,12 @@ try {
 
     switch ($Target) {
         'Dotnet' { Invoke-Dotnet @DotnetArgs }
-        'Build' { Invoke-Dotnet build $sln -c Debug '-nodeReuse:false' }
+        'Build' { Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false' }
         'Test' {
-            Invoke-Dotnet build $sln -c Debug '-nodeReuse:false'
+            Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false'
             foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.IntegrationTests')) {
                 $dir = Join-Path $repo "tests\$testProject"
-                if (Test-Path -LiteralPath $dir) { Invoke-Dotnet run --no-build -c Debug --project $dir -- @TestArgs }
+                if (Test-Path -LiteralPath $dir) { Invoke-Dotnet run --no-build -c $Configuration --project $dir -- @TestArgs }
             }
         }
         'Bench' {
@@ -75,10 +78,16 @@ try {
         }
         'Publish' {
             $dist = Join-Path $repo 'dist'
+            $app = Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj'
+            # Clean first: a publish from clean intermediate output is byte-for-byte reproducible, whereas reusing a
+            # library compiled by an earlier solution build gives a different (equally valid) binary.
+            Invoke-Dotnet clean $sln -c Release '-nodeReuse:false'
+            Invoke-Dotnet clean $app -c Release -r win-x64 '-nodeReuse:false'
             Invoke-Dotnet publish (Join-Path $repo 'src\StorageInventory.App\StorageInventory.App.csproj') -c Release -r win-x64 `
                 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=none' `
                 '-p:EnableSingleFileAnalyzer=false' -o $dist '-nodeReuse:false'   # analyzer would need the extra Microsoft.NET.ILLink.Tasks package
             Get-ChildItem -LiteralPath $dist | Select-Object Name, Length | Format-Table -AutoSize
+            'SHA-256 ' + (Get-FileHash -LiteralPath (Join-Path $dist 'StorageInventory.exe') -Algorithm SHA256).Hash
         }
     }
 }
