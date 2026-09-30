@@ -19,4 +19,11 @@
     <ProjectReference Include="..\StorageInventory.Core\StorageInventory.Core.csproj" />
   </ItemGroup>
 
+  <!-- Self-contained publish: DisableTransitiveFrameworkReferenceDownloads (Directory.Build.props) stops the SDK from
+       pre-fetching runtime packs for frameworks we don't use, but it also treats WPF's runtime pack as transitive, so an
+       empty package cache would never receive it. Request exactly that one approved pack, at the SDK's bundled version. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(SelfContained)' == 'true'">
+    <PackageDownload Include="Microsoft.WindowsDesktop.App.Runtime.win-x64" Version="[$(BundledNETCoreAppPackageVersion)]" />
+  </ItemGroup>
+
 </Project>

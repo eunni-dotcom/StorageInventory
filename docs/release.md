@@ -25,10 +25,15 @@ Release binaries are **not committed** (`dist/` is git-ignored); they are attach
 ```
 
 A publish from clean intermediate output is **reproducible byte for byte** with the pinned SDK and runtime packs.
-Several clean publishes on the development machine, and one from a fresh clone of the release commit, all gave the
-SHA-256 above. `build.ps1 -Target Publish` therefore cleans before publishing. Reusing a Core library compiled earlier
-by a solution build gives a different, equally valid binary. The version is `1.0.0` without a `+<commit>` suffix, so
-documentation-only commits don't change the executable.
+Several clean publishes on the development machine, and one from a fresh clone of the release commit with an empty
+package cache, all gave the SHA-256 above. Three things make that hold:
+
+- **`build.ps1 -Target Publish` cleans before publishing.** Reusing a Core library compiled earlier by a solution
+  build gives a different, equally valid binary.
+- **`.gitattributes` checks out text files with LF on every machine.** Some files, such as `app.manifest`, are
+  embedded verbatim. Git for Windows' default `core.autocrlf=true` would otherwise change them, and with them the exe.
+- **The version is `1.0.0`, without a `+<commit>` suffix,** so documentation-only commits don't change the
+  executable.
 
 `build.ps1 -Target Publish` runs, after `dotnet restore` and `dotnet clean`:
 

@@ -1,0 +1,6 @@
+# Check out every text file with LF, whatever core.autocrlf says. Some files are embedded verbatim in the executable
+# (app.manifest, for example), so without this a Windows checkout with autocrlf=true would publish a different binary
+# and the release SHA-256 could not be reproduced from source.
+* text=auto eol=lf
+*.png binary
+*.sln text eol=crlf
