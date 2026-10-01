@@ -109,7 +109,7 @@ public static class MatchingTests
         var cloneVolume = s.Store.AddVolume("NTFS", S1, unchecked((uint)S1), IdentityConfidence.Strong, "Data", 500_000_000_000);
         var cloneSource = s.Store.AddLocalSource(cloneVolume.VolumeId, @"\", IdentityConfidence.Strong, IdentityBasis.Evidence);
         var capture = s.Assess(Ev.Ntfs(@"E:\", S1));
-        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key));
+        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, []));
 
         var yes = IdentityMatching.Answer(prompt, new IdentityAnswer.SameVolume(cloneVolume), capture, s.Store, s.Key);
         var attached = Out.Attached(yes);
@@ -164,6 +164,129 @@ public static class MatchingTests
     }
 
     [Test]
+    public static void Treat_as_a_new_source_is_always_available_for_a_capture_that_can_be_saved_locally()
+    {
+        // ID-06: "Treat as a new source is always available". Prompts carry it as IfDifferent; for a capture the matcher would
+        // attach automatically this is the same decision, so a later screen can offer it beside "attached to ...".
+        var s = new Scenario();
+        var saved = s.Save(Ev.Ntfs(@"E:\", S1));
+        var capture = s.Assess(Ev.Ntfs(@"E:\", S1));
+        Assert.Equal(saved.Source.SourceId, Out.Attached(IdentityMatching.Match(capture, s.Store, s.Key, [])).Source.SourceId, "the matcher would attach");
+
+        var asNew = Assert.NotNull(IdentityMatching.TreatAsNewSource(capture));
+        Assert.Null(asNew.ExistingVolumeId, "a new volume");
+        Assert.Equal(@"\", asNew.RootInVolume);
+        Assert.Equal(IdentityConfidence.Strong, asNew.Confidence);
+        Assert.Equal(IdentityBasis.Evidence, asNew.Basis);
+
+        var applied = s.Store.Apply(asNew, capture)!;
+        Assert.True(applied.Volume!.VolumeId != saved.Volume!.VolumeId && applied.Source.SourceId != saved.Source.SourceId, "a second volume and source were created");
+        // two volume rows with one serial are what clones look like: the next capture is asked, never assigned silently
+        Assert.Equal(PromptReason.AmbiguousVolumes, Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, [])).Reason);
+
+        // Moderate and PathOnly rest on the same bases as any other new source of theirs
+        Assert.Equal(IdentityBasis.Evidence, IdentityMatching.TreatAsNewSource(s.Assess(Ev.Fat()))!.Basis);
+        Assert.Equal(IdentityBasis.Location, IdentityMatching.TreatAsNewSource(s.Assess(Ev.Udf()))!.Basis);
+    }
+
+    [Test]
+    public static void Treat_as_a_new_source_has_nothing_to_create_for_a_network_share_or_an_unsaveable_source()
+    {
+        var s = new Scenario();
+        Assert.Null(IdentityMatching.TreatAsNewSource(s.Assess(Ev.Share(@"\\nas\media"))), "a share is its location: a second source with the same key cannot exist");
+        var noPath = Ev.Ntfs(@"C:\x") with { CanonicalPath = EvidenceItem<string>.Failed("GetFinalPathNameByHandleW", 5) };
+        Assert.Null(IdentityMatching.TreatAsNewSource(s.Assess(noPath)), "ID-13: a source that cannot be saved has nothing to treat as new");
+    }
+
+    [Test]
+    public static void Another_name_for_the_captured_volume_is_not_a_second_volume()
+    {
+        // A SUBST letter for a folder of C: lists as a drive of its own with C:'s identity. Read the way the capture was read
+        // (open it, take the canonical path, ask for the mount point of that path) it reports C:\, which is the capture's own
+        // mount point: one volume under two names, not two volumes (ID-05 asks about two).
+        var s = new Scenario();
+        var saved = s.Save(Ev.Ntfs(@"C:\Media", S1));
+        var capture = Ev.Ntfs(@"C:\Media", S1, entered: @"S:\");                 // scanned through the SUBST letter S:
+        var itself = Scenario.Mounted(Ev.Ntfs(@"C:\", S1));                       // C: in the drive list
+        var substName = Scenario.Mounted(Ev.Ntfs(@"C:\Media", S1, entered: @"S:\")); // S: in the drive list, resolved to C:
+
+        Assert.Equal(saved.Source.SourceId, Out.Attached(s.Match(capture, [itself, substName])).Source.SourceId, "its own names are not clones");
+
+        // a real clone has a mount point of its own: still asked about, with the captured volume's names in the list as well
+        var realClone = Scenario.Mounted(Ev.Ntfs(@"F:\", S1));
+        Assert.Equal(PromptReason.CoMountedClones, Out.Asked(s.Match(capture, [itself, substName, realClone])).Reason);
+    }
+
+    [Test]
+    public static void A_mounted_volume_whose_mount_point_is_unknown_is_never_taken_for_the_captured_one()
+    {
+        // The exclusion rests on two known, exactly equal mount points. Anything less leaves the entry in the list, which can
+        // only cost an extra question and never a silent assignment.
+        var s = new Scenario();
+        s.Save(Ev.Ntfs(@"E:\", S1));
+        var unknown = Scenario.Mounted(Ev.Ntfs(@"F:\", S1)) with { MountPoint = null };
+        Assert.Equal(PromptReason.CoMountedClones, Out.Asked(s.Match(Ev.Ntfs(@"E:\", S1), [unknown])).Reason, "unknown mount point: kept, so asked");
+
+        var spelledDifferently = Scenario.Mounted(Ev.Ntfs(@"F:\", S1)) with { MountPoint = @"e:\" };   // not exactly the capture's E:\
+        Assert.Equal(PromptReason.CoMountedClones, Out.Asked(s.Match(Ev.Ntfs(@"E:\", S1), [spelledDifferently])).Reason, "a different spelling is not the same mount point");
+
+        var noMountPointOnTheCapture = Ev.Ntfs(@"E:\", S1) with { MountPoint = EvidenceItem<string>.Failed("GetVolumePathNameW", 5) };
+        Assert.Equal(PromptReason.CoMountedClones, Out.Asked(s.Match(noMountPointOnTheCapture, [Scenario.Mounted(Ev.Ntfs(@"E:\", S1))])).Reason, "the capture's own mount point is unknown: nothing is dropped");
+    }
+
+    [Test]
+    public static void A_drive_list_entry_built_from_a_reading_keeps_what_was_read_and_leaves_the_rest_unknown()
+    {
+        var entry = MountedVolume.From(Ev.Ntfs(@"E:\Media", S1, "Data", 1_000_000));
+        Assert.Equal("NTFS", entry.FsType);
+        Assert.Equal(unchecked((uint)S1), entry.Serial32!.Value);
+        Assert.Equal(S1, entry.Serial64!.Value);
+        Assert.Equal("Data", entry.Label);
+        Assert.Equal(1_000_000L, entry.CapacityBytes!.Value);
+        Assert.Equal(@"E:\", entry.MountPoint, "the mount point of the volume holding the canonical path");
+
+        var degraded = MountedVolume.From(Ev.Ntfs(@"E:\Media", S1) with
+        {
+            FileSystemName = EvidenceItem<string>.Failed("GetVolumeInformationByHandleW", 5),
+            VolumeLabel = EvidenceItem<string>.Failed("GetVolumeInformationByHandleW", 5),
+            MountPoint = EvidenceItem<string>.Failed("GetVolumePathNameW", 5),
+        });
+        Assert.Null(degraded.FsType, "an item that could not be read is unknown, never invented");
+        Assert.Null(degraded.Label);
+        Assert.Null(degraded.MountPoint);
+        Assert.Equal(S1, degraded.Serial64!.Value, "what was read is kept");
+    }
+
+    [Test]
+    public static void Two_clones_that_were_never_saved_start_as_one_volume_and_the_second_scan_asks()
+    {
+        // §7.5 step 2: with no saved volume there is nothing to attach to and nothing to ask about ("None: a new volume").
+        // Once the first clone's row exists, scanning the second while the first is still mounted finds it and asks (ID-05).
+        var s = new Scenario();
+        var first = Ev.Ntfs(@"E:\", S1);
+        var second = Ev.Ntfs(@"F:\", S1);
+
+        var saved = s.Save(first, [Scenario.Mounted(second)]);
+        Assert.NotNull(saved.Volume, "the first scan created its volume and source");
+        Assert.Equal(1, s.Store.Volumes.Count);
+
+        var prompt = Out.Asked(s.Match(second, [Scenario.Mounted(first)]));
+        Assert.Equal(PromptReason.CoMountedClones, prompt.Reason);
+        Assert.SequenceEqual(new[] { saved.Volume!.VolumeId }, prompt.Volumes.Select(v => v.VolumeId));
+    }
+
+    [Test]
+    public static void The_matcher_requires_the_mounted_volumes_so_clone_protection_cannot_be_left_off_by_omission()
+    {
+        var s = new Scenario();
+        var capture = s.Assess(Ev.Ntfs(@"E:\", S1));
+        Assert.Throws<ArgumentNullException>(() => IdentityMatching.Match(capture, s.Store, s.Key, null!));
+        // the parameter has no default value: leaving it out does not compile, and that is the point
+        var parameter = typeof(IdentityMatching).GetMethod(nameof(IdentityMatching.Match))!.GetParameters().Last();
+        Assert.False(parameter.HasDefaultValue, "no default: a caller must state the mounted volumes, empty or not");
+    }
+
+    [Test]
     public static void A_zero_64_bit_serial_is_not_a_Strong_identity()
     {
         var zero = Ev.Reading(@"C:\Media", @"C:\Media", "NTFS", 0x1234, 0, "Data", 500_000_000_000, Ev.NtfsRoot);
@@ -205,7 +328,7 @@ public static class MatchingTests
         var s = new Scenario();
         s.Save(Ev.Fat("FAT32", label: "USBSTICK"));
         var capture = s.Assess(Ev.Fat("FAT32", label: "RENAMED"));
-        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key));
+        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, []));
         Assert.Equal(PromptReason.ModerateNotCorroborated, prompt.Reason);
         Assert.Equal(1, prompt.Volumes.Count);
 
@@ -319,7 +442,7 @@ public static class MatchingTests
 
         // the very same disc again: never silently attached, however identical the evidence is
         var capture = s.Assess(disc);
-        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key));
+        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, []));
         Assert.Equal(PromptReason.PathOnlyMayBelong, prompt.Reason);
         Assert.SequenceEqual(new[] { saved.Source.SourceId }, prompt.Sources.Select(x => x.SourceId));
 
@@ -358,7 +481,7 @@ public static class MatchingTests
         Assert.Equal(87, capture.Reasons.Single().Failure!.Win32Error, "the failure is kept");
         Assert.Equal(EvidenceStatus.NotProvided, capture.Reasons.Single().Failure!.Status);
 
-        var outcome = IdentityMatching.Match(capture, s.Store, s.Key);
+        var outcome = IdentityMatching.Match(capture, s.Store, s.Key, []);
         Assert.False(Out.IsAutomaticAttach(outcome), "never silently");
         var prompt = Out.Asked(outcome);
         Assert.Equal(PromptReason.PathOnlyMayBelong, prompt.Reason);
@@ -430,6 +553,21 @@ public static class MatchingTests
     }
 
     [Test]
+    public static void A_network_capture_attaches_to_its_share_and_root_whatever_confidence_the_stored_source_carries()
+    {
+        // ID-12's "weaker than the source" is about local sources: a network capture is always PathOnly, so is every network
+        // source, and the location IS the identity. Even a (wrongly) stronger stored row never produces a question whose "No"
+        // would try to create a second source with the same share and root, which the schema's unique key forbids.
+        var s = new Scenario();
+        var e0 = Ev.Share(@"\\nas\media\Music");
+        var stored = s.Store.AddNetworkSource(@"\\NAS\MEDIA", @"\Music", IdentityConfidence.Strong, IdentityBasis.Evidence);
+
+        var attached = Out.Attached(s.Match(e0));
+        Assert.Equal(stored.SourceId, attached.Source.SourceId);
+        Assert.Equal(IdentityBasis.Location, attached.Basis);
+    }
+
+    [Test]
     public static void A_server_that_reports_NTFS_and_a_serial_still_gives_a_PathOnly_network_source()
     {
         // measured in C3: a Windows SMB server returns the underlying NTFS volume's filesystem and both serials
@@ -489,7 +627,7 @@ public static class MatchingTests
         var s = new Scenario();
         var saved = s.Save(Ev.Share(@"\\nas\media\Music"));
         var capture = s.Assess(Ev.Share(@"\\nas\media\music"));
-        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key));
+        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, []));
         Assert.Equal(PromptReason.CaseVariantRoot, prompt.Reason);
         Assert.SequenceEqual(new[] { saved.Source.SourceId }, prompt.Sources.Select(x => x.SourceId));
         Assert.Equal(SourceKind.Network, prompt.IfDifferent.Kind);
@@ -505,7 +643,7 @@ public static class MatchingTests
         var upper = s.Save(Ev.Ntfs(@"C:\Media", S1));
         var capture = s.Assess(Ev.Ntfs(@"C:\media", S1));
 
-        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key));
+        var prompt = Out.Asked(IdentityMatching.Match(capture, s.Store, s.Key, []));
         Assert.Equal(PromptReason.CaseVariantRoot, prompt.Reason);
         Assert.SequenceEqual(new[] { upper.Source.SourceId }, prompt.Sources.Select(x => x.SourceId));
         Assert.Equal(upper.Volume!.VolumeId, prompt.IfDifferent.ExistingVolumeId, "a new source on the same volume");
@@ -626,7 +764,7 @@ public static class MatchingTests
         var source = s.Store.AddLocalSource(volume.VolumeId, @"\", IdentityConfidence.Strong, IdentityBasis.Evidence);
 
         var capture = s.Assess(Ev.Fat());
-        var outcome = IdentityMatching.Match(capture, s.Store, s.Key);
+        var outcome = IdentityMatching.Match(capture, s.Store, s.Key, []);
         var prompt = Out.Asked(outcome);
         Assert.Equal(PromptReason.WeakerThanSource, prompt.Reason);
         Assert.SequenceEqual(new[] { source.SourceId }, prompt.Sources.Select(x => x.SourceId));

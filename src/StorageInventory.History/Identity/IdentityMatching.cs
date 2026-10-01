@@ -10,8 +10,10 @@ namespace StorageInventory.History.Identity;
 /// <remarks>
 /// <para><b>Never silent on weak evidence (ID-06).</b> A capture is attached automatically only on Strong evidence, on
 /// Moderate evidence that fully corroborates exactly one volume, or on a network location. Everything else asks, creates a
-/// new source, or needs an explicit answer. Local PathOnly captures never match automatically. A drive letter and a mount
-/// point are not inputs at all (ID-03).</para>
+/// new source, or needs an explicit answer. Local PathOnly captures never match automatically. A drive letter is not an
+/// input at all, and a mount point never identifies a volume (ID-03): it is used for exactly one thing, to recognise that an
+/// entry of the mounted-volumes list is the captured volume itself under another name, so it is not counted as a clone
+/// (ID-05). Dropping such an entry can only remove a question, and only when both mount points are known and equal.</para>
 /// <para><b>Not heuristics.</b> The root directory's file ID, the capacity of a Strong volume and the drive letter play no
 /// part in matching: they were considered and rejected (ID-05, §7.2).</para>
 /// </remarks>
@@ -26,18 +28,22 @@ internal static class IdentityMatching
     /// <param name="capture">The classified preflight reading (<see cref="IdentityClassifier.Assess"/>).</param>
     /// <param name="store">The Library's volumes and sources.</param>
     /// <param name="key">The comparison candidate key, used only to suggest case-variant roots and to key a network share.</param>
-    /// <param name="otherMountedVolumes">The OTHER volumes mounted right now, if the caller knows them (ID-05); never probed here.</param>
+    /// <param name="mountedVolumes">The volumes mounted right now (ID-05); never probed here. REQUIRED, so a caller cannot forget
+    /// clone protection by omission: pass an empty list only when no other volume is mounted. The captured volume's own names
+    /// (a SUBST letter, its own drive-list entry) may be in the list; they are recognised by their mount point and dropped
+    /// (<see cref="MountedVolume"/>).</param>
     public static MatchOutcome Match(IdentityAssessment capture, IIdentityCandidates store, IComparisonKey key,
-        IReadOnlyList<MountedVolume>? otherMountedVolumes = null)
+        IReadOnlyList<MountedVolume> mountedVolumes)
     {
         ArgumentNullException.ThrowIfNull(capture);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(mountedVolumes);
 
         // ID-13: without the minimum evidence the source can never be re-verified, so it cannot be saved. Matching is moot.
         if (!capture.CanSave) return new MatchOutcome.SaveUnavailable(capture.Minimum);
 
-        var others = otherMountedVolumes ?? [];
+        var others = mountedVolumes.Where(m => !IsCapturedVolumeItself(m, capture)).ToList();
         if (capture.Kind == SourceKind.Network) return MatchNetwork(capture, store, key);
         return capture.Confidence switch
         {
@@ -45,6 +51,23 @@ internal static class IdentityMatching
             IdentityConfidence.Moderate => MatchModerate(capture, store, key, others),
             _ => MatchPathOnlyLocal(capture, store, key),
         };
+    }
+
+    /// <summary>
+    /// ID-06: "Treat as a new source" is always available. Every prompt already carries its own
+    /// (<see cref="IdentityPrompt.IfDifferent"/>); this is the same decision for a capture the matcher settled automatically,
+    /// so a later screen can offer it beside "attached to ...": a new volume and a new source for a LOCAL capture, resting on
+    /// the capture's own evidence as every new source does. Null where there is nothing to create: a capture that cannot be
+    /// saved (ID-13), and a network capture, whose identity IS its location, so a second source with the same share and root
+    /// cannot exist (the schema's unique key); for those the alternative is not to save. Pure: nothing is stored until
+    /// T-IMPORT applies it. (Two volume rows with one serial are what clones look like; the next capture of either is asked
+    /// about, ID-05.)
+    /// </summary>
+    public static IdentityDecision.CreateSource? TreatAsNewSource(IdentityAssessment capture)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        if (!capture.CanSave || capture.Kind == SourceKind.Network) return null;
+        return NewLocalSource(capture, null, DefaultBasis(capture));
     }
 
     /// <summary>
@@ -108,7 +131,9 @@ internal static class IdentityMatching
     }
 
     /// <summary>The volume is settled by evidence. If another mounted volume reports the same identity the user is asked
-    /// (ID-05); otherwise the exact root decides (step 5).</summary>
+    /// (ID-05); otherwise the exact root decides (step 5). When no saved volume matches at all there is nothing to attach to
+    /// and so nothing to ask about (§7.5 step 2: "None: a new volume"): the first of two never-saved clones becomes a new
+    /// volume, and the second, scanned while the first is still mounted, finds that row and asks.</summary>
     private static MatchOutcome OnMatchedVolume(IdentityAssessment capture, VolumeCandidate volume, IIdentityCandidates store, IComparisonKey key,
         IReadOnlyList<MountedVolume> others)
     {
@@ -170,15 +195,14 @@ internal static class IdentityMatching
         if (exact.Count == 1)
         {
             var source = exact[0];
-            if (basis != IdentityBasis.UserAsserted && IsWeaker(capture.Confidence, source.Confidence))
+            // ID-12 applies to local sources. A network capture is always PathOnly and so is every network source (ID-01), and
+            // the location IS the identity, so "weaker" cannot arise for it; and a second network source with the same share
+            // and root could not be created anyway (the schema's unique key).
+            if (capture.Kind == SourceKind.LocalVolume && basis != IdentityBasis.UserAsserted && IsWeaker(capture.Confidence, source.Confidence))
             {
-                // ID-12: never attached automatically; the user decides. "No" starts a fresh source rather than adding a
-                // weaker capture's source to a stronger volume: a new volume for a local capture, the share itself for a
-                // network one.
-                var fresh = capture.Kind == SourceKind.Network
-                    ? new IdentityDecision.CreateSource(SourceKind.Network, null, networkRootKey, root, capture.Confidence, IdentityBasis.Location)
-                    : NewLocalSource(capture, null, DefaultBasis(capture));
-                return Ask(PromptReason.WeakerThanSource, [], [source], fresh);
+                // never attached automatically; the user decides. "No" starts a fresh source on a new volume rather than adding
+                // a weaker capture's source to a stronger volume.
+                return Ask(PromptReason.WeakerThanSource, [], [source], NewLocalSource(capture, null, DefaultBasis(capture)));
             }
             return new MatchOutcome.Decided(new IdentityDecision.AttachToSource(source, capture.Confidence, basis));
         }
@@ -196,10 +220,19 @@ internal static class IdentityMatching
     private static IdentityDecision.CreateSource NewLocalSource(IdentityAssessment capture, long? existingVolumeId, IdentityBasis basis) =>
         new(SourceKind.LocalVolume, existingVolumeId, null, capture.RootInVolume!, capture.Confidence, basis);
 
-    /// <summary>What a fresh source of this capture rests on when nobody has confirmed anything: the hardware evidence for
-    /// Strong and Moderate, otherwise only where it was seen.</summary>
+    /// <summary>What a fresh LOCAL source of this capture rests on when nobody has confirmed anything: the hardware evidence
+    /// for Strong and Moderate, otherwise only where it was seen.</summary>
     private static IdentityBasis DefaultBasis(IdentityAssessment capture) =>
-        capture.Kind == SourceKind.Network || capture.Confidence == IdentityConfidence.PathOnly ? IdentityBasis.Location : IdentityBasis.Evidence;
+        capture.Confidence == IdentityConfidence.PathOnly ? IdentityBasis.Location : IdentityBasis.Evidence;
+
+    /// <summary>
+    /// The entry is the captured volume itself, under another name (ID-05 asks about TWO volumes): it reports the very mount
+    /// point the capture's canonical path sits on. Exact comparison, so a spelling that differs is never taken for the same
+    /// volume. When either mount point is unknown nothing is dropped: that can only cost an extra question.
+    /// </summary>
+    private static bool IsCapturedVolumeItself(MountedVolume mounted, IdentityAssessment capture) =>
+        mounted.MountPoint is not null && capture.MountPoint is not null
+        && string.Equals(mounted.MountPoint, capture.MountPoint, StringComparison.Ordinal);
 
     private static MatchOutcome Ask(PromptReason reason, IReadOnlyList<VolumeCandidate> volumes, IReadOnlyList<SourceCandidate> sources,
         IdentityDecision.CreateSource ifDifferent) =>

@@ -33,12 +33,43 @@ internal sealed record SourceCandidate(long SourceId, SourceKind Kind, long? Vol
     IdentityConfidence Confidence, IdentityBasis Basis);
 
 /// <summary>
-/// Another volume that is mounted RIGHT NOW (not the one being captured), with the evidence that identifies it. It lets the
-/// matcher honour ID-05: when two currently mounted volumes report the same identity, ask, never assign silently. Whoever
-/// calls the matcher builds the list (a later gate, on demand, from local fixed and removable drives only, ID-07) and leaves
-/// the captured volume itself out; the matcher never probes anything.
+/// A volume that is mounted RIGHT NOW, with the evidence that identifies it. It lets the matcher honour ID-05: when two
+/// currently mounted volumes report the same identity, ask, never assign silently. Whoever calls the matcher builds the
+/// list (a later gate, on demand, from local fixed and removable drives only, ID-07); the matcher never probes anything.
 /// </summary>
-internal sealed record MountedVolume(string? FsType, uint? Serial32, ulong? Serial64, string? Label, long? CapacityBytes);
+/// <remarks>
+/// <para>The list may contain the captured volume itself, under any of its names: a SUBST letter or a second drive-list
+/// entry for the volume the scan enumerates is NOT a second volume. The caller reads each entry the way the capture was
+/// read (open it, take the canonical path, ask for the mount point of that path), so every name of one volume reports the
+/// same <paramref name="MountPoint"/>, and the matcher drops the entries that report the capture's own. An entry whose mount
+/// point is not known is never dropped, which can only cost an extra question, never a silent assignment.</para>
+/// </remarks>
+/// <param name="FsType">The filesystem name as reported.</param>
+/// <param name="Serial32">The 32-bit serial, null when unavailable.</param>
+/// <param name="Serial64">The 64-bit serial, null when unavailable.</param>
+/// <param name="Label">The volume label, null when unavailable.</param>
+/// <param name="CapacityBytes">The capacity, null when unavailable.</param>
+/// <param name="MountPoint">The mount point of the volume holding the opened object, read from its canonical path (<c>E:\</c>);
+/// null when unknown.</param>
+internal sealed record MountedVolume(string? FsType, uint? Serial32, ulong? Serial64, string? Label, long? CapacityBytes, string? MountPoint)
+{
+    /// <summary>
+    /// A drive's entry, built from the reading of it that was taken exactly as the capture is taken
+    /// (<see cref="PreflightEvidence.Collect"/> on the drive's own path), so a SUBST letter and the volume it points into
+    /// report the same mount point. An item that could not be read is simply unknown.
+    /// </summary>
+    public static MountedVolume From(VolumeEvidence reading)
+    {
+        ArgumentNullException.ThrowIfNull(reading);
+        return new MountedVolume(
+            reading.FileSystemName.IsAvailable ? reading.FileSystemName.Value : null,
+            reading.VolumeSerial32.IsAvailable ? reading.VolumeSerial32.Value : null,
+            reading.VolumeSerial64.IsAvailable ? reading.VolumeSerial64.Value : null,
+            reading.VolumeLabel.IsAvailable ? reading.VolumeLabel.Value : null,
+            reading.CapacityBytes.IsAvailable ? reading.CapacityBytes.Value : null,
+            reading.MountPoint.IsAvailable ? reading.MountPoint.Value : null);
+    }
+}
 
 /// <summary>
 /// What the matching algorithm (§7.5) asks of the Library: read-only lookups shaped like the schema's indexes

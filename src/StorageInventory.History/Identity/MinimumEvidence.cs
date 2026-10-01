@@ -45,7 +45,7 @@ internal static class MinimumEvidence
                 "the canonical path has neither a drive-letter nor a UNC form, so the root inside its volume cannot be determined"));
         }
 
-        if (e0.Kind == SourceKind.LocalVolume)
+        if (e0.ResolvedKind == SourceKind.LocalVolume)
         {
             if (!e0.FileSystemName.IsAvailable) missing.Add(MissingEvidence.Of(IdentityItem.FileSystemName, e0.FileSystemName));
             if (!e0.VolumeSerial32.IsAvailable) missing.Add(MissingEvidence.Of(IdentityItem.VolumeSerial32, e0.VolumeSerial32));

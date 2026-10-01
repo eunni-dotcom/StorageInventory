@@ -26,7 +26,9 @@ public static class ReverificationTests
         [IdentityItem.VolumeSerial32] = e => e with { VolumeSerial32 = EvidenceItem<uint>.Of(0x12345678, "GetVolumeInformationByHandleW") },
         [IdentityItem.VolumeSerial64] = e => e with { VolumeSerial64 = EvidenceItem<ulong>.Of(0x0123456789ABCDEF, "GetFileInformationByHandleEx/FileIdInfo") },
         [IdentityItem.RootDirectoryFileId] = e => e with { RootDirectoryFileId = EvidenceItem<FileId128>.Of(new FileId128(0x0001000000000777, 0), "GetFileInformationByHandleEx/FileIdInfo") },
-        [IdentityItem.SourceKind] = e => e with { Kind = SourceKind.Network },
+        // the kind is where the canonical path says the object is (VolumeEvidence.ResolvedKind): a reading that now reports a UNC path
+        // is a network source, so the canonical path differs as well and both items are reported
+        [IdentityItem.SourceKind] = e => e with { Kind = SourceKind.Network, CanonicalPath = EvidenceItem<string>.Of(@"\\nas\media", "GetFinalPathNameByHandleW") },
     };
 
     private static readonly Dictionary<IdentityItem, Func<VolumeEvidence, VolumeEvidence>> Removals = new()

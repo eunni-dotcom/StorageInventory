@@ -7,8 +7,9 @@ namespace StorageInventory.History.Tests;
 
 /// <summary>
 /// TEST-I5 (unit, with the fake provider): the sequence of ID-10. E1 and E2 are read through ONE handle opened on the
-/// enumerated path and held; E3 is a fresh open of the enumerated path; the canonical path is never opened; every handle is
-/// closed, on every ending.
+/// enumerated path and held; E3 is a fresh open of the enumerated path; no HANDLE is ever opened on the canonical path (the
+/// fake models handles. The two by-path queries for the mount point and the capacity are display information and are not
+/// identity items, so what they are given cannot change a verdict); every handle is closed, on every ending.
 /// </summary>
 public static class LifecycleTests
 {
@@ -85,7 +86,7 @@ public static class LifecycleTests
 
         Assert.True(world.OpenedPaths.Any(), "something was opened");
         Assert.True(world.OpenedPaths.All(p => p == @"S:\"), "every open used the path the scanner enumerates");
-        Assert.False(world.OpenedPaths.Contains(canonical), "the canonical path is never opened for E0, E1, E2 or E3");
+        Assert.False(world.OpenedPaths.Contains(canonical), "no handle is opened on the canonical path for E0, E1, E2 or E3");
         Assert.Equal(3, world.OpenedPaths.Count(), "E0, the held handle (E1 and E2) and the fresh open (E3)");
         NoHandleLeaked(world);
     }
@@ -124,6 +125,66 @@ public static class LifecycleTests
         });
 
         Assert.Equal(ReverificationOutcome.Verified, result.Outcome, "L-ID2: the capture looks eligible, and the documentation says so");
+    }
+
+    [Test]
+    public static void A_source_folder_renamed_away_replaced_and_restored_is_not_detected_limitation_L_ID2()
+    {
+        // L-ID2 as extended by G0F-O05: the source folder itself renamed away, another folder given its name, and both put back
+        // before the window closes. The held handle follows the ORIGINAL object (E2 reports its original name again) and the
+        // fresh open of the path reaches the original again (E3): four equal readings, although the scan may have listed
+        // the other folder in between. Documented, asserted, and not hidden by polling.
+        var world = new FakeWorld();
+        var original = Folder(@"C:\Media", root: new FileId128(0x0001000000000010, 0));
+        var other = Folder(@"C:\Elsewhere", root: new FileId128(0x0001000000000020, 0));
+        world.Map(@"C:\Media", original);
+
+        var result = Run(world, @"C:\Media", () =>
+        {
+            original.Canonical = @"C:\Media.old";   // renamed away
+            world.Unmap(@"C:\Media");
+            other.Canonical = @"C:\Media";            // another folder takes its name
+            world.Map(@"C:\Media", other);
+            // ...the scan lists the wrong folder here...
+            other.Canonical = @"C:\Elsewhere";        // and everything is put back
+            original.Canonical = @"C:\Media";
+            world.Map(@"C:\Media", original);
+        });
+
+        Assert.Equal(ReverificationOutcome.Verified, result.Outcome, "L-ID2: undone before the window closes, so nothing is left to see");
+        NoHandleLeaked(world);
+    }
+
+    [Test]
+    public static void A_source_folder_replaced_by_another_folder_that_stays_there_is_caught_on_every_filesystem()
+    {
+        // The same swap NOT undone is detected: the held handle reports the original's new name (E2) and a fresh open of the
+        // path reaches the other folder (E3). It needs no root file ID, so it holds on FAT, exFAT and UDF too, where
+        // FileIdInfo is not provided.
+        foreach (var withFileId in new[] { true, false })
+        {
+            var world = new FakeWorld();
+            var original = Folder(@"E:\Media", fs: withFileId ? "NTFS" : "FAT32", root: new FileId128(0x0001000000000010, 0));
+            var other = Folder(@"E:\Elsewhere", fs: withFileId ? "NTFS" : "FAT32", root: new FileId128(0x0001000000000020, 0));
+            if (!withFileId)
+            {
+                // FileIdInfo is not provided (Win32 87): no 64-bit serial and no root file ID, as measured on FAT32, exFAT and UDF
+                foreach (var folder in new[] { original, other }) { folder.Serial64 = null; folder.RootId = null; }
+            }
+            world.Map(@"E:\Media", original);
+
+            var result = Run(world, @"E:\Media", () =>
+            {
+                original.Canonical = @"E:\Media.old";
+                world.Unmap(@"E:\Media");
+                other.Canonical = @"E:\Media";
+                world.Map(@"E:\Media", other);
+            });
+
+            Assert.Equal(ReverificationOutcome.IdentityChangedDuringScan, result.Outcome, withFileId ? "NTFS" : "FAT32");
+            Assert.True(result.Failures.Any(f => f.Stage == EvidenceStage.E2WindowEndHeld && f.Item == IdentityItem.CanonicalPath), "E2: the object the window began with was renamed");
+            NoHandleLeaked(world);
+        }
     }
 
     [Test]
