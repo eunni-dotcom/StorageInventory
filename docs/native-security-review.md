@@ -71,6 +71,81 @@ Reflection is used only by test code (the test runner `tests/Shared/MiniTest.cs`
 | **Launching** | Only on a click, allow-listed to this run's own reports and folder. A `.csv` opens in whatever app the user has associated with `.csv`, which is the user's own choice. |
 | **Content inspection, hashing, thumbnails, media metadata** | None. |
 
+## v1.1 gate C3: volume and source identity (six native calls)
+
+**Added.** Four read-only `kernel32` queries (`GetVolumeInformationByHandleW`, `GetFileInformationByHandleEx` with the
+information class `FileIdInfo` only, `GetVolumePathNameW`, `GetDiskFreeSpaceExW`), so a source can later be recognised by
+what it is rather than by its drive letter. **Not added:** any write-capable function, any other DLL, COM, WMI, registry
+probing, a PowerShell or process fallback, any network-name resolution, or manual native binding (`NativeLibrary`,
+`GetProcAddress`, function pointers). The first-party surface after C3 is exactly the six calls of the inventory above, in
+one file, and the audit (`The_only_native_calls_are_six_read_only_kernel32_functions` and its negative self-test) fails if
+a seventh appears, if one is not in `kernel32`, if `CreateFileW` is called with any desired access but the literal 0, or if
+`GetFileInformationByHandleEx` is asked for anything but `FileIdInfo`.
+
+### The zero-access root handle
+
+- **Which path.** The handle is opened on **the path the scan enumerates** (v1's validated, normalised path as entered),
+  converted only to the extended `\\?\` form, which adds no normalisation. It is never opened on the canonical path read
+  back from it: a SUBST or mapped letter that is re-pointed leaves the old target's canonical path unchanged, so opening it
+  would hide exactly the change the end-of-scan check exists to find.
+- **Which rights.** `CreateFileW` with desired access **0**, sharing read, write and delete, `FILE_FLAG_BACKUP_SEMANTICS`
+  (needed to open a directory) and `OPEN_EXISTING`. The granted access mask of such a handle was measured on Windows 11 as
+  `0x00100080` (`SYNCHRONIZE` and `FILE_READ_ATTRIBUTES`, which `CreateFileW` itself adds); `GENERIC_READ` gives
+  `0x00120089`. So the handle cannot list a directory, read data, write, or delete anything. No content is ever accessed.
+- **Failures are data.** Every query returns its Win32 error instead of throwing. A failed or unsupported call becomes an
+  evidence item that says so (*unavailable*, *call failed* or *not provided by the source*); nothing is substituted. If the
+  canonical path (every source), or the filesystem name and 32-bit serial (a local volume), cannot be obtained at
+  preflight, the source cannot be re-verified and is **not saveable** (reports only): the code never falls back to trusting
+  the path.
+- **Zero access is enough everywhere that was tried.** On NTFS, ReFS, FAT32, exFAT, UDF, SMB shares served from NTFS and
+  from FAT32, and mapped and SUBST letters, the open, the canonical path and the volume query worked with access 0.
+  `FileIdInfo` answers Win32 87 on FAT32, exFAT and UDF with access 0, with `FILE_READ_ATTRIBUTES` and with `GENERIC_READ`
+  alike, so it is a filesystem that does not implement the query, not a missing right. That is why the 64-bit serial and the
+  root directory ID are required later only when the call succeeded at preflight.
+
+### Handle lifetime and ownership
+
+`RootIdentityHold` is the only owner. A capture opens the enumerated path and reads E1 when the observation window opens,
+**holds** the handle for the window, reads E2 through the same handle and E3 through a **fresh** open of the enumerated path
+when the scan has returned, and closes the held handle in the same step. A cancelled or failed scan never reaches that step
+and disposes the hold instead, which is idempotent. The handle is a `SafeFileHandle` (so a missed disposal is still
+released by the runtime, and a closed handle can never be used by accident); the wrapper adds no finalizer. Tests prove
+that every handle opened is closed when a read throws at E1, E2 or E3, when a path cannot be opened, and when the scan is
+abandoned. C3 does not call it from a scan: v1's scan, its reports and its observers are byte-for-byte unchanged, and a test
+shows a scan's three reports identical with the handle held.
+
+### What holding the handle does (Q-19: measured on Windows 11 and on a hosted Windows Server 2025 runner)
+
+| Action while the handle is held | Observed |
+|---|---|
+| Orderly dismount: the volume lock that "Safely remove" and Eject start with (virtual NTFS volume) | **Refused** (Win32 5); it succeeded before the hold and succeeds again after it ends |
+| The same lock while an ordinary folder listing is open (the control: what a scan already has) | recorded in the evidence document |
+| Rename or delete the held folder from outside | Allowed (the handle shares delete). E2, read through the handle, then reports the new canonical name, or a `$Deleted` name; E3, a fresh open of the old path, cannot open it |
+| List or scan the same tree meanwhile | Unchanged: the three reports are byte-identical to a scan without the handle |
+| Mapped network drive: a normal disconnect | Asks for confirmation ("open files and/or incomplete directory searches pending"), as it does for any open handle, including an ordinary open folder listing; declined, the drive stays and the capture still verifies |
+| Mapped network drive: a forced disconnect and re-map | The held handle is invalidated (Win32 59); E2 fails and E3 reads the other share |
+| Virtual disk detached, or a disc image dismounted (what pulling a stick or Eject does) | Not blocked; the held handle fails (Win32 21, not ready) and a fresh open fails (Win32 3), so the capture is not eligible |
+| Another medium at the same letter | E2 fails; E3 reads the other volume's serials |
+| SUBST letter re-pointed | The held handle still reaches the original folder; E3 reaches the new one and detects it. Re-pointed away and back is **not** detected (L-ID2) |
+| A network share's folder renamed by another client | E2 reports the new name; E3 cannot open the old one |
+
+So the effect of holding the root handle is the one the specification accepts: it can block "Safely remove" (and a
+non-forced disconnect of a mapped drive) while a scan runs, and it is released when the window ends. Nothing else was
+observed. **Not measured here:** the Windows "Safely Remove Hardware" dialog on a physical USB drive, a Samba server, a
+physical medium swap, and interaction with third-party antivirus or indexers beyond the hosted images. Those are manual
+steps (`tests/identity/README.md`) and remain open acceptance evidence.
+
+### Limitations stated, not hidden
+
+- **L-ID1:** a disk clone copies the volume serial, and nothing read distinguishes a clone from its original unless both
+  are mounted together (then the user is asked). Asserted as expected behaviour by `MatchingTests`.
+- **L-ID2:** a letter re-pointed away and back during a scan, with the original volume mounted throughout, cannot be
+  detected from start and end evidence. Asserted as documented behaviour, with no polling added to hide it.
+- A Windows SMB server returns the **underlying volume's** filesystem name and both serials (measured, including for a share
+  served from a FAT32 volume), so a share can look Strong on evidence alone. It is never Strong: confidence also requires a
+  local source, so a network share is recognised by its canonical location only, and different spellings of a server
+  (`\\nas`, `\\nas.local`, an address) are different sources because no name is ever resolved.
+
 ## Residual risks (accepted, documented)
 
 1. **The folder-swap race** is narrowed but not eliminable without handle-relative directory enumeration (`NtQueryDirectoryFile` on a handle opened with `FILE_FLAG_OPEN_REPARSE_POINT`), which would add native code. The consequence is bounded: read-only traversal of the link target.

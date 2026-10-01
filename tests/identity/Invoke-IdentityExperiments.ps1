@@ -183,7 +183,7 @@ Add-Md
 # ---------------------------------------------------------------- Part 1b: access or support?
 Add-Md '### Is a failed `FileIdInfo` about access or about support?'
 Add-Md
-Add-Md 'The gate stops if any identity call needs MORE than zero access. This asks the same two calls through a handle opened with progressively richer access rights. If the answer never changes with the access requested, the failure is the filesystem not implementing the query (Win32 87), not a missing right. (This probe is test tooling; the product always opens with access 0.)'
+Add-Md 'The gate stops if any identity call needs MORE than zero access. This asks the same two calls through a handle opened with progressively richer access rights, and prints the access mask each handle was actually granted (`0x00100080` is `SYNCHRONIZE` plus `FILE_READ_ATTRIBUTES`, which is all a desired access of 0 carries). If the answer never changes with the access requested, a failure is the filesystem not implementing the query (Win32 87), not a missing right. (This probe is test tooling; the product always opens with access 0.)'
 Add-Md
 Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
@@ -192,13 +192,17 @@ public static class SiAccessProbe {
     [StructLayout(LayoutKind.Sequential)] struct FILE_ID_INFO { public ulong Serial; public ulong Lo; public ulong Hi; }
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int cls, out FILE_ID_INFO info, uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool GetVolumeInformationByHandleW(SafeFileHandle h, char[] vn, uint vns, out uint serial, out uint max, out uint flags, char[] fs, uint fss);
+    [StructLayout(LayoutKind.Sequential)] struct IO_STATUS_BLOCK { public IntPtr Status; public IntPtr Information; }
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(SafeFileHandle h, out IO_STATUS_BLOCK iosb, out uint info, uint length, int cls);
     public static string Try(string root, uint access) {
         using (SafeFileHandle h = CreateFileW(@"\\?\" + root, access, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
             if (h.IsInvalid) return "open failed, Win32 " + Marshal.GetLastWin32Error();
+            // the access mask the opened handle actually carries (FileAccessInformation = 8): 0x00100080 is SYNCHRONIZE | FILE_READ_ATTRIBUTES
+            uint mask; IO_STATUS_BLOCK iosb; string g = NtQueryInformationFile(h, out iosb, out mask, 4, 8) == 0 ? "granted 0x" + mask.ToString("X8") : "granted unknown";
             FILE_ID_INFO i; string a = GetFileInformationByHandleEx(h, 18, out i, 24) ? "FileIdInfo OK" : "FileIdInfo FAILED, Win32 " + Marshal.GetLastWin32Error();
             uint s, m, f; char[] vn = new char[261], fs = new char[261];
             string b = GetVolumeInformationByHandleW(h, vn, 261, out s, out m, out f, fs, 261) ? "VolumeInformation OK" : "VolumeInformation FAILED, Win32 " + Marshal.GetLastWin32Error();
-            return a + "; " + b;
+            return g + "; " + a + "; " + b;
         }
     }
 }
