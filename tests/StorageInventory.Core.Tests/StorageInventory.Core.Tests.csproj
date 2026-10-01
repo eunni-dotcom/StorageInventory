@@ -12,6 +12,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- TEST-O5 baseline: Core's public surface as built from v1 (see PublicSurfaceTests). -->
+    <None Include="PublicSurface.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
   </ItemGroup>
 

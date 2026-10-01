@@ -1,0 +1,370 @@
+struct StorageInventory.Core.FileInventoryRecord : System.IEquatable<StorageInventory.Core.FileInventoryRecord>
+  property System.DateTime? CreatedUtc { public get; public init; }
+  property System.DateTime? LastAccessUtc { public get; public init; }
+  property System.DateTime? ModifiedUtc { public get; public init; }
+  property System.IO.FileAttributes Attributes { public get; public init; }
+  property System.Int64 SizeBytes { public get; public init; }
+  property System.String Extension { public get; public init; }
+  property System.String FileName { public get; public init; }
+  property System.String FullPath { public get; public init; }
+  property System.String RelativeDirectory { public get; public init; }
+  property System.String RelativePath { public get; public init; }
+  public ctor(System.String FileName, System.String Extension, System.String RelativePath, System.String RelativeDirectory, System.String FullPath, System.Int64 SizeBytes, System.DateTime? CreatedUtc, System.DateTime? ModifiedUtc, System.DateTime? LastAccessUtc, System.IO.FileAttributes Attributes)
+  public method System.Boolean Equals(StorageInventory.Core.FileInventoryRecord other)
+  public method System.Void Deconstruct(out System.String FileName, out System.String Extension, out System.String RelativePath, out System.String RelativeDirectory, out System.String FullPath, out System.Int64 SizeBytes, out System.DateTime? CreatedUtc, out System.DateTime? ModifiedUtc, out System.DateTime? LastAccessUtc, out System.IO.FileAttributes Attributes)
+  public static method System.Boolean op_Equality(StorageInventory.Core.FileInventoryRecord left, StorageInventory.Core.FileInventoryRecord right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.FileInventoryRecord left, StorageInventory.Core.FileInventoryRecord right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.FolderInventoryRecord : System.IEquatable<StorageInventory.Core.FolderInventoryRecord>
+  property StorageInventory.Core.FolderScanStatus Status { public get; public init; }
+  property StorageInventory.Core.ScanErrorType? StatusReason { public get; public init; }
+  property System.Boolean SubtreeComplete { public get; public init; }
+  property System.DateTime? CreatedUtc { public get; public init; }
+  property System.DateTime? ModifiedUtc { public get; public init; }
+  property System.Double PercentOfRoot { public get; public init; }
+  property System.Double? PercentOfParent { public get; public init; }
+  property System.IO.FileAttributes Attributes { public get; public init; }
+  property System.Int32 Depth { public get; public init; }
+  property System.Int64 DirectFileCount { public get; public init; }
+  property System.Int64 DirectSizeBytes { public get; public init; }
+  property System.Int64 DirectSubfolderCount { public get; public init; }
+  property System.Int64 TotalFileCount { public get; public init; }
+  property System.Int64 TotalSizeBytes { public get; public init; }
+  property System.Int64 TotalSubfolderCount { public get; public init; }
+  property System.Int64? LargestFileBytes { public get; public init; }
+  property System.String FullPath { public get; public init; }
+  property System.String LargestFileRelativePath { public get; public init; }
+  property System.String Name { public get; public init; }
+  property System.String ParentRelativePath { public get; public init; }
+  property System.String RelativePath { public get; public init; }
+  property System.String StatusText { public get; }
+  public ctor()
+  public method StorageInventory.Core.FolderInventoryRecord <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.FolderInventoryRecord other)
+  public static method System.Boolean op_Equality(StorageInventory.Core.FolderInventoryRecord left, StorageInventory.Core.FolderInventoryRecord right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.FolderInventoryRecord left, StorageInventory.Core.FolderInventoryRecord right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+enum StorageInventory.Core.FolderScanStatus : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Ok = 0
+  value Partial = 2
+  value ReparsePointSkipped = 3
+  value Unreadable = 1
+interface StorageInventory.Core.IStorageInventoryScanner
+  public abstract method System.Threading.Tasks.Task<StorageInventory.Core.StorageScanResult> ScanAsync(StorageInventory.Core.StorageScanOptions options, System.IProgress<StorageInventory.Core.StorageScanProgress> progress = null, System.Threading.CancellationToken cancellationToken = null)
+sealed class StorageInventory.Core.InventoryScanner : StorageInventory.Core.IStorageInventoryScanner
+  public ctor()
+  public method StorageInventory.Core.StorageScanResult Scan(StorageInventory.Core.StorageScanOptions options, System.IProgress<StorageInventory.Core.StorageScanProgress> progress = null, System.Threading.CancellationToken cancellationToken = null)
+  public method System.Threading.Tasks.Task<StorageInventory.Core.StorageScanResult> ScanAsync(StorageInventory.Core.StorageScanOptions options, System.IProgress<StorageInventory.Core.StorageScanProgress> progress = null, System.Threading.CancellationToken cancellationToken = null)
+enum StorageInventory.Core.Paths.IssueSeverity : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Blocked = 2
+  value Info = 0
+  value Warning = 1
+sealed class StorageInventory.Core.Paths.PathIssue : System.IEquatable<StorageInventory.Core.Paths.PathIssue>
+  property StorageInventory.Core.Paths.IssueSeverity Severity { public get; public init; }
+  property StorageInventory.Core.Paths.PathSubject Subject { public get; public init; }
+  property System.String Code { public get; public init; }
+  property System.String Details { public get; public init; }
+  property System.String Message { public get; public init; }
+  public ctor(StorageInventory.Core.Paths.IssueSeverity Severity, StorageInventory.Core.Paths.PathSubject Subject, System.String Code, System.String Message, System.String Details = null)
+  public method StorageInventory.Core.Paths.PathIssue <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Paths.PathIssue other)
+  public method System.Void Deconstruct(out StorageInventory.Core.Paths.IssueSeverity Severity, out StorageInventory.Core.Paths.PathSubject Subject, out System.String Code, out System.String Message, out System.String Details)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Paths.PathIssue left, StorageInventory.Core.Paths.PathIssue right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Paths.PathIssue left, StorageInventory.Core.Paths.PathIssue right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+static class StorageInventory.Core.Paths.PathPolicy
+  public static method StorageInventory.Core.Paths.PathValidationResult Validate(System.String rootInput, System.String outputInput, System.String baseDirectory = null)
+  public static method System.Boolean IsSameOrInside(System.String candidate, System.String container)
+enum StorageInventory.Core.Paths.PathSubject : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Reports = 1
+  value Source = 0
+sealed class StorageInventory.Core.Paths.PathValidationResult
+  property StorageInventory.Core.Paths.IssueSeverity? HighestSeverity { public get; }
+  property System.Boolean CanScan { public get; }
+  property System.Boolean OutputFolderExists { public get; }
+  property System.Boolean OutputIsNetwork { public get; }
+  property System.Boolean RootIsNetwork { public get; }
+  property System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Paths.PathIssue> Issues { public get; }
+  property System.String OutputFullPath { public get; }
+  property System.String RootFullPath { public get; }
+sealed class StorageInventory.Core.PhaseTimings : System.IEquatable<StorageInventory.Core.PhaseTimings>
+  property System.TimeSpan Aggregation { public get; public init; }
+  property System.TimeSpan Enumeration { public get; public init; }
+  property System.TimeSpan FilesReport { public get; public init; }
+  property System.TimeSpan FoldersReport { public get; public init; }
+  property System.TimeSpan Sorting { public get; public init; }
+  property System.TimeSpan Total { public get; public init; }
+  property System.TimeSpan Validation { public get; public init; }
+  public ctor()
+  public method StorageInventory.Core.PhaseTimings <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.PhaseTimings other)
+  public static method System.Boolean op_Equality(StorageInventory.Core.PhaseTimings left, StorageInventory.Core.PhaseTimings right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.PhaseTimings left, StorageInventory.Core.PhaseTimings right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+enum StorageInventory.Core.ReparsePointPolicy : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value NeverFollow = 0
+sealed class StorageInventory.Core.ReportSet : System.IEquatable<StorageInventory.Core.ReportSet>
+  property System.Boolean FilesSortedLargestFirst { public get; public init; }
+  property System.String ErrorsCsv { public get; public init; }
+  property System.String FilesCsv { public get; public init; }
+  property System.String FoldersCsv { public get; public init; }
+  public ctor(System.String FilesCsv, System.String FoldersCsv, System.String ErrorsCsv, System.Boolean FilesSortedLargestFirst)
+  public method StorageInventory.Core.ReportSet <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.ReportSet other)
+  public method System.Void Deconstruct(out System.String FilesCsv, out System.String FoldersCsv, out System.String ErrorsCsv, out System.Boolean FilesSortedLargestFirst)
+  public static method System.Boolean op_Equality(StorageInventory.Core.ReportSet left, StorageInventory.Core.ReportSet right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.ReportSet left, StorageInventory.Core.ReportSet right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.ErrorSummary : System.IEquatable<StorageInventory.Core.Reports.ErrorSummary>
+  property System.Collections.Generic.IReadOnlyDictionary<System.String, System.Int64> CountsByType { public get; public init; }
+  property System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.ExploredError> Rows { public get; public init; }
+  property System.Int64 TotalRows { public get; public init; }
+  public ctor(System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.ExploredError> Rows, System.Collections.Generic.IReadOnlyDictionary<System.String, System.Int64> CountsByType, System.Int64 TotalRows)
+  public method StorageInventory.Core.Reports.ErrorSummary <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.ErrorSummary other)
+  public method System.Void Deconstruct(out System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.ExploredError> Rows, out System.Collections.Generic.IReadOnlyDictionary<System.String, System.Int64> CountsByType, out System.Int64 TotalRows)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.ErrorSummary left, StorageInventory.Core.Reports.ErrorSummary right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.ErrorSummary left, StorageInventory.Core.Reports.ErrorSummary right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.ExploredError : System.IEquatable<StorageInventory.Core.Reports.ExploredError>
+  property System.String ErrorType { public get; public init; }
+  property System.String Message { public get; public init; }
+  property System.String Path { public get; public init; }
+  public ctor(System.String Path, System.String ErrorType, System.String Message)
+  public method StorageInventory.Core.Reports.ExploredError <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.ExploredError other)
+  public method System.Void Deconstruct(out System.String Path, out System.String ErrorType, out System.String Message)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.ExploredError left, StorageInventory.Core.Reports.ExploredError right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.ExploredError left, StorageInventory.Core.Reports.ExploredError right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.ExploredFile : System.IEquatable<StorageInventory.Core.Reports.ExploredFile>
+  property System.Int64 SizeBytes { public get; public init; }
+  property System.String FileType { public get; public init; }
+  property System.String Modified { public get; public init; }
+  property System.String RelativePath { public get; public init; }
+  public ctor(System.String RelativePath, System.Int64 SizeBytes, System.String FileType, System.String Modified)
+  public method StorageInventory.Core.Reports.ExploredFile <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.ExploredFile other)
+  public method System.Void Deconstruct(out System.String RelativePath, out System.Int64 SizeBytes, out System.String FileType, out System.String Modified)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.ExploredFile left, StorageInventory.Core.Reports.ExploredFile right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.ExploredFile left, StorageInventory.Core.Reports.ExploredFile right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.ExploredFolder : System.IEquatable<StorageInventory.Core.Reports.ExploredFolder>
+  property System.Boolean SubtreeComplete { public get; public init; }
+  property System.Double PercentOfRoot { public get; public init; }
+  property System.Int64 TotalBytes { public get; public init; }
+  property System.Int64 TotalFiles { public get; public init; }
+  property System.String RelativePath { public get; public init; }
+  property System.String ScanStatus { public get; public init; }
+  public ctor(System.String RelativePath, System.Int64 TotalBytes, System.Double PercentOfRoot, System.Int64 TotalFiles, System.String ScanStatus, System.Boolean SubtreeComplete)
+  public method StorageInventory.Core.Reports.ExploredFolder <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.ExploredFolder other)
+  public method System.Void Deconstruct(out System.String RelativePath, out System.Int64 TotalBytes, out System.Double PercentOfRoot, out System.Int64 TotalFiles, out System.String ScanStatus, out System.Boolean SubtreeComplete)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.ExploredFolder left, StorageInventory.Core.Reports.ExploredFolder right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.ExploredFolder left, StorageInventory.Core.Reports.ExploredFolder right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+static class StorageInventory.Core.Reports.FileTypeCatalog
+  public const field System.String NoExtension = No Extension
+  public const field System.String Other = Other
+  public static method System.String CategoryOf(System.String extension)
+  static property System.Collections.Generic.IReadOnlyList<System.String> Categories { public get; }
+sealed class StorageInventory.Core.Reports.FileTypeSummary : System.IEquatable<StorageInventory.Core.Reports.FileTypeSummary>
+  property System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Categories { public get; public init; }
+  property System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Extensions { public get; public init; }
+  public ctor(System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Categories, System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Extensions)
+  public method StorageInventory.Core.Reports.FileTypeSummary <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.FileTypeSummary other)
+  public method System.Void Deconstruct(out System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Categories, out System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.FileTypeTotal> Extensions)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.FileTypeSummary left, StorageInventory.Core.Reports.FileTypeSummary right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.FileTypeSummary left, StorageInventory.Core.Reports.FileTypeSummary right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.FileTypeTotal : System.IEquatable<StorageInventory.Core.Reports.FileTypeTotal>
+  property System.Int64 Bytes { public get; public init; }
+  property System.Int64 Files { public get; public init; }
+  property System.String Category { public get; public init; }
+  property System.String Name { public get; public init; }
+  public ctor(System.String Name, System.String Category, System.Int64 Files, System.Int64 Bytes)
+  public method StorageInventory.Core.Reports.FileTypeTotal <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.FileTypeTotal other)
+  public method System.Void Deconstruct(out System.String Name, out System.String Category, out System.Int64 Files, out System.Int64 Bytes)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.FileTypeTotal left, StorageInventory.Core.Reports.FileTypeTotal right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.FileTypeTotal left, StorageInventory.Core.Reports.FileTypeTotal right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.Reports.ReportCsvReader : System.IDisposable
+  property System.Collections.Generic.IReadOnlyList<System.String> Header { public get; }
+  public ctor(System.String path)
+  public method System.Int32 ColumnIndex(System.String name)
+  public method System.String[] ReadRecord()
+  public method System.Void Dispose()
+  public static method System.Collections.Generic.List<System.Collections.Generic.Dictionary<System.String, System.String>> ReadAll(System.String path)
+static class StorageInventory.Core.Reports.ReportExplorer
+  public static method StorageInventory.Core.Reports.ErrorSummary Errors(StorageInventory.Core.StorageScanResult scan, System.Int32 limit, System.Threading.CancellationToken cancellationToken = null)
+  public static method StorageInventory.Core.Reports.FileTypeSummary FileTypes(StorageInventory.Core.StorageScanResult scan, System.Int32 extensionLimit, System.Threading.CancellationToken cancellationToken = null)
+  public static method System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.ExploredFile> LargestFiles(StorageInventory.Core.StorageScanResult scan, System.Int32 limit, System.Threading.CancellationToken cancellationToken = null)
+  public static method System.Collections.Generic.IReadOnlyList<StorageInventory.Core.Reports.ExploredFolder> LargestFolders(StorageInventory.Core.StorageScanResult scan, System.Int32 limit, System.Threading.CancellationToken cancellationToken = null)
+sealed class StorageInventory.Core.Reports.WorkbookExportResult : System.IEquatable<StorageInventory.Core.Reports.WorkbookExportResult>
+  property StorageInventory.Core.Reports.WorkbookExportState State { public get; public init; }
+  property System.Boolean FilesSheetOmitted { public get; public init; }
+  property System.String Message { public get; public init; }
+  property System.String UnfinishedPath { public get; public init; }
+  property System.String WorkbookPath { public get; public init; }
+  public ctor(StorageInventory.Core.Reports.WorkbookExportState State, System.String WorkbookPath, System.String UnfinishedPath, System.String Message, System.Boolean FilesSheetOmitted)
+  public method StorageInventory.Core.Reports.WorkbookExportResult <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.Reports.WorkbookExportResult other)
+  public method System.Void Deconstruct(out StorageInventory.Core.Reports.WorkbookExportState State, out System.String WorkbookPath, out System.String UnfinishedPath, out System.String Message, out System.Boolean FilesSheetOmitted)
+  public static method System.Boolean op_Equality(StorageInventory.Core.Reports.WorkbookExportResult left, StorageInventory.Core.Reports.WorkbookExportResult right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.Reports.WorkbookExportResult left, StorageInventory.Core.Reports.WorkbookExportResult right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+enum StorageInventory.Core.Reports.WorkbookExportState : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Cancelled = 2
+  value Created = 0
+  value Failed = 1
+static class StorageInventory.Core.Reports.WorkbookExporter
+  public static method StorageInventory.Core.Reports.WorkbookExportResult Export(StorageInventory.Core.StorageScanResult scan, System.Threading.CancellationToken cancellationToken = null)
+enum StorageInventory.Core.ScanCompletionState : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Cancelled = 2
+  value Complete = 0
+  value Failed = 3
+  value Incomplete = 1
+sealed class StorageInventory.Core.ScanErrorRecord : System.IEquatable<StorageInventory.Core.ScanErrorRecord>
+  property StorageInventory.Core.ScanErrorType Type { public get; public init; }
+  property System.String Message { public get; public init; }
+  property System.String Path { public get; public init; }
+  public ctor(System.String Path, StorageInventory.Core.ScanErrorType Type, System.String Message)
+  public method StorageInventory.Core.ScanErrorRecord <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.ScanErrorRecord other)
+  public method System.Void Deconstruct(out System.String Path, out StorageInventory.Core.ScanErrorType Type, out System.String Message)
+  public static method System.Boolean op_Equality(StorageInventory.Core.ScanErrorRecord left, StorageInventory.Core.ScanErrorRecord right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.ScanErrorRecord left, StorageInventory.Core.ScanErrorRecord right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+enum StorageInventory.Core.ScanErrorType : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value AccessDenied = 0
+  value IOError = 3
+  value InvalidPath = 4
+  value InvalidTimestamp = 5
+  value NotFound = 1
+  value PathTooLong = 2
+  value ReparsePointFile = 8
+  value ReparsePointSkipped = 7
+  value UnexpectedError = 6
+static class StorageInventory.Core.ScanErrorTypeExtensions
+  public static method System.Boolean IsInformational(StorageInventory.Core.ScanErrorType type)
+sealed class StorageInventory.Core.ScanFailure : System.IEquatable<StorageInventory.Core.ScanFailure>
+  property StorageInventory.Core.ScanFailureKind Kind { public get; public init; }
+  property System.String Message { public get; public init; }
+  public ctor(StorageInventory.Core.ScanFailureKind Kind, System.String Message)
+  public method StorageInventory.Core.ScanFailure <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.ScanFailure other)
+  public method System.Void Deconstruct(out StorageInventory.Core.ScanFailureKind Kind, out System.String Message)
+  public static method System.Boolean op_Equality(StorageInventory.Core.ScanFailure left, StorageInventory.Core.ScanFailure right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.ScanFailure left, StorageInventory.Core.ScanFailure right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+enum StorageInventory.Core.ScanFailureKind : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value InternalConsistency = 3
+  value InvalidPaths = 0
+  value OutputError = 1
+  value OutputInsideScannedTree = 2
+  value Unexpected = 4
+enum StorageInventory.Core.ScanPhase : System.Int32, System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+  value Aggregating = 2
+  value Enumerating = 1
+  value Finished = 6
+  value SortingFiles = 4
+  value Validating = 0
+  value WritingFilesReport = 5
+  value WritingFoldersReport = 3
+sealed class StorageInventory.Core.ScanTotals : System.IEquatable<StorageInventory.Core.ScanTotals>
+  property System.Int64 AffectedAncestorFolders { public get; public init; }
+  property System.Int64 Bytes { public get; public init; }
+  property System.Int64 FileReparsePoints { public get; public init; }
+  property System.Int64 Files { public get; public init; }
+  property System.Int64 Folders { public get; public init; }
+  property System.Int64 LocallyIncompleteFolders { public get; public init; }
+  property System.Int64 ReparsePointsSkipped { public get; public init; }
+  property System.Int64 ScanErrors { public get; public init; }
+  public ctor()
+  public method StorageInventory.Core.ScanTotals <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.ScanTotals other)
+  public static method System.Boolean op_Equality(StorageInventory.Core.ScanTotals left, StorageInventory.Core.ScanTotals right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.ScanTotals left, StorageInventory.Core.ScanTotals right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.StorageScanOptions : System.IEquatable<StorageInventory.Core.StorageScanOptions>
+  property StorageInventory.Core.ReparsePointPolicy ReparsePoints { public get; public init; }
+  property System.Boolean SortFiles { public get; public init; }
+  property System.String OutputPath { public get; public init; }
+  property System.String RootPath { public get; public init; }
+  property System.TimeSpan ProgressInterval { public get; public init; }
+  public ctor()
+  public method StorageInventory.Core.StorageScanOptions <Clone>$()
+  public method System.Boolean Equals(StorageInventory.Core.StorageScanOptions other)
+  public static method System.Boolean op_Equality(StorageInventory.Core.StorageScanOptions left, StorageInventory.Core.StorageScanOptions right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.StorageScanOptions left, StorageInventory.Core.StorageScanOptions right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+struct StorageInventory.Core.StorageScanProgress : System.IEquatable<StorageInventory.Core.StorageScanProgress>
+  property StorageInventory.Core.ScanPhase Phase { public get; public init; }
+  property System.Boolean HasKnownTotal { public get; }
+  property System.Int64 BytesDiscovered { public get; public init; }
+  property System.Int64 FileReparsePoints { public get; public init; }
+  property System.Int64 FilesDiscovered { public get; public init; }
+  property System.Int64 FoldersDiscovered { public get; public init; }
+  property System.Int64 PhaseItemsDone { public get; public init; }
+  property System.Int64 PhaseItemsTotal { public get; public init; }
+  property System.Int64 ReparsePointsSkipped { public get; public init; }
+  property System.Int64 ScanErrors { public get; public init; }
+  property System.String CurrentRelativePath { public get; public init; }
+  property System.TimeSpan Elapsed { public get; public init; }
+  public ctor(StorageInventory.Core.ScanPhase Phase, System.Int64 FilesDiscovered, System.Int64 FoldersDiscovered, System.Int64 BytesDiscovered, System.Int64 ScanErrors, System.Int64 ReparsePointsSkipped, System.Int64 FileReparsePoints, System.String CurrentRelativePath, System.TimeSpan Elapsed, System.Int64 PhaseItemsDone = 0, System.Int64 PhaseItemsTotal = 0)
+  public method System.Boolean Equals(StorageInventory.Core.StorageScanProgress other)
+  public method System.Void Deconstruct(out StorageInventory.Core.ScanPhase Phase, out System.Int64 FilesDiscovered, out System.Int64 FoldersDiscovered, out System.Int64 BytesDiscovered, out System.Int64 ScanErrors, out System.Int64 ReparsePointsSkipped, out System.Int64 FileReparsePoints, out System.String CurrentRelativePath, out System.TimeSpan Elapsed, out System.Int64 PhaseItemsDone, out System.Int64 PhaseItemsTotal)
+  public static method System.Boolean op_Equality(StorageInventory.Core.StorageScanProgress left, StorageInventory.Core.StorageScanProgress right)
+  public static method System.Boolean op_Inequality(StorageInventory.Core.StorageScanProgress left, StorageInventory.Core.StorageScanProgress right)
+  public virtual method System.Boolean Equals(System.Object obj)
+  public virtual method System.Int32 GetHashCode()
+  public virtual method System.String ToString()
+sealed class StorageInventory.Core.StorageScanResult
+  property StorageInventory.Core.FolderInventoryRecord Root { public get; }
+  property StorageInventory.Core.PhaseTimings Timings { public get; }
+  property StorageInventory.Core.ReportSet Reports { public get; }
+  property StorageInventory.Core.ScanCompletionState State { public get; }
+  property StorageInventory.Core.ScanFailure Failure { public get; }
+  property StorageInventory.Core.ScanTotals Totals { public get; }
+  property System.Boolean Finished { public get; }
+  property System.Boolean IsComplete { public get; }
+  property System.Collections.Generic.IReadOnlyDictionary<StorageInventory.Core.ScanErrorType, System.Int64> ErrorCounts { public get; }
+  property System.Collections.Generic.IReadOnlyList<StorageInventory.Core.FolderInventoryRecord> LargestTopLevelFolders { public get; }
+  property System.Collections.Generic.IReadOnlyList<System.String> IncompleteArtifacts { public get; }
+  property System.String OutputPath { public get; }
+  property System.String RootPath { public get; }
+  property System.String RunId { public get; }
