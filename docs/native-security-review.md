@@ -7,6 +7,12 @@ This review was done separately from implementation, reading the shipped code (`
 `tests/StorageInventory.IntegrationTests/SecurityAuditTests.cs`, which fails if the code drifts: it checks the source
 text, the compiled assemblies' references, the P/Invoke methods found by reflection, and the manifest.
 
+> **v1.1 update (gate C3).** The first-party native surface grew from two to **six read-only `kernel32` calls**: four
+> identity queries were added for volume and source identity (RX-04, §7.8 of the v1.1 specification). The inventory below
+> lists all six, and [the C3 section](#v11-gate-c3-volume-and-source-identity-six-native-calls) records how they are used,
+> what holding a handle does, and what was measured. Nothing is persisted yet (no Library, no database), and the C3 identity
+> code is internal.
+
 ## Safety contract: verdict
 
 | Property | Verdict | Evidence |
@@ -21,6 +27,7 @@ text, the compiled assemblies' references, the P/Invoke methods found by reflect
 | Existing files never overwritten | Holds | Creation is only `FileMode.CreateNew`; the only rename is `File.Move(..., overwrite: false)`. Tests exist for races on CSV, `.xlsx` and `.partial` names. |
 | Cancellation and failure leave the tree untouched and never look complete | Holds | Four distinct `ScanCompletionState`s; `Cancelled`/`Failed` expose no reports and list every created file as incomplete; nothing is deleted automatically. |
 | Every output mutation has a narrow purpose | Holds | See the inventory below. |
+| Identity capture (v1.1 C3) never reads content or changes anything | Holds | The four new calls are read-only queries through a directory handle opened with **desired access 0** (its granted access was measured as `0x00100080`, `SYNCHRONIZE` plus `FILE_READ_ATTRIBUTES`, against `0x00120089` for `GENERIC_READ`), or by path. The handle is shared read, write and delete, so it never blocks a rename, a delete or a listing. A test shows a tree's names, sizes, attributes and timestamps identical before and after capture. |
 
 ## API inventory: everything that can write, delete, move, launch or call native code
 
@@ -33,7 +40,11 @@ text, the compiled assemblies' references, the P/Invoke methods found by reflect
 | `new FileStream(…, Open, Read)` | `ReportWriters.WriteSortedFiles`, `ReportCsvReader` | Read our own temporary file and reports | No | Own files only |
 | `FileSystemEnumerable<T>` | `Core/Scanning/ScanEngine.cs` | List one folder (metadata) | No | Never recursive by itself; never entered for reparse points |
 | `File.GetAttributes`, `DirectoryInfo` properties, `FileSystemInfo.LinkTarget` | `ScanEngine`, `PathPolicy`, `ReportRun` | Read attributes, timestamps and link targets | No | Link data is read, never followed |
-| `CreateFileW` (desired access **0**) + `GetFinalPathNameByHandleW` | `Core/Paths/NativeMethods.cs` | The real location of the source/output folders, to see through aliases | No | The **only** P/Invoke in the product (checked by reflection); a zero-access handle can't read, write or delete |
+| `CreateFileW` (desired access **0**) + `GetFinalPathNameByHandleW` | `Core/Paths/NativeMethods.cs` | The real location of the source/output folders, to see through aliases; since C3 also the identity handle (below) | No | Two of the product's **six** P/Invokes (checked by reflection); a zero-access handle can't read, write or delete. `CreateFileW` has one call site, and it passes the literal 0 |
+| `GetVolumeInformationByHandleW` | `NativeMethods`; called by `Core/Identity/WindowsEvidenceSource` | Filesystem name, 32-bit volume serial, label and flags of the volume holding the opened directory (C3) | No | A query on the zero-access handle; a failure is recorded as evidence with its Win32 error, never thrown and never replaced by a guess |
+| `GetFileInformationByHandleEx`, information class **`FileIdInfo` (18) only** | same | The 64-bit volume serial and the 128-bit file ID of the opened directory (C3) | No | The class parameter's type is an enum with that single member; the audit forbids a cast to it and any other class. Fails with Win32 87 on FAT32, exFAT and UDF, which is a support limit, not an access limit (measured) |
+| `GetVolumePathNameW` | same | The mount point of the volume holding the canonical path, for display (C3) | No | A path query (there is no handle form). It never decides identity |
+| `GetDiskFreeSpaceExW` | same | Capacity and free bytes of that volume, for display and for Moderate corroboration (C3) | No | A path query. Mutable values: never identity |
 | `DriveInfo.DriveType` | `PathPolicy.IsNetworkPath` | Warn about network drives | No | |
 | `Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })` | `App/Services/ReportOpener.cs` | Open a report or the report folder at the user's click | No (launches the associated app) | Allow-list: this finished run's 3 CSVs, its workbook and its output folder, which must exist. Never automatic. No arguments, no verbs, no elevation |
 | `Microsoft.Win32.OpenFolderDialog` | `App/Services/FolderPicker.cs` | Choose a folder | No | Returns a path only |

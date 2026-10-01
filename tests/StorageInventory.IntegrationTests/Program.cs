@@ -21,6 +21,10 @@ if (args.Length >= 1 && args[0] == "--identity-hold")
 {
     return IdentityProbe.RunHold(args[1..]);    // v1.1 C3 platform evidence (Q-19, TEST-I6): holds the root handle across a manual step
 }
+if (args.Length >= 1 && args[0] == "--identity-enumerate")
+{
+    return IdentityProbe.RunEnumerateHold(args[1..]);   // the control for those experiments: a folder listing left open, as a scan has one
+}
 
 try
 {
