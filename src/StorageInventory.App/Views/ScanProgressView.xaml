@@ -1,0 +1,51 @@
+<UserControl x:Class="StorageInventory.App.Views.ScanProgressView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- v1 MainWindow.xaml lines 169-214 (the Scanning stage), unchanged apart from indentation. Bound to the Scan page's view model. -->
+    <StackPanel DataContext="{Binding}">
+        <Border Style="{StaticResource Card}" DataContext="{Binding Progress}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource CardTitle}" Text="Scanning" />
+                <TextBlock Text="{Binding Phase}" TextWrapping="Wrap" Margin="0,0,0,10"
+                           AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="{Binding Phase}" />
+                <ProgressBar Height="6" Margin="0,0,0,18" IsIndeterminate="{Binding IsIndeterminate}" Value="{Binding PercentDone, Mode=OneWay}"
+                             AutomationProperties.Name="Scan progress"
+                             AutomationProperties.HelpText="Shows movement only; the total number of files is not known until the scan ends" />
+                <UniformGrid Columns="3" Margin="0,0,0,8">
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Files found" />
+                        <TextBlock Text="{Binding Files}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Files, StringFormat='Files found: {0}'}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Folders found" />
+                        <TextBlock Text="{Binding Folders}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Folders, StringFormat='Folders found: {0}'}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Data found" />
+                        <TextBlock Text="{Binding Data}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Data, StringFormat='Data found: {0}'}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Could not read" />
+                        <TextBlock Text="{Binding Errors}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Errors, StringFormat='Items that could not be read: {0}'}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Links skipped" />
+                        <TextBlock Text="{Binding LinksSkipped}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding LinksSkipped, StringFormat='Links skipped: {0}'}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,16,14">
+                        <TextBlock Style="{StaticResource FactName}" Text="Elapsed" />
+                        <TextBlock Text="{Binding Elapsed}" FontSize="22" FontWeight="SemiBold" AutomationProperties.Name="{Binding Elapsed, StringFormat='Elapsed: {0}'}" />
+                    </StackPanel>
+                </UniformGrid>
+                <TextBlock Style="{StaticResource FactName}" Text="Current folder" />
+                <TextBlock Text="{Binding CurrentFolder}" TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentFolder}" />
+            </StackPanel>
+        </Border>
+        <TextBlock Style="{StaticResource Secondary}" Margin="2,0,2,16"
+                   Text="Only names, sizes, dates and attributes are being read. Cancelling is safe: the report files are closed and clearly marked incomplete." />
+        <Button HorizontalAlignment="Right" MinWidth="160" Padding="20,8" Command="{Binding CancelScanCommand}"
+                AutomationProperties.Name="Cancel scan">
+            <AccessText Text="_Cancel scan" />
+        </Button>
+    </StackPanel>
+</UserControl>

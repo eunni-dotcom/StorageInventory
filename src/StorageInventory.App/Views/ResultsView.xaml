@@ -1,0 +1,174 @@
+<UserControl x:Class="StorageInventory.App.Views.ResultsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- v1 MainWindow.xaml lines 217-385 (the Results stage), unchanged apart from indentation. Bound to the Scan page's view model. -->
+    <StackPanel>
+        <Border Style="{StaticResource Card}" DataContext="{Binding Results}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock FontFamily="{StaticResource IconFont}" FontSize="20" VerticalAlignment="Center" Text="{Binding Glyph}"
+                               AutomationProperties.Name="{Binding Headline}" />
+                    <TextBlock Margin="10,0,0,0" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Text="{Binding Headline}"
+                               AutomationProperties.LiveSetting="Assertive" AutomationProperties.Name="{Binding Headline}" />
+                </StackPanel>
+                <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,14" Text="{Binding Explanation}" />
+                <TextBlock FontWeight="SemiBold" Margin="0,0,0,6" Text="Counted before the scan stopped (partial, not totals):"
+                           Visibility="{Binding CountsArePartial, Converter={StaticResource BoolToVisibility}}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Style="{StaticResource FactName}" Text="Files" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Files}" />
+                    <TextBlock Grid.Row="1" Style="{StaticResource FactName}" Text="Folders" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Folders}" />
+                    <TextBlock Grid.Row="2" Style="{StaticResource FactName}" Text="Total data" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding TotalData}" />
+                    <TextBlock Grid.Row="3" Style="{StaticResource FactName}" Text="Could not read" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Errors}" />
+                    <TextBlock Grid.Row="4" Style="{StaticResource FactName}" Text="Links skipped" />
+                    <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding LinksSkipped}" />
+                    <TextBlock Grid.Row="5" Style="{StaticResource FactName}" Text="Elapsed" />
+                    <TextBlock Grid.Row="5" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Elapsed}" />
+                    <TextBlock Grid.Row="6" Style="{StaticResource FactName}" Text="Completeness" />
+                    <TextBlock Grid.Row="6" Grid.Column="1" Style="{StaticResource FactValue}" Text="{Binding Completeness}" FontWeight="SemiBold" />
+                </Grid>
+                <TextBlock Style="{StaticResource Secondary}" Margin="0,10,0,0" Text="{Binding WorkbookStatus}"
+                           Visibility="{Binding HasWorkbookStatus, Converter={StaticResource BoolToVisibility}}" />
+                <StackPanel Margin="0,12,0,0" Visibility="{Binding HasIncompleteArtifacts, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock FontWeight="SemiBold" TextWrapping="Wrap"
+                               Text="These files were created by this run but are INCOMPLETE. They are not valid reports and are safe to delete:" />
+                    <ItemsControl ItemsSource="{Binding IncompleteArtifacts}" Margin="0,4,0,0" AutomationProperties.Name="Incomplete files">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                         FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" AutomationProperties.Name="Incomplete file" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+        <!-- Actions: nothing opens unless the user clicks -->
+        <WrapPanel Margin="0,0,0,12" DataContext="{Binding Results}" Visibility="{Binding Finished, Converter={StaticResource BoolToVisibility}}">
+            <Button Margin="0,0,8,8" Command="{Binding OpenFilesReportCommand}" AutomationProperties.Name="Open Files report"><AccessText Text="Open _Files report" /></Button>
+            <Button Margin="0,0,8,8" Command="{Binding OpenFoldersReportCommand}" AutomationProperties.Name="Open Folders report"><AccessText Text="Open F_olders report" /></Button>
+            <Button Margin="0,0,8,8" Command="{Binding OpenErrorsReportCommand}" AutomationProperties.Name="Open Errors report"><AccessText Text="Open _Errors report" /></Button>
+            <Button Margin="0,0,8,8" Command="{Binding OpenReportFolderCommand}" AutomationProperties.Name="Open report folder"><AccessText Text="Open report fol_der" /></Button>
+            <Button Margin="0,0,8,8" Command="{Binding OpenWorkbookCommand}" AutomationProperties.Name="Open Excel workbook"
+                    Visibility="{Binding HasWorkbook, Converter={StaticResource BoolToVisibility}}"><AccessText Text="Open _workbook" /></Button>
+        </WrapPanel>
+        <TextBlock DataContext="{Binding Results}" Text="{Binding ActionStatus}" TextWrapping="Wrap" Margin="0,0,0,12"
+                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                   Visibility="{Binding HasActionStatus, Converter={StaticResource BoolToVisibility}}" AutomationProperties.LiveSetting="Assertive" />
+
+        <!-- Read-only exploration of the finished reports -->
+        <TabControl DataContext="{Binding Results}" Margin="0,0,0,16" Visibility="{Binding Finished, Converter={StaticResource BoolToVisibility}}"
+                    AutomationProperties.Name="Explore the results">
+            <TabControl.Resources>
+                <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+                    <Setter Property="IsReadOnly" Value="True" />
+                    <Setter Property="AutoGenerateColumns" Value="False" />
+                    <Setter Property="CanUserSortColumns" Value="True" />
+                    <Setter Property="CanUserReorderColumns" Value="False" />
+                    <Setter Property="HeadersVisibility" Value="Column" />
+                    <Setter Property="SelectionMode" Value="Single" />
+                    <Setter Property="Height" Value="380" />
+                    <Setter Property="EnableRowVirtualization" Value="True" />
+                    <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+                    <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+                </Style>
+            </TabControl.Resources>
+
+            <TabItem Header="Overview">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Style="{StaticResource CardTitle}" Text="Largest top-level folders" />
+                    <DataGrid ItemsSource="{Binding TopFolders}" AutomationProperties.Name="Largest top-level folders">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" SortMemberPath="SizeBytes" Width="110" />
+                            <DataGridTextColumn Header="% of root" Binding="{Binding PercentOfRoot}" SortMemberPath="Percent" Width="100" />
+                            <DataGridTextColumn Header="Files" Binding="{Binding Files}" Width="100" />
+                            <DataGridTextColumn Header="Complete" Binding="{Binding Complete}" Width="150" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Largest folders" DataContext="{Binding Exploration}">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,8" Text="{Binding FoldersNote}" />
+                    <DataGrid ItemsSource="{Binding Folders}" AutomationProperties.Name="Largest folders">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Folder" Binding="{Binding Folder}" Width="*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" SortMemberPath="SizeBytes" Width="110" />
+                            <DataGridTextColumn Header="% of root" Binding="{Binding PercentOfRoot}" SortMemberPath="Percent" Width="100" />
+                            <DataGridTextColumn Header="Files" Binding="{Binding Files}" SortMemberPath="FileCount" Width="100" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="200" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Largest files" DataContext="{Binding Exploration}">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,8" Text="{Binding FilesNote}" />
+                    <DataGrid ItemsSource="{Binding Files}" AutomationProperties.Name="Largest files">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="File" Binding="{Binding File}" Width="*" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" SortMemberPath="SizeBytes" Width="110" />
+                            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="140" />
+                            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="150" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="File types" DataContext="{Binding Exploration}">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Style="{StaticResource CardTitle}" Text="By category" />
+                    <DataGrid ItemsSource="{Binding Categories}" Height="240" AutomationProperties.Name="Space by file category">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Category" Binding="{Binding Name}" Width="*" />
+                            <DataGridTextColumn Header="Files" Binding="{Binding Files}" SortMemberPath="FileCount" Width="110" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" SortMemberPath="SizeBytes" Width="120" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="By extension" Margin="0,16,0,10" />
+                    <DataGrid ItemsSource="{Binding Extensions}" Height="280" AutomationProperties.Name="Space by file extension">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Extension" Binding="{Binding Name}" Width="*" />
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="160" />
+                            <DataGridTextColumn Header="Files" Binding="{Binding Files}" SortMemberPath="FileCount" Width="110" />
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" SortMemberPath="SizeBytes" Width="120" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Errors" DataContext="{Binding Exploration}">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Style="{StaticResource Secondary}" Margin="0,0,0,8" Text="{Binding ErrorsNote}" />
+                    <DataGrid ItemsSource="{Binding Errors}" AutomationProperties.Name="Scan errors and notes">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="160" />
+                            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="2*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+        <TextBlock DataContext="{Binding Results.Exploration}" Style="{StaticResource Secondary}" Margin="0,0,0,12" Text="{Binding Status}"
+                   Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" AutomationProperties.LiveSetting="Polite" />
+
+        <Button HorizontalAlignment="Right" MinWidth="160" Padding="20,8" Command="{Binding NewScanCommand}" AutomationProperties.Name="New scan">
+            <AccessText Text="_New scan" />
+        </Button>
+    </StackPanel>
+</UserControl>
