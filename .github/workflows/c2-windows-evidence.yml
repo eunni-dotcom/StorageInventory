@@ -74,12 +74,19 @@ jobs:
         shell: powershell
         run: .\build.ps1 -Target Publish
 
-      - name: Release smoke test
+      - name: Release smoke test, 10 times in a row
         continue-on-error: true
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource (Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000')
-
-      - name: UI Automation diagnostic
-        continue-on-error: true
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\evidence-branch\.github\evidence\uia-dump.ps1 -Source (Join-Path $pwd 'docs') -Exe (Join-Path $pwd 'dist\StorageInventory.exe')
+        run: |
+          $large = Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000'
+          $failures = @()
+          foreach ($i in 1..10) {
+            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource $large *>&1 | Out-String
+            $code = $LASTEXITCODE
+            $passed = ([regex]::Matches($out, '(?m)^PASS ')).Count
+            $failed = ($out -split "`n" | Where-Object { $_ -match '^FAIL |null-valued|Exception|error' }) -join ' / '
+            "SMOKE iteration $i : exit $code, $passed PASS lines$(if ($code -ne 0) { ' -- ' + $failed })"
+            if ($code -ne 0) { $failures += $i; Write-Host $out }
+            Get-Process explorer -ErrorAction SilentlyContinue | Out-Null
+          }
+          "SMOKE SUMMARY: $(10 - $failures.Count) of 10 passed; failed iterations: $($failures -join ', ')"
