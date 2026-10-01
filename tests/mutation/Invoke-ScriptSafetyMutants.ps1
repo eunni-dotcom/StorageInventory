@@ -30,13 +30,8 @@ $mutants = @(
        Find = "'^(?:(?:ntfsA|ntfsB|fat32|exfat|refs)\.vhdx|si_udf\.iso)$'"; Replace = "'\.(vhdx|iso)$'" },
     @{ Id = 'S4'; Finding = 'C3-M01'; What = 'a drive letter is disconnected even when it no longer points at the manifest''s share'; File = 'IdentitySafety.ps1'
        Find = '$target = [string](& $Actions.GetMapping $letter)'; Replace = '$target = $share' },
-<<<<<<< HEAD
-    @{ Id = 'S5'; Finding = 'C3-M01'; What = 'a share that serves a folder outside the root is removed'; File = 'IdentitySafety.ps1'
-       Find = 'if (Test-PathInside $served $full) {'; Replace = 'if ($true) {' },
-=======
     @{ Id = 'S5'; Finding = 'C3-M01'; What = 'a share that serves a folder outside the volume the manifest names is removed'; File = 'IdentitySafety.ps1'
        Find = 'if ($backing[$name] -and (Test-WindowsPathInside $served $backing[$name])) {'; Replace = 'if ($true) {' },
->>>>>>> v1.1/c3-repair
     @{ Id = 'S6'; Finding = 'C3-M01'; What = 'an explicit -Root that disagrees with the manifest is accepted'; File = 'IdentitySafety.ps1'
        Find = 'if ($RootWasSupplied -and $Root -and -not (Test-SamePath $Root $effective)) {'; Replace = 'if ($false) {' },
     @{ Id = 'S7'; Finding = 'C3-M01'; What = 'a filesystem root is accepted as the teardown root'; File = 'IdentitySafety.ps1'
