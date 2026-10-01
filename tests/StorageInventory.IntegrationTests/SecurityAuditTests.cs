@@ -151,7 +151,9 @@ public static class SecurityAuditTests
     private const string NativeMethodsFile = "src/StorageInventory.Core/Paths/NativeMethods.cs";
 
     /// <summary>The text rules of A-08 over a set of sources: <c>CreateFile</c> is called only with desired access 0 and
-    /// <c>GetFileInformationByHandleEx</c> only with <c>FileIdInfo</c>, whose enum has no other member and is never cast to.</summary>
+    /// <c>GetFileInformationByHandleEx</c> only with <c>FileIdInfo</c>, whose enum has no other member and whose name appears in
+    /// exactly three kinds of place: its declaration, the P/Invoke's parameter and the <c>.FileIdInfo</c> argument. That closes
+    /// the casts, <c>default(...)</c>, <c>Enum.ToObject</c> and <c>Unsafe.As</c> alike, whatever the spelling.</summary>
     private static List<string> NativeCallShapeViolations(IReadOnlyDictionary<string, string> sources)
     {
         var violations = new List<string>();
@@ -171,6 +173,13 @@ public static class SecurityAuditTests
                 if (arguments.Count < 2 || arguments[1].Trim() != "FileInfoByHandleClass.FileIdInfo") violations.Add($"{file}: GetFileInformationByHandleEx with class '{(arguments.Count > 1 ? arguments[1].Trim() : "?")}' (must be FileIdInfo)");
             }
             if (Regex.IsMatch(code, @"\(\s*FileInfoByHandleClass\s*\)")) violations.Add($"{file}: a cast to FileInfoByHandleClass");
+            foreach (Match use in Regex.Matches(code, @"\bFileInfoByHandleClass\b"))
+            {
+                var before = code[Math.Max(0, use.Index - 5)..use.Index];
+                var after = code[(use.Index + use.Length)..];
+                var allowed = before == "enum " || after.StartsWith(".FileIdInfo", StringComparison.Ordinal) || Regex.IsMatch(after, @"^\s+informationClass\b");
+                if (!allowed) violations.Add($"{file}: FileInfoByHandleClass is used other than in its declaration, as the P/Invoke parameter or as '.FileIdInfo' (near '{code[use.Index..Math.Min(code.Length, use.Index + 40)].Replace('\n', ' ')}')");
+            }
             if (Regex.IsMatch(code, @"enum\s+FileInfoByHandleClass\b[^{]*\{([^}]*)\}", RegexOptions.Singleline))
             {
                 var members = Regex.Match(code, @"enum\s+FileInfoByHandleClass\b[^{]*\{([^}]*)\}", RegexOptions.Singleline).Groups[1].Value
@@ -210,7 +219,8 @@ public static class SecurityAuditTests
         // ...and no first-party SOURCE declares or binds a native function anywhere else (this also covers projects with no assembly here yet)
         OnlyIn("native declarations", @"\[DllImport|\[LibraryImport|\bextern\s+\w", NativeMethodsFile);
 
-        // GetFileInformationByHandleEx can only be asked for FileIdInfo: by type (a one-member enum) and by every call site
+        // GetFileInformationByHandleEx is asked for FileIdInfo only: by type (a one-member enum whose name the text rule allows in
+        // exactly three kinds of place) and by its single call site
         var infoClass = typeof(StorageScanResult).Assembly.GetType("StorageInventory.Core.Paths.NativeMethods")!
             .GetMethod("GetFileInformationByHandleEx", BindingFlags.Static | BindingFlags.NonPublic)!.GetParameters()[1].ParameterType;
         Assert.True(infoClass.IsEnum, "the information class parameter is an enum");
@@ -241,22 +251,27 @@ public static class SecurityAuditTests
         Assert.True(NativeSurfaceViolations(SixNativeCalls.Take(5)).Any(v => v.StartsWith("missing:", StringComparison.Ordinal)), "a removed function is noticed too");
         Assert.Equal(0, NativeSurfaceViolations(SixNativeCalls).Count, "the exact six are accepted");
 
-        // the text rules: wrong desired access, another information class, a cast, a second enum member
+        // the text rules: wrong desired access, another information class, a cast, a second enum member, and the other ways to
+        // conjure an enum value without writing its member (default, Enum.ToObject, Unsafe.As)
         var sources = new Dictionary<string, string>
         {
             ["src/Rogue/Access.cs"] = "var h = CreateFile(path, GENERIC_READ, share, IntPtr.Zero, OpenExisting, flags, IntPtr.Zero);",
             ["src/Rogue/Class.cs"] = "GetFileInformationByHandleEx(handle, FileInfoByHandleClass.FileStandardInfo, out info, size);",
             ["src/Rogue/Cast.cs"] = "var c = (FileInfoByHandleClass)5;",
             ["src/Rogue/Enum.cs"] = "private enum FileInfoByHandleClass { FileIdInfo = 18, FileBasicInfo = 0 }",
+            ["src/Rogue/Default.cs"] = "var c = default(FileInfoByHandleClass); GetFileInformationByHandleEx(handle, c, out info, size);",
+            ["src/Rogue/ToObject.cs"] = "var c = Enum.ToObject(typeof(FileInfoByHandleClass), 5);",
+            ["src/Rogue/As.cs"] = "var c = Unsafe.As<int, FileInfoByHandleClass>(ref raw);",
         };
         var shape = NativeCallShapeViolations(sources);
-        foreach (var file in new[] { "Access.cs", "Class.cs", "Cast.cs", "Enum.cs" })
+        foreach (var file in new[] { "Access.cs", "Class.cs", "Cast.cs", "Enum.cs", "Default.cs", "ToObject.cs", "As.cs" })
         {
             Assert.True(shape.Any(v => v.Contains(file, StringComparison.Ordinal)), $"the call-shape rule misses the {file} violation: {string.Join("; ", shape)}");
         }
         var clean = new Dictionary<string, string>
         {
             ["src/Fine.cs"] = "var h = CreateFile(path, 0, share, IntPtr.Zero, OpenExisting, flags, IntPtr.Zero); GetFileInformationByHandleEx(handle, FileInfoByHandleClass.FileIdInfo, out info, size);",
+            ["src/Declaration.cs"] = "private enum FileInfoByHandleClass { FileIdInfo = 18 } private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, FileInfoByHandleClass informationClass, out FileIdInfoNative information, uint bufferSize);",
         };
         Assert.Equal(0, NativeCallShapeViolations(clean).Count, "the permitted shapes are accepted");
 
