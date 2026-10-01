@@ -2,7 +2,7 @@
 
 Reproducible evidence for the platform questions the specification leaves to gate C3: **Q-02** (which identity calls work on which source types), **Q-13** (root directory file IDs) and **Q-19** (side effects of holding a zero-access root handle for a whole scan), and for the manual tests **TEST-I2**, **TEST-I4** and **TEST-I6**. Results are recorded in [`docs/v1.1-c3-implementation-evidence.md`](../../docs/v1.1-c3-implementation-evidence.md).
 
-Everything here runs the **product's own** capture, classification and re-verification code (`StorageInventory.Core` and `StorageInventory.History`) through two test-only commands of `StorageInventory.IntegrationTests`. Nothing is read from or written to the volumes under test: the probe opens the source folder with **desired access 0** and asks six read-only questions.
+Everything here runs the **product's own** capture, classification and re-verification code (`StorageInventory.Core` and `StorageInventory.History`) through three test-only commands of `StorageInventory.IntegrationTests` (`--identity-probe`, `--identity-hold` and `--identity-enumerate`, the control that leaves an ordinary folder listing open). The **product's** capture reads and writes nothing on the volume under test: it opens the source folder with **desired access 0** and asks six read-only questions. The **experiment scripts**, by contrast, do change things on purpose, and only things this tooling made: they re-point a SUBST letter, rename and delete scratch folders under their own scratch folder, lock, detach and re-letter the *provisioned* virtual volumes, and rename the folder a provisioned share serves. Run them on a test machine, not on media you care about.
 
 ```powershell
 .\build.ps1 -Target Build -Configuration Release
@@ -15,8 +15,10 @@ dotnet $exe --identity-hold   E:\ --label "USB stick"                           
 
 | Script | Needs | What it does |
 |---|---|---|
-| `Invoke-IdentityExperiments.ps1` | Release build; elevation only for the virtual-media parts | Runs the matrix, the drive-letter change and every hold experiment that can be automated, and writes one Markdown report. Parts it cannot run are reported as **NOT RUN** with the reason |
-| `Provision-IdentityMedia.ps1` | **elevated** PowerShell | Creates disposable VHDX volumes (NTFS x2, FAT32, exFAT, ReFS), a UDF image and two SMB shares (one on FAT32, open to the current user only), writes a manifest, and removes it all with `-Remove`. It refuses a `-Root` that exists, is not empty and was not made by it (a marker file), and `-Remove` deletes only a folder that holds the marker |
+| `Invoke-IdentityExperiments.ps1` | Release build; elevation only for the virtual-media parts | Runs the matrix, the drive-letter change and every hold experiment that can be automated, and writes one Markdown report. Parts it cannot run are reported as **NOT RUN** with the reason. `-Work` is the folder its scratch folder is made **in** (a new, marked child; only that child is ever deleted, so an existing folder is never touched); `-Out` is refused if it exists unless `-Overwrite` is given |
+| `Provision-IdentityMedia.ps1` | **elevated** PowerShell | Creates disposable VHDX volumes (NTFS x2, FAT32, exFAT, ReFS), a UDF image and two SMB shares (one on FAT32, open to the current user only), writes a manifest, and removes it all with `-Remove`. It refuses a `-Root` that exists, is not empty and was not made by it (a marker file) or cannot be listed. `-Remove` **validates before it acts**: the manifest must say this script wrote it, the root it names must hold the marker, and only then are shares, drive mappings and disk images touched, each still checked against the manifest; otherwise it refuses (exit 2) and changes nothing |
+| `IdentitySafety.ps1` | any | The guards both scripts share. It defines functions only |
+| `Test-IdentityScriptSafety.ps1` | any machine; `-IncludeRealMedia` needs an elevated Windows session | Two fixture sets that prove the guards (below). Run it after any change to either script |
 
 ```powershell
 # no administrator rights: every drive, a subfolder, SUBST, SUBST re-pointing, a renamed folder (and, with the switch, a loopback SMB share)
@@ -27,6 +29,17 @@ dotnet $exe --identity-hold   E:\ --label "USB stick"                           
 .\tests\identity\Invoke-IdentityExperiments.ps1 -Manifest $env:TEMP\identity-media.json -Out $env:TEMP\identity-full.md
 .\tests\identity\Provision-IdentityMedia.ps1 -Remove -Manifest $env:TEMP\identity-media.json
 ```
+
+## Safety fixtures
+
+```powershell
+pwsh -NoProfile -File .\tests\identity\Test-IdentityScriptSafety.ps1            # or: powershell -NoProfile -File ...
+.\tests\identity\Test-IdentityScriptSafety.ps1 -IncludeRealMedia                 # elevated Windows: adds a case with a REAL attached VHDX
+```
+
+* **Set 1** runs the real `Invoke-IdentityExperiments.ps1 -CheckArgumentsOnly` against hostile `-Work` and `-Out` values (a folder full of data, `.`, the temp folder, a root, a file, an existing report, a missing folder) and requires either a refusal or every byte of the supplied folder intact.
+* **Set 2** runs the teardown code of `Provision-IdentityMedia.ps1 -Remove` with recording stand-ins for Dismount-DiskImage, diskpart, `net use /delete`, Remove-SmbShare and deletion, and requires that every wrong `-Root` or `-Manifest` produces **no** call at all.
+* `tests\mutation\Invoke-ScriptSafetyMutants.ps1` weakens one guard at a time and requires the fixtures to go red.
 
 ## What reading the output means
 
@@ -48,6 +61,7 @@ Record each result in the evidence document's tables with the exact tool output.
 3. **TEST-I4 / Q-02, source types.** Probe the root **and a folder inside it** of: a **FAT32** USB stick or VHDX; an **exFAT** stick or VHDX; a **UDF** disc or mounted ISO (Explorer's *Mount* needs no administrator rights; a UDF ISO can be built with `Provision-IdentityMedia.ps1`'s IMAPI2FS code); an **SMB share on a Windows server**; an **SMB share on a Samba server** (a NAS or a Linux machine); and a **mapped drive letter** for each share, plus its UNC path. Note for each: whether the zero-access open succeeded, every native call's value or Win32 error, and the *Save* line. A source type that fails any item stays at its safe default: `PathOnly`, and not saveable if an ID-13 item is missing.
 4. **TEST-I6 / Q-19, USB or removable media, "Safely remove".** `--identity-hold E:\` (your stick), wait for `HELD`, then try the tray's *Safely Remove Hardware and Eject Media*. Record Windows' exact response (an expected one is that the device is in use and cannot be stopped). Press Enter in the console, then try again: it must succeed once the handle is closed. If the answer is anything beyond "blocks Safely remove while the tool runs", **stop**: the gate's stop condition asks for a design review.
 5. **TEST-I6, surprise removal and a swapped medium.** `--identity-hold E:\`, wait for `HELD`, **pull the stick**, press Enter. Expect `IdentityChangedDuringScan`, with `E2` failing (the held handle is dead) and `E3` unable to open the path. Repeat, but put a *different* stick at the same letter before pressing Enter: `E3` should read another serial.
-6. **TEST-I5 / Q-19, network share and mapped drive.** `--identity-hold X:\` on a mapped letter, then (a) from another machine rename the share's root folder; (b) re-map `X:` to a different share (`net use X: /delete /y`, then `net use X: \\server\other`); (c) try a plain `net use X: /delete` (it asks for confirmation while the handle is held). Record E2 and E3 for each, against a Windows server and a Samba server.
+6. **TEST-I5 / Q-19, network share and mapped drive.** `--identity-hold X:\` on a mapped letter, then (a) from another machine (the loopback experiments rename the share's backing folder on the server's own filesystem, which is not another client) rename the share's root folder; (b) re-map `X:` to a different share (`net use X: /delete /y`, then `net use X: \\server\other`); (c) try a plain `net use X: /delete` (it asks for confirmation while the handle is held). Record E2 and E3 for each, against a Windows server and a Samba server.
 7. **SUBST (no hardware needed).** Covered by the automated experiment; to repeat it by hand: `subst S: C:\A`, `--identity-hold S:\`, then `subst S: /D` and `subst S: C:\B`, press Enter. Re-pointing to `B` must be caught by `E3`; re-pointing to `B` and back to `A` is limitation L-ID2 and is *not* caught.
 8. **The source folder itself (no hardware needed; covered by `SourceIdentityTests`).** `--identity-hold C:\Scratch\Source`, rename it away (`ren Source Source.old`), rename another folder to `Source`, press Enter: caught (E2 reports `Source.old`; E3 reaches a different directory). Do the same but put both names back before pressing Enter: **not** caught, which is limitation L-ID2 as extended by G0F-O05.
+9. **Parent and grandparent of the source (Q-19, C3-M04; no hardware needed, automated by the experiment script).** With the handle held on `C:\Scratch\A\B\C` (`--identity-hold`), try to rename `A\B`, then `A`, then `C` itself. Expected on Windows: the parent and the grandparent are **refused** (Access denied), the source folder itself is renamed. Repeat with `--identity-enumerate` on the same folder (the control: an ordinary open listing): the answers are the same, so the effect is the scan's own and not new to the identity handle. A user-facing note for the History screens (gate C8): removing, disconnecting or renaming a parent of a source while a scan runs is refused by Windows.

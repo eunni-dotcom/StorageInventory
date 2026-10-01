@@ -13,7 +13,12 @@
     out of the manifest: an unavailable type is a result, not a failure. The manifest is a JSON file mapping a name to its root path.
 
     Safety: -Root must not exist, or must be empty, or must be a folder this script made earlier (it holds a marker file); anything
-    else is refused, and -Remove deletes -Root only when the marker is there, so a wrong path cannot be wiped. The SMB shares are
+    else is refused, a folder that cannot be listed is refused too, and the manifest records that this script wrote it.
+    -Remove validates EVERYTHING before it changes anything: the manifest must be one this script wrote, its root must hold the
+    marker, and only then are shares, mappings and disk images touched, each still checked against the manifest (a drive letter
+    that no longer points at the share the manifest names is left alone; only the image names this script gives its disks are
+    detached; only a marked folder is deleted). On any doubt it refuses and changes nothing, so a wrong -Root or -Manifest
+    cannot detach someone else's disk, dismount their ISO, disconnect their mapping or delete their file. The SMB shares are
     open to the CURRENT USER only, not to everyone, and exist only while the experiments run.
 .EXAMPLE
     .\Provision-IdentityMedia.ps1 -Manifest $env:TEMP\identity-media.json
@@ -21,12 +26,13 @@
     .\Provision-IdentityMedia.ps1 -Remove -Manifest $env:TEMP\identity-media.json
 #>
 param(
-    [string] $Root = (Join-Path $env:TEMP 'SiIdentityMedia'),
-    [string] $Manifest = (Join-Path $env:TEMP 'identity-media.json'),
+    [string] $Root = (Join-Path ([IO.Path]::GetTempPath()) 'SiIdentityMedia'),
+    [string] $Manifest = (Join-Path ([IO.Path]::GetTempPath()) 'identity-media.json'),
     [int] $SizeMb = 256,
     [switch] $Remove
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'IdentitySafety.ps1')
 
 function Test-Elevated {
     $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -43,55 +49,48 @@ function Get-LongPath([string] $Path) {
 }
 if (Test-Path -LiteralPath $Root) { $Root = Get-LongPath $Root }
 
-# A folder this script created holds this marker; nothing else is ever used or deleted as -Root.
-$Marker = '.si-identity-media'
-function Assert-ScratchRoot {
-    if ($Root.Length -lt 8 -or [IO.Path]::GetPathRoot($Root) -eq $Root) { throw "-Root '$Root' is too general to use as a scratch folder." }
-    if (-not (Test-Path -LiteralPath $Root)) { return }
-    $ours = Test-Path -LiteralPath (Join-Path $Root $Marker)
-    $empty = -not (Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if (-not $ours -and -not $empty) { throw "-Root '$Root' exists, is not empty and was not made by this script (no $Marker marker). Refusing to use or delete it; pass a folder that does not exist." }
-}
+# The marker, the root guard, the manifest signature and the teardown rules are in IdentitySafety.ps1 (shared with the fixtures).
 
 function Get-FreeLetters {
     $used = [IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name[0] }
     ('M','N','O','P','Q','R','S','T','U','W' | Where-Object { $used -notcontains $_ -and -not (Test-Path "$($_):\") })
 }
 
-function Invoke-Diskpart([string[]] $Lines) {
-    $script = Join-Path $Root ("dp_{0}.txt" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
+function Invoke-Diskpart([string[]] $Lines, [string] $Folder = $Root) {
+    $script = Join-Path $Folder ("dp_{0}.txt" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
     Set-Content -LiteralPath $script -Value $Lines -Encoding ASCII
     $output = & diskpart.exe /s $script 2>&1 | Out-String
     Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
     return $output
 }
 
-function Remove-All($state) {
-    $ErrorActionPreference = 'Continue'   # "already gone" is fine while tearing down; native tools write that to stderr
-    if (-not $state -and (Test-Path -LiteralPath $Manifest)) { $state = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json }
-    # the manifest knows where the media were made, whatever -Root says now (the marker below still decides what may be deleted)
-    if ($state -and $state.root) { $script:Root = [string]$state.root }
-    foreach ($mapping in 'mappedLetterA', 'mappedLetterB') { if ($state -and $state.$mapping) { & net.exe use ($state.$mapping.Substring(0, 2)) /delete /y 2>&1 | Out-Null } }
-    foreach ($share in 'SiEvidenceA', 'SiEvidenceB') { Remove-SmbShare -Name $share -Force -ErrorAction SilentlyContinue }
-    foreach ($image in Get-ChildItem -LiteralPath $Root -Filter *.iso -ErrorAction SilentlyContinue) { Dismount-DiskImage -ImagePath $image.FullName -ErrorAction SilentlyContinue | Out-Null }
-    foreach ($vhd in Get-ChildItem -LiteralPath $Root -Filter *.vhdx -ErrorAction SilentlyContinue) {
-        Invoke-Diskpart @("select vdisk file=`"$($vhd.FullName)`"", 'detach vdisk') | Out-Null
-    }
-    if (Test-Path -LiteralPath $Root) {
-        if (Test-Path -LiteralPath (Join-Path $Root $Marker)) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
-        else { Write-Warning "Left '$Root' alone: it has no $Marker marker, so this script did not make it." }
-    }
-    Remove-Item -LiteralPath $Manifest -Force -ErrorAction SilentlyContinue
-    'removed'
+# The real side effects the teardown may perform. Invoke-MediaTeardown calls them only after it has proved the root is ours.
+$RealActions = @{
+    GetMapping     = { param($letter) (Get-SmbMapping -LocalPath $letter.Substring(0, 2) -ErrorAction SilentlyContinue | Select-Object -First 1).RemotePath }
+    Unmap          = { param($letter) & net.exe use ($letter.Substring(0, 2)) /delete /y 2>&1 | Out-Null }
+    GetShare       = { param($name) (Get-SmbShare -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1).Path }
+    RemoveShare    = { param($name) Remove-SmbShare -Name $name -Force -ErrorAction SilentlyContinue }
+    DismountIso    = { param($file) Dismount-DiskImage -ImagePath $file -ErrorAction SilentlyContinue | Out-Null }
+    DetachVhd      = { param($file) Invoke-Diskpart @("select vdisk file=`"$file`"", 'detach vdisk') (Split-Path -Parent $file) | Out-Null }
+    RemoveFolder   = { param($path) Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+    RemoveManifest = { param($path) Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
 }
 
-if ($Remove) { Remove-All $null; return }
+if ($Remove) {
+    $ErrorActionPreference = 'Continue'   # "already gone" is fine while tearing down; native tools write that to stderr
+    $outcome = Invoke-MediaTeardown -Root $Root -RootWasSupplied:$PSBoundParameters.ContainsKey('Root') -ManifestPath $Manifest -Actions $RealActions
+    if ($outcome.Refused) { Write-Warning "REFUSED: $($outcome.Reason)"; exit 2 }
+    $outcome.Removed | ForEach-Object { Write-Output $_ }
+    'removed'
+    return
+}
 
-Assert-ScratchRoot
+Assert-ScratchRoot $Root
 New-Item -ItemType Directory -Force $Root | Out-Null
 $Root = Get-LongPath $Root
-Set-Content -LiteralPath (Join-Path $Root $Marker) -Value 'Made by Provision-IdentityMedia.ps1; safe to delete with -Remove.' -Encoding ASCII
-$result = [ordered]@{}
+Write-MediaMarker $Root
+# the manifest says who wrote it: -Remove acts on no other file
+$result = [ordered]@{ madeBy = $script:MediaManifestAuthor; schema = $script:MediaManifestSchema; root = $Root }
 $notes = [ordered]@{}
 $letters = [System.Collections.Queue]::new(@(Get-FreeLetters))
 try {
@@ -169,6 +168,6 @@ Write-Output (Get-Content -LiteralPath $Manifest -Raw)
 }
 catch {
     # a failure while provisioning must not leave attached disks, shares or mappings behind
-    Remove-All ([pscustomobject]$result) | Out-Null
+    Invoke-MediaTeardown -Root $Root -RootWasSupplied -State ([pscustomobject]$result) -Actions $RealActions | Out-Null
     throw
 }

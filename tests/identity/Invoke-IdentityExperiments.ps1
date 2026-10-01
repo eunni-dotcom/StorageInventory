@@ -8,28 +8,54 @@
 
     Needs a Release build of the solution (`.\build.ps1 -Target Build -Configuration Release`). Runs without administrator rights; the
     parts that need them (virtual disks, SMB shares, locking a volume) run only when this session is elevated AND a manifest from
-    Provision-IdentityMedia.ps1 is given, and are otherwise reported as NOT RUN with the reason. Nothing is ever read from or written
-    to the probed volumes; the scratch folders it creates are under -Work and are removed.
+    Provision-IdentityMedia.ps1 is given, and are otherwise reported as NOT RUN with the reason. The probe and the hold commands
+    only open and query the sources; the experiments themselves do change the world on purpose (they re-point a SUBST letter, rename
+    and delete scratch folders, lock, detach and re-letter the PROVISIONED volumes, and rename the folder a provisioned share serves),
+    which is why they run only against scratch folders and media this tooling made.
+
+    Folders and files (C3 repair, finding C3-H01):
+      -Work is the folder the scratch folder is created IN. The script makes a NEW, uniquely named child of it (SiIdentityWork_<8 hex>),
+           marks it, works only inside it, and at the end deletes only that child, and only after re-checking the marker. Whatever
+           -Work already holds is never read, changed or deleted, so pointing it at an existing folder (or $env:TEMP, or .) is harmless.
+           A filesystem root, a path shorter than 8 characters or a file is refused.
+      -Out  is refused when it is a folder, when its folder does not exist, or when the file already exists, unless -Overwrite is given.
+      -CheckArgumentsOnly validates -Work and -Out, creates and removes the scratch folder, and stops (no build, no elevation, no
+           experiment); tests\identity\Test-IdentityScriptSafety.ps1 uses it to prove the guards.
 
     What it covers:
       Part 1  Q-02 and Q-13: a matrix over every drive, a subfolder, a SUBST letter, UNC paths and the provisioned media
       Part 2  TEST-I2: the same volume at a second drive letter has the same identity
       Part 3  Q-19 and TEST-I5/I6: hold the root handle, change the world, read E2 and E3 - SUBST re-point (and away-and-back),
-              surprise removal and a swapped medium, a volume lock with and without the held handle, a re-pointed mapped drive,
-              a disconnect with the handle held, a share root renamed by another client
+              the source folder and its PARENT and GRANDPARENT renamed (with the open-listing control), surprise removal and a
+              swapped medium, a volume lock with and without the held handle, a re-pointed mapped drive, a disconnect with the
+              handle held, a share's backing folder renamed on the server's own filesystem (a loopback server, not another client)
 .EXAMPLE
     .\tests\identity\Invoke-IdentityExperiments.ps1 -Out C:\temp\identity.md
     .\tests\identity\Invoke-IdentityExperiments.ps1 -Manifest $env:TEMP\identity-media.json -Out C:\temp\identity-full.md
 #>
 param(
     [string] $Manifest,
-    [string] $Out = (Join-Path $env:TEMP 'identity-experiments.md'),
-    [string] $Work = (Join-Path $env:TEMP ('SiIdentityWork_' + [guid]::NewGuid().ToString('N').Substring(0, 6))),
+    [string] $Out = (Join-Path ([IO.Path]::GetTempPath()) ('identity-experiments_' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '_' + [guid]::NewGuid().ToString('N').Substring(0, 4) + '.md')),
+    [string] $Work = [IO.Path]::GetTempPath(),
     [string] $Dotnet,
     [string] $TestDll,
-    [switch] $IncludeLoopbackAdminShare
+    [switch] $IncludeLoopbackAdminShare,
+    [switch] $Overwrite,
+    [switch] $CheckArgumentsOnly
 )
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot 'IdentitySafety.ps1')
+
+# C3-H01: every argument that names a folder or file is validated BEFORE anything is built, started or created.
+$ScratchPrefix = 'SiIdentityWork_'
+$Out = Resolve-OutputFile $Out -Overwrite:$Overwrite
+$WorkParent = Resolve-WorkParent $Work
+if ($CheckArgumentsOnly) {
+    $child = New-ScratchChild $WorkParent $ScratchPrefix
+    $removedChild = Remove-OwnedScratch $child $WorkParent $ScratchPrefix
+    "arguments ok: out=$Out; scratch folder $child created inside $WorkParent and removed=$removedChild"
+    return
+}
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Dotnet) { $Dotnet = Join-Path $repo 'tools\dotnet\dotnet.exe' }
 if (-not $TestDll) { $TestDll = Join-Path $repo 'tests\StorageInventory.IntegrationTests\bin\Release\net10.0-windows\StorageInventory.IntegrationTests.dll' }
@@ -41,7 +67,8 @@ $env:DOTNET_NOLOGO = '1'
 
 $elevated = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $media = if ($Manifest -and (Test-Path -LiteralPath $Manifest)) { Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json } else { $null }
-New-Item -ItemType Directory -Force $Work | Out-Null
+$Work = New-ScratchChild $WorkParent $ScratchPrefix   # a new folder of ours; the only folder this script will delete
+try {
 
 $md = New-Object System.Collections.Generic.List[string]
 function Add-Md([string] $Text = '') { $md.Add($Text) }
@@ -281,6 +308,28 @@ New-Item -ItemType Directory -Force (Join-Path $renameSource 'inner') | Out-Null
 $r = Invoke-Hold 'folder-rename' $renameSource { Rename-Item -LiteralPath $renameSource -NewName 'RenameMe2' -ErrorAction Stop; 'renamed RenameMe to RenameMe2' }
 Add-HoldResult 'Source folder renamed while held' 'A plain folder, renamed from outside while the handle is held (the held handle does not block it).' $r
 
+# 3c2 renaming a PARENT or an ANCESTOR of the source while the handle is held (Q-19, C3-M04), with the control: an ordinary open
+# folder listing, which a scan has throughout its enumeration. The source folder is A\B\C; Windows refuses to rename a folder that
+# has an open handle anywhere below it, so the expectation is BLOCKED for A\B and A and allowed for C, for both the held handle and the control.
+foreach ($mode in 'hold', 'enumerate') {
+    $base = Join-Path $Work "Ancestor_$mode"
+    $ancestorSource = Join-Path $base 'A\B\C'
+    New-Item -ItemType Directory -Force $ancestorSource | Out-Null
+    1..3 | ForEach-Object { Set-Content -LiteralPath (Join-Path $ancestorSource "f$_.txt") -Value 'x' }   # the control's listing must stay open part-way
+    $renameAttempts = @(
+        @{ What = 'rename the PARENT of the source (A\B -> B2)'; Path = (Join-Path $base 'A\B'); New = 'B2' },
+        @{ What = 'rename the GRANDPARENT of the source (A -> A2)'; Path = (Join-Path $base 'A'); New = 'A2' },
+        @{ What = 'rename the SOURCE itself (C -> C2)'; Path = $ancestorSource; New = 'C2' })
+    $r = Invoke-Hold "ancestor-rename-$mode" $ancestorSource {
+        foreach ($attempt in $renameAttempts) {
+            try { Rename-Item -LiteralPath $attempt.Path -NewName $attempt.New -ErrorAction Stop; "$($attempt.What): ALLOWED"; Rename-Item -LiteralPath (Join-Path (Split-Path -Parent $attempt.Path) $attempt.New) -NewName (Split-Path -Leaf $attempt.Path) -ErrorAction Stop }
+            catch { "$($attempt.What): BLOCKED ($($_.Exception.Message))" }
+        }
+    } -Mode $mode
+    if ($mode -eq 'hold') { Add-HoldResult 'Parent and grandparent of the source renamed while the handle is held (C3-M04)' 'The identity handle is held on `A\B\C`; three renames are attempted from outside, each undone if it succeeded.' $r }
+    else { Add-HoldResult 'CONTROL: the same renames while an ordinary folder listing is open on `A\B\C` (what a scan does)' 'No identity handle is held here. Compare with the block above: the same renames give the same answers, so the held handle adds no kind of effect that listing the folder does not already have.' $r }
+}
+
 # 3d volume lock with and without the held handle (needs an elevated session and a virtual volume)
 Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
@@ -352,11 +401,11 @@ else { Add-NotRun 'surprise removal and a swapped medium' 'Needs an elevated ses
 if ($elevated -and $media -and $media.udf) {
     $isoPath = Join-Path $media.root 'si_udf.iso'
     $r = Invoke-Hold 'udf-dismount' $media.udf { Dismount-DiskImage -ImagePath $isoPath | Out-String }
-    Add-HoldResult 'UDF disc image dismounted (ejected) while held' 'The mounted ISO is dismounted, which is what Eject does to a disc.' $r
+    Add-HoldResult 'UDF disc image dismounted (Dismount-DiskImage) while held' 'The mounted ISO is dismounted. Dismount-DiskImage takes no volume lock, so this is NOT what Eject does on a physical disc; it shows what the held handle sees when the image goes away.' $r
 }
 else { Add-NotRun 'UDF eject while held' 'Needs the provisioned UDF image (elevated manifest run). Manual form: README step 5 with a real disc.' }
 
-# 3g mapped drive / SMB: a re-pointed letter, a disconnect with the handle held, a share root renamed by another client
+# 3g mapped drive / SMB: a re-pointed letter, a disconnect with the handle held, a share's backing folder renamed on the server
 $shareA = $null; $shareB = $null; $mapLetter = $null
 if ($media -and $media.smbShareA -and $media.smbShareB -and $media.mappedLetterA) { $shareA = $media.smbShareA; $shareB = $media.smbShareB; $mapLetter = $media.mappedLetterA.Substring(0, 1) }
 elseif ($loopback) {
@@ -387,23 +436,27 @@ else { Add-NotRun 'mapped-drive experiments' 'No SMB share to map: pass a manife
 if ($media -and $media.smbShareA) {
     $unc = $media.smbShareA.TrimEnd('\') + '\Media'
     $backing = Join-Path (Join-Path $media.ntfsA 'share') 'Media'
-    $r = Invoke-Hold 'share-root-renamed' $unc { Rename-Item -LiteralPath $backing -NewName 'Media2' -ErrorAction Stop; 'another client (the server side) renamed Media to Media2' }
+    $r = Invoke-Hold 'share-root-renamed' $unc { Rename-Item -LiteralPath $backing -NewName 'Media2' -ErrorAction Stop; 'the server side (the share''s own filesystem) renamed Media to Media2' }
     if (Test-Path -LiteralPath (Join-Path (Join-Path $media.ntfsA 'share') 'Media2')) { Rename-Item -LiteralPath (Join-Path (Join-Path $media.ntfsA 'share') 'Media2') -NewName 'Media' }
-    Add-HoldResult 'Network share folder renamed by another client while held' ('The source is `{0}`.' -f $unc) $r
+    Add-HoldResult 'Network share''s backing folder renamed on the server while held' ('The source is `{0}`.' -f $unc) $r
 }
 elseif ($IncludeLoopbackAdminShare) {
     $served = Join-Path $Work 'Shared\Media'
     New-Item -ItemType Directory -Force (Join-Path $served 'Music') | Out-Null
     $unc = '\\localhost\C$' + ($served.Substring(2))
     if ($served.Substring(0, 2) -eq 'C:') {
-        $r = Invoke-Hold 'share-root-renamed' $unc { Rename-Item -LiteralPath $served -NewName 'Media2' -ErrorAction Stop; 'another client (the local filesystem) renamed Media to Media2' }
-        Add-HoldResult 'Network share folder renamed by another client while held (loopback admin share)' ('The source is `{0}`.' -f $unc) $r
+        $r = Invoke-Hold 'share-root-renamed' $unc { Rename-Item -LiteralPath $served -NewName 'Media2' -ErrorAction Stop; 'the local filesystem (the share''s own backing folder) renamed Media to Media2' }
+        Add-HoldResult 'Network share''s backing folder renamed on the server while held (loopback admin share)' ('The source is `{0}`.' -f $unc) $r
     }
 }
 
 # ---------------------------------------------------------------- cleanup and output
 if ($subst) { & subst.exe "$($subst):" /D 2>&1 | Out-Null }
 if ($loopback) { & net.exe use "$($loopback):" /delete /y 2>&1 | Out-Null }
-try { [IO.Directory]::Delete($Work, $true) } catch { }
 Set-Content -LiteralPath $Out -Value ($md -join "`n") -Encoding UTF8
 "wrote $Out"
+}
+finally {
+    # deletes the scratch folder this run made (marker re-checked), also when an experiment threw; nothing else
+    [void](Remove-OwnedScratch $Work $WorkParent $ScratchPrefix)
+}
