@@ -20,13 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: base bf3fa36 (v1.1/c1-final), attempt A
+          - name: base bf3fa36 (v1.1/c1-final)
             ref: bf3fa36c7c9f8f710e86762bbc20faaf9755ca02
-          - name: base bf3fa36 (v1.1/c1-final), attempt B
-            ref: bf3fa36c7c9f8f710e86762bbc20faaf9755ca02
-          - name: C2 head, attempt A
-            ref: ca7d3f5959c08c04e2f5a97dd2a918edbe21cfb1
-          - name: C2 head, attempt B
+          - name: C2 head
             ref: ca7d3f5959c08c04e2f5a97dd2a918edbe21cfb1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,47 +48,11 @@ jobs:
         shell: powershell
         run: .\tools\fetch-tools.ps1
 
-      - name: Build the synthetic benchmark trees (10k, 60k, 250k files), as in run 1
-        shell: powershell
-        run: |
-          . .\powershell\tests\TestLib.ps1
-          $perf = Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf'
-          foreach ($size in 10000, 60000, 250000) {
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            New-BulkFixture -Root (Join-Path $perf "tree_$size") -Artists ([int][Math]::Ceiling($size / 1000.0)) -Albums 25 -Tracks 40
-            "tree_$size built in $([Math]::Round($sw.Elapsed.TotalSeconds)) s"
-          }
-
-      - name: Build and test (Release), with the trees present, as in run 1
-        shell: powershell
-        run: .\build.ps1 -Target Test -Configuration Release
-
       - name: Publish self-contained executable
         shell: powershell
         run: .\build.ps1 -Target Publish
 
-      - name: Release smoke test, right after the tests, as in run 1
-        id: smoke
+      - name: UI Automation stress, 15 scan cycles
         continue-on-error: true
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource (Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000')
-
-      - name: After a failed smoke test, attach to the app and probe
-        if: steps.smoke.outcome == 'failure'
-        continue-on-error: true
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\evidence-branch\.github\evidence\uia-attach.ps1
-
-      - name: Release smoke test, 5 more times
-        continue-on-error: true
-        shell: powershell
-        run: |
-          $large = Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000'
-          $failures = @()
-          foreach ($i in 1..5) {
-            $out = & powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource $large *>&1 | Out-String
-            $code = $LASTEXITCODE
-            "SMOKE iteration $i : exit $code, $(([regex]::Matches($out, '(?m)^PASS ')).Count) PASS lines"
-            if ($code -ne 0) { $failures += $i; Write-Host $out; Get-Process StorageInventory -ErrorAction SilentlyContinue | Stop-Process }
-          }
-          "SMOKE SUMMARY: $(5 - $failures.Count) of 5 passed; failed iterations: $($failures -join ', ')"
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\evidence-branch\.github\evidence\uia-stress.ps1 -Source (Join-Path $pwd 'docs') -Exe (Join-Path $pwd 'dist\StorageInventory.exe') -Cycles 15
