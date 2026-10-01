@@ -119,7 +119,7 @@ shows a scan's three reports identical with the handle held.
 | Action while the handle is held | Observed |
 |---|---|
 | Orderly dismount: the volume lock that "Safely remove" and Eject start with (virtual NTFS volume) | **Refused** (Win32 5); it succeeded before the hold and succeeds again after it ends |
-| The same lock while an ordinary folder listing is open (the control: what a scan already has) | recorded in the evidence document |
+| The same lock while an ordinary folder listing is open and no identity handle is held (the control: what a scan already has) | **Refused** too (Win32 5). Listing a folder already blocks an orderly dismount, so the held handle adds no new *kind* of effect. (By construction, not measured: a scan's own listing handles are open only while it enumerates, whereas the held handle spans the whole observation window, so the refusal lasts the window) |
 | Rename or delete the held folder from outside | Allowed (the handle shares delete). E2, read through the handle, then reports the new canonical name, or a `$Deleted` name; E3, a fresh open of the old path, cannot open it |
 | List or scan the same tree meanwhile | Unchanged: the three reports are byte-identical to a scan without the handle |
 | Mapped network drive: a normal disconnect | Asks for confirmation ("open files and/or incomplete directory searches pending"), as it does for any open handle, including an ordinary open folder listing; declined, the drive stays and the capture still verifies |
