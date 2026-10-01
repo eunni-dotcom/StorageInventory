@@ -3,7 +3,7 @@ using StorageInventory.Testing;
 
 if (args.Length >= 4 && args[0] == "--benchmark-one")
 {
-    return Benchmarks.RunOne(args[1], args[2] == "sorted", args[3]);
+    return Benchmarks.RunOne(args[1], args[2] == "sorted", args[3], spool: args.Length >= 5 && args[4] == "spool");
 }
 if (args.Length >= 2 && args[0] == "--docs-screenshots")
 {

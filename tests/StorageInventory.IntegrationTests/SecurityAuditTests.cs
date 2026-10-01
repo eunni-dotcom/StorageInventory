@@ -19,10 +19,13 @@ public static class SecurityAuditTests
             .ToDictionary(f => Path.GetRelativePath(TestEnvironment.RepoRoot, f), File.ReadAllText));
 
     /// <summary>Files (relative to the repo) whose code matches the pattern, ignoring // comments.</summary>
-    private static List<string> FilesMatching(string pattern)
+    private static List<string> FilesMatching(string pattern) => FilesMatching(pattern, Sources.Value);
+
+    /// <summary>The same matcher over any set of sources, so a rule can be shown to reject a violating snippet.</summary>
+    private static List<string> FilesMatching(string pattern, IReadOnlyDictionary<string, string> sources)
     {
         var regex = new Regex(pattern, RegexOptions.Multiline);
-        return Sources.Value
+        return sources
             .Where(kv => regex.IsMatch(string.Join("\n", kv.Value.Split('\n').Select(StripComment))))
             .Select(kv => kv.Key.Replace('\\', '/'))
             .Order(StringComparer.Ordinal)
@@ -145,5 +148,86 @@ public static class SecurityAuditTests
     public static void No_package_references_anywhere()
     {
         Assert.Equal(0, FilesMatching(@"<PackageReference").Count, "the product builds from the SDK alone");
+    }
+
+    // ---- C1 (v1.1): the observer fan-out and the spool codec. The v1 rules above are unchanged. ----
+
+    /// <summary>Each C1 rule: what may appear, the pattern, and the only files allowed to contain it.</summary>
+    private static readonly (string What, string Pattern, string[] Allowed)[] C1Rules =
+    [
+        // SINK-01: one traversal feeds every consumer. Only the engine lists directories.
+        ("filesystem enumeration", @"FileSystemEnumera(ble|tor)|\.(Enumerate|Get)(Files|Directories|FileSystemEntries|FileSystemInfos)\(",
+            ["src/StorageInventory.Core/Scanning/ScanEngine.cs"]),
+        // ...and only the pipeline creates an engine (once per scan; see the count below).
+        ("ScanEngine construction", @"new ScanEngine\(", ["src/StorageInventory.Core/InventoryScanner.cs"]),
+        // SINK-05: OutputGuard wraps only the critical observer, in the pipeline.
+        ("OutputGuard construction", @"new OutputGuard\(", ["src/StorageInventory.Core/InventoryScanner.cs"]),
+        // SPOOL-23: no spool record reaches a caller before the verification pass V; only V creates a VerifiedSpool.
+        ("VerifiedSpool construction", @"new VerifiedSpool\(", ["src/StorageInventory.Core/Spool/SpoolReader.cs"]),
+    ];
+
+    /// <summary>C1 creates no spool file: the codec works on a Stream it is given (the file is C5's, in ReportRun).</summary>
+    private const string FileSystemAccess = @"\bFile\.|\bDirectory\.|\bFileStream\b|\bFileMode\.|\bFileInfo\b|\bDirectoryInfo\b|\bFileOptions\.|DeleteOnClose|Path\.GetTempFileName";
+
+    private static List<string> SpoolFilesTouchingTheFileSystem(IReadOnlyDictionary<string, string> sources) =>
+        FilesMatching(FileSystemAccess, sources.Where(kv => kv.Key.Replace('\\', '/').StartsWith("src/StorageInventory.Core/Spool/", StringComparison.Ordinal))
+            .ToDictionary(kv => kv.Key, kv => kv.Value));
+
+    [Test]
+    public static void C1_observer_and_spool_capabilities_appear_only_in_their_audited_places()
+    {
+        foreach (var (what, pattern, allowed) in C1Rules) OnlyIn(what, pattern, allowed);
+
+        var pipeline = Sources.Value[Path.Combine("src", "StorageInventory.Core", "InventoryScanner.cs")];
+        Assert.Equal(1, Regex.Matches(pipeline, @"new ScanEngine\(").Count, "one engine per scan");
+        Assert.Equal(1, Regex.Matches(pipeline, @"engine\.Run\(").Count, "one traversal per scan");
+        Assert.Contains("new OutputGuard(sink)", pipeline);   // the guard wraps the critical CSV sink, nothing else
+
+        Assert.Equal(0, SpoolFilesTouchingTheFileSystem(Sources.Value).Count, "the spool codec creates, opens or deletes no file in C1");
+        Assert.True(Sources.Value.Keys.Count(k => k.Replace('\\', '/').StartsWith("src/StorageInventory.Core/Spool/", StringComparison.Ordinal)) >= 4, "the codec sources were found");
+    }
+
+    [Test]
+    public static void C1_rules_reject_violating_snippets()
+    {
+        // Negative self-tests (A-21): every C1 rule finds a planted violation in a file it does not allow.
+        var rogue = new Dictionary<string, string>
+        {
+            ["src/StorageInventory.Core/Reports/Rogue.cs"] = """
+                var listing = new FileSystemEnumerable<int>(path, Transform, options);
+                var names = new DirectoryInfo(path).GetFiles();
+                var second = new ScanEngine(root, observer, names, null);
+                var guarded = new OutputGuard(spoolWriter);
+                var trusted = new VerifiedSpool(stream, 0, header, 0, trailer, runs);
+                """,
+            ["src/StorageInventory.Core/Spool/RogueSpool.cs"] = "using var spool = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);",
+        };
+        foreach (var (what, pattern, _) in C1Rules)
+        {
+            Assert.True(FilesMatching(pattern, rogue).Contains("src/StorageInventory.Core/Reports/Rogue.cs"), $"the {what} rule misses a violation");
+        }
+        Assert.SequenceEqual(["src/StorageInventory.Core/Spool/RogueSpool.cs"], SpoolFilesTouchingTheFileSystem(rogue), "the spool file-access rule misses a violation");
+        Assert.Equal(0, FilesMatching(C1Rules[0].Pattern, new Dictionary<string, string> { ["src/x.cs"] = "// new FileSystemEnumerable<int>(p) in a comment" }).Count,
+            "comments are not code");
+    }
+
+    [Test]
+    public static void C1_internals_are_visible_only_to_approved_assemblies_and_the_observer_layer_is_not_public()
+    {
+        // A-13, the part that applies in C1: Core's InternalsVisibleTo list may only name assemblies of the approved set
+        // (it becomes exactly that set when History and Library exist), and nothing of the observer or spool layer is
+        // public. In C1 the list is still v1's.
+        var core = typeof(StorageScanResult).Assembly;
+        var visibleTo = core.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
+        string[] approved = ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests",
+            "StorageInventory.Library", "StorageInventory.Library.Tests"];
+        Assert.True(visibleTo.All(approved.Contains), "unapproved InternalsVisibleTo: " + string.Join(", ", visibleTo));
+        Assert.SequenceEqual(["StorageInventory.Core.Tests", "StorageInventory.IntegrationTests"], visibleTo, "C1 keeps v1's list");
+        foreach (var t in core.GetTypes().Where(t => t.Namespace is "StorageInventory.Core.Scanning" or "StorageInventory.Core.Spool"))
+        {
+            Assert.False(t.IsVisible, t.FullName + " is public");
+        }
+        var scanner = typeof(InventoryScanner);
+        Assert.False(scanner.GetMethod("ScanObserved", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.IsPublic, "the observed entry point is internal");
     }
 }
