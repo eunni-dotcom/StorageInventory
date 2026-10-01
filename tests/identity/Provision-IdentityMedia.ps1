@@ -11,6 +11,10 @@
 
     A media type that cannot be made here (for example ReFS on a Windows edition without it) is reported with the reason and left
     out of the manifest: an unavailable type is a result, not a failure. The manifest is a JSON file mapping a name to its root path.
+
+    Safety: -Root must not exist, or must be empty, or must be a folder this script made earlier (it holds a marker file); anything
+    else is refused, and -Remove deletes -Root only when the marker is there, so a wrong path cannot be wiped. The SMB shares are
+    open to the CURRENT USER only, not to everyone, and exist only while the experiments run.
 .EXAMPLE
     .\Provision-IdentityMedia.ps1 -Manifest $env:TEMP\identity-media.json
     ...run the experiments...
@@ -39,6 +43,16 @@ function Get-LongPath([string] $Path) {
 }
 if (Test-Path -LiteralPath $Root) { $Root = Get-LongPath $Root }
 
+# A folder this script created holds this marker; nothing else is ever used or deleted as -Root.
+$Marker = '.si-identity-media'
+function Assert-ScratchRoot {
+    if ($Root.Length -lt 8 -or [IO.Path]::GetPathRoot($Root) -eq $Root) { throw "-Root '$Root' is too general to use as a scratch folder." }
+    if (-not (Test-Path -LiteralPath $Root)) { return }
+    $ours = Test-Path -LiteralPath (Join-Path $Root $Marker)
+    $empty = -not (Get-ChildItem -LiteralPath $Root -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (-not $ours -and -not $empty) { throw "-Root '$Root' exists, is not empty and was not made by this script (no $Marker marker). Refusing to use or delete it; pass a folder that does not exist." }
+}
+
 function Get-FreeLetters {
     $used = [IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name[0] }
     ('M','N','O','P','Q','R','S','T','U','W' | Where-Object { $used -notcontains $_ -and -not (Test-Path "$($_):\") })
@@ -55,21 +69,28 @@ function Invoke-Diskpart([string[]] $Lines) {
 function Remove-All($state) {
     $ErrorActionPreference = 'Continue'   # "already gone" is fine while tearing down; native tools write that to stderr
     if (-not $state -and (Test-Path -LiteralPath $Manifest)) { $state = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json }
+    # the manifest knows where the media were made, whatever -Root says now (the marker below still decides what may be deleted)
+    if ($state -and $state.root) { $script:Root = [string]$state.root }
     foreach ($mapping in 'mappedLetterA', 'mappedLetterB') { if ($state -and $state.$mapping) { & net.exe use ($state.$mapping.Substring(0, 2)) /delete /y 2>&1 | Out-Null } }
     foreach ($share in 'SiEvidenceA', 'SiEvidenceB') { Remove-SmbShare -Name $share -Force -ErrorAction SilentlyContinue }
     foreach ($image in Get-ChildItem -LiteralPath $Root -Filter *.iso -ErrorAction SilentlyContinue) { Dismount-DiskImage -ImagePath $image.FullName -ErrorAction SilentlyContinue | Out-Null }
     foreach ($vhd in Get-ChildItem -LiteralPath $Root -Filter *.vhdx -ErrorAction SilentlyContinue) {
         Invoke-Diskpart @("select vdisk file=`"$($vhd.FullName)`"", 'detach vdisk') | Out-Null
     }
-    if (Test-Path -LiteralPath $Root) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $Root) {
+        if (Test-Path -LiteralPath (Join-Path $Root $Marker)) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
+        else { Write-Warning "Left '$Root' alone: it has no $Marker marker, so this script did not make it." }
+    }
     Remove-Item -LiteralPath $Manifest -Force -ErrorAction SilentlyContinue
     'removed'
 }
 
 if ($Remove) { Remove-All $null; return }
 
+Assert-ScratchRoot
 New-Item -ItemType Directory -Force $Root | Out-Null
 $Root = Get-LongPath $Root
+Set-Content -LiteralPath (Join-Path $Root $Marker) -Value 'Made by Provision-IdentityMedia.ps1; safe to delete with -Remove.' -Encoding ASCII
 $result = [ordered]@{}
 $notes = [ordered]@{}
 $letters = [System.Collections.Queue]::new(@(Get-FreeLetters))
@@ -128,7 +149,8 @@ foreach ($spec in @(@{ Name = 'SiEvidenceA'; Key = 'mappedLetterA'; Share = 'smb
         $folder = Join-Path $result[$spec.Backing] 'share'
         New-Item -ItemType Directory -Force (Join-Path $folder 'Media\Music') | Out-Null
         Set-Content -LiteralPath (Join-Path $folder 'Media\Music\song.txt') -Value 'x'
-        New-SmbShare -Name $spec.Name -Path $folder -FullAccess 'Everyone' | Out-Null
+        # open to the current user only (never 'Everyone'): the share exists only while the experiments run, on this machine
+        New-SmbShare -Name $spec.Name -Path $folder -FullAccess ([Security.Principal.WindowsIdentity]::GetCurrent().Name) | Out-Null
         $unc = "\\localhost\$($spec.Name)"
         $result[$spec.Share] = $unc
         if ($letters.Count -gt 0) {
