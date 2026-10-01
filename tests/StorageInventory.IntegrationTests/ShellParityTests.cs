@@ -4,9 +4,11 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
+using System.Windows.Input;
 using StorageInventory.App;
 using StorageInventory.App.Services;
 using StorageInventory.App.ViewModels;
+using StorageInventory.App.Views;
 using StorageInventory.Core;
 using StorageInventory.Testing;
 
@@ -70,12 +72,13 @@ public static class ShellParityTests
     [Test]
     public static void The_shell_window_is_v1s_window_plus_the_navigation_column()
     {
-        var w = ShellHost.Open(new ScanSession(new GatedScanner()));
-        try
+        // Unshown windows: once shown, Width reports what the screen allowed (a CI screen is narrower than 1080).
+        UiHost.Invoke(() =>
         {
-            UiHost.Invoke(() =>
+            var v1 = V1Reference.Load();
+            var w = new MainWindow(new ScanSession(new GatedScanner()));
+            try
             {
-                var v1 = V1Reference.Load();
                 var column = ShellHost.Root(w).ColumnDefinitions[0].Width;
                 Assert.True(column.IsAbsolute && column.Value == NavigationWidth, "a fixed navigation column");
                 Assert.Equal(v1.Width + NavigationWidth, w.Width, "default width");
@@ -85,12 +88,14 @@ public static class ShellParityTests
                 Assert.Equal(v1.Title, w.Title, "title");
                 Assert.Equal(System.Windows.Automation.AutomationProperties.GetName(v1), System.Windows.Automation.AutomationProperties.GetName(w), "window automation name");
                 Assert.Equal(WindowStartupLocation.CenterScreen, v1.WindowStartupLocation, "v1 starts centred");
-                var unshown = new MainWindow(new ScanSession());
-                Assert.Equal(v1.WindowStartupLocation, unshown.WindowStartupLocation, "so does the shell");
-                unshown.Close();
-            });
-        }
-        finally { UiHost.Invoke(w.Close); }
+                Assert.Equal(v1.WindowStartupLocation, w.WindowStartupLocation, "so does the shell");
+            }
+            finally
+            {
+                w.Close();
+                v1.Close();
+            }
+        });
     }
 
     // ---------------------------------------------------------------- driving both windows
@@ -192,25 +197,42 @@ public static class ShellParityTests
 
     private sealed record Shot(RenderedImage Shell, RenderedImage V1Window, RenderedImage ShellPage, RenderedImage V1Page, Int32Rect Content);
 
-    private static Shot Take(MainWindow c2, Window v1)
+    /// <summary>
+    /// Renders both windows in one dispatcher operation, so both show the same state (the elapsed clock cannot tick in
+    /// between). Keyboard focus is a property of the process, not of a window: with two windows only one source box can
+    /// hold it, which would show a caret (and the text box's clear button) in one window only. So the strict frames are
+    /// taken with keyboard focus cleared in both, and <paramref name="focused"/> takes them again with each window's
+    /// own source box holding keyboard focus while that window is rendered, as it does at start-up in the app.
+    /// </summary>
+    private static Shot Take(MainWindow c2, Window v1, bool focused = false)
     {
         UiHost.Settle();
         return UiHost.Invoke(() =>
         {
-            // One dispatcher operation: both windows show the same state (the elapsed clock cannot tick in between).
-            c2.UpdateLayout();
-            v1.UpdateLayout();
+            Keyboard.ClearFocus();
             var root = ShellHost.Root(c2);
             var host = ShellHost.PageHost(c2);
+            if (focused) GiveKeyboardFocus((UIElement)ShellHost.Single<SetupView>(ShellHost.ScanPage(c2)).FindName("SourceBox"), c2);
+            c2.UpdateLayout();
             var at = host.TransformToAncestor(root).Transform(new Point(0, 0));
             var content = new Int32Rect((int)Math.Round(at.X), (int)Math.Round(at.Y), (int)Math.Round(host.ActualWidth), (int)Math.Round(host.ActualHeight));
-            return new Shot(
-                RenderedImage.Of(root, c2, withMargin: false),
-                RenderedImage.Of((FrameworkElement)v1.Content, v1, withMargin: false),
-                RenderedImage.Of(ShellHost.Page(ShellHost.ScanPage(c2)), c2, withMargin: true),
-                RenderedImage.Of(V1Reference.Page(v1), v1, withMargin: true),
-                content);
+            var shell = RenderedImage.Of(root, c2, withMargin: false);
+            var shellPage = RenderedImage.Of(ShellHost.Page(ShellHost.ScanPage(c2)), c2, withMargin: true);
+
+            if (focused) GiveKeyboardFocus((UIElement)v1.FindName("SourceBox"), v1);
+            v1.UpdateLayout();
+            var v1Window = RenderedImage.Of((FrameworkElement)v1.Content, v1, withMargin: false);
+            var v1Page = RenderedImage.Of(V1Reference.Page(v1), v1, withMargin: true);
+            Keyboard.ClearFocus();
+            return new Shot(shell, v1Window, shellPage, v1Page, content);
         });
+    }
+
+    private static void GiveKeyboardFocus(UIElement element, Window window)
+    {
+        Keyboard.Focus(element);
+        if (!element.IsKeyboardFocused) throw new AssertionException($"could not give keyboard focus to the source box of {window.GetType().Name}");
+        window.UpdateLayout();
     }
 
     /// <summary>Compares one frame; returns a problem, or null. Saves the images for the evidence.</summary>
@@ -252,19 +274,23 @@ public static class ShellParityTests
         {
             if (frame == Frames[0])
             {
-                // The look of the content comes from the same window-level values in both windows.
                 UiHost.Invoke(() =>
                 {
+                    // The look of the content comes from the same window-level values in both windows...
                     var a = ShellHost.Page(ShellHost.ScanPage(c2));
                     var b = V1Reference.Page(v1);
                     Assert.Equal(TextElement.GetFontFamily(b), TextElement.GetFontFamily(a), "font family");
                     Assert.Equal(TextElement.GetFontSize(b), TextElement.GetFontSize(a), "font size");
                     Assert.Equal(TextElement.GetForeground(b)?.ToString(), TextElement.GetForeground(a)?.ToString(), "foreground");
                     Assert.True(ReferenceEquals(v1.Style, c2.Style), "both windows have the same window style");
+                    // ...and both put focus on the source box when they load, as v1 does.
+                    Assert.True(ReferenceEquals(FocusManager.GetFocusedElement(v1), v1.FindName("SourceBox")), "v1 focuses its source box");
+                    Assert.True(ReferenceEquals(FocusManager.GetFocusedElement(c2), ShellHost.Single<SetupView>(ShellHost.ScanPage(c2)).FindName("SourceBox")), "the shell focuses the source box");
                 });
             }
             compared.Add(frame);
             if (Compare($"{label}-{frame}", Take(c2, v1)) is { } problem) problems.Add(problem);
+            if (frame.StartsWith("setup-", StringComparison.Ordinal) && Compare($"{label}-{frame}-focused", Take(c2, v1, focused: true)) is { } focusedProblem) problems.Add(focusedProblem);
         });
         Assert.SequenceEqual(Frames, compared, "frames compared");
         Assert.True(problems.Count == 0, string.Join(" | ", problems));
@@ -304,6 +330,7 @@ public static class ShellParityTests
             UiHost.Settle();
             UiHost.Invoke(() =>
             {
+                Keyboard.ClearFocus();   // one process, two windows: keyboard focus would show in one of them only (see Take)
                 c2.UpdateLayout();
                 v1.UpdateLayout();
                 var navigation = ShellHost.NavigationList(c2);

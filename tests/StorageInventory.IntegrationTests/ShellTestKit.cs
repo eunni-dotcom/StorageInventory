@@ -306,9 +306,17 @@ public static class Accessibility
     }
 
     private static string Describe(AutomationPeer p) =>
-        $"{p.GetAutomationControlType()} name='{p.GetName()}' id='{p.GetAutomationId()}' help='{p.GetHelpText()}' " +
-        $"live={(p is UIElementAutomationPeer u ? AutomationProperties.GetLiveSetting(u.Owner) : default)} enabled={p.IsEnabled()} " +
-        $"keyboard={p.IsKeyboardFocusable()} key='{p.GetAccessKey()}' label='{(p.GetLabeledBy() is UIElementAutomationPeer l ? l.GetName() : "")}'";
+        $"{Try(() => p.GetAutomationControlType())} name='{Try(p.GetName)}' id='{Try(p.GetAutomationId)}' help='{Try(p.GetHelpText)}' " +
+        $"live={(p is UIElementAutomationPeer u ? AutomationProperties.GetLiveSetting(u.Owner) : default)} enabled={Try(() => p.IsEnabled())} " +
+        $"keyboard={Try(() => p.IsKeyboardFocusable())} key='{Try(p.GetAccessKey)}' label='{Try(() => p.GetLabeledBy() is UIElementAutomationPeer l ? l.GetName() : "")}'";
+
+    /// <summary>Some peers (virtualised items, for example) throw for a property; that is recorded, not fatal, so the
+    /// same peer in both windows still compares equal.</summary>
+    private static string Try<T>(Func<T> read)
+    {
+        try { return read()?.ToString() ?? ""; }
+        catch (Exception ex) when (ex is NullReferenceException or InvalidOperationException or ElementNotAvailableException) { return "<" + ex.GetType().Name + ">"; }
+    }
 
     private static readonly Lazy<(object Navigation, MethodInfo GetNextTab)> Navigation = new(() =>
     {
