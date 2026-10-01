@@ -53,7 +53,7 @@ jobs:
         shell: powershell
         run: .\tools\fetch-tools.ps1
 
-      - name: Diagnostic variant: remove the views' ViewAutomationPeer
+      - name: "Diagnostic variant - remove the views' ViewAutomationPeer"
         if: matrix.variant == 'default-peers'
         shell: powershell
         run: |
