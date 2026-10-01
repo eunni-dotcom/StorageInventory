@@ -94,8 +94,22 @@ public sealed class InventoryScanner : IStorageInventoryScanner
         }
 
         // The run is named: from here on every observer is started and ended (SINK-03 #1).
-        var start = new ScanStartInfo(run.RunId, root, PathPolicy.TryGetCanonicalPath(root), run.OwnFileNames);
+        var start = new ScanStartInfo(run.RunId, root, CanonicalRootOrNull(root), run.OwnFileNames);
         return RunNamed(start, output, run, options.SortFiles, isolatedObservers, reporter, timings, clock, phaseClock, cancellationToken);
+    }
+
+    /// <summary>The canonical root for <see cref="ScanStartInfo"/>: information only, so failing to read it is never a
+    /// scan failure (v1's "the task does not fault" contract is kept). Class C is not swallowed.</summary>
+    private static string? CanonicalRootOrNull(string root)
+    {
+        try
+        {
+            return PathPolicy.TryGetCanonicalPath(root);
+        }
+        catch (Exception ex) when (!ExceptionClasses.IsCatastrophic(ex))
+        {
+            return null;
+        }
     }
 
     private static ObservedScanOutcome NotStarted(StorageScanResult result) => new(result, [], false);
