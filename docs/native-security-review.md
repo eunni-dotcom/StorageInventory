@@ -40,7 +40,7 @@ text, the compiled assemblies' references, the P/Invoke methods found by reflect
 
 **Deliberately absent** (and the audit test forbids them): `File.WriteAll*`/`AppendAll*`/`Create`/`Copy`/`Replace`/`SetAttributes`/`Set*Time`/`SetAccessControl`; `Directory.Delete`/`Move`; any `System.Net`, sockets, HTTP or DNS; the registry; `Assembly.Load`, `Activator.CreateInstance`, `Type.GetType`, `Reflection.Emit`, `DynamicMethod`; `Environment.SetEnvironmentVariable`; services, task scheduler and startup entries; isolated storage and settings persistence; `runas`; package references.
 
-Reflection is used only by the test runner (`tests/Shared/MiniTest.cs`) and the audit tests, never in `src/`. WPF itself uses reflection internally for XAML and data binding; that is framework code, not ours.
+Reflection is used only by test code (the test runner `tests/Shared/MiniTest.cs`, the audit tests, and the v1.1 C2 shell tests, which count an event's handlers), never in `src/`. WPF itself uses reflection internally for XAML and data binding; that is framework code, not ours.
 
 ## Adversarial checks and results
 

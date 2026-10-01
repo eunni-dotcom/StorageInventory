@@ -141,6 +141,22 @@ succeed before any record is read back. It works over a `Stream` it is given and
 spool file exists: the file, its exclusive delete-on-close handle in the report folder and its space policy belong to
 the capture gate (C5). The spool is never a snapshot, an export or an interchange format.
 
+## The App shell (v1.1 gate C2)
+
+`StorageInventory.App` is a shell window with a navigation list and the page it shows. In C2 the only page is
+**Scan**, which is v1's flow unchanged: `Views/ScanPage` holds v1's page (header and scroller) and shows one of three
+stage views, `SetupView`, `ScanProgressView` and `ResultsView`, whose markup is v1's. They bind to the Scan page's view
+model (`MainViewModel`) and, through it, to v1's `PreflightViewModel`, `ScanProgressViewModel` and `ResultsViewModel`.
+A page is shown through its view (an implicit `DataTemplate` in the shell); `ShellViewModel` lists the pages.
+
+Long-lived state belongs to services created once per app session, not to pages or views (UI-12). `App.OnStartup`
+creates one `ScanSession` before the shell. It owns the scanner, the running scan, its cancellation, its progress and
+its result, and runs at most one scan at a time; a view can be replaced, or a window that hosts the page closed,
+without stopping or restarting the scan. `MainViewModel` keeps v1's names (`Stage`, `Progress`, `Results`, `IsBusy`
+and the commands) by delegating to the session through a weak subscription, so the session never keeps a page alive.
+Closing the shell during a scan asks, cancels through the session and waits until Core has closed every report file,
+as v1 did. Later gates add pages (C8) and the Library services (C4, C5) beside the session without moving the scan.
+
 ## File identity (future design topic)
 
 In v1 a file is identified within a scan by its **root-relative path**. That is enough for reports, but not for
