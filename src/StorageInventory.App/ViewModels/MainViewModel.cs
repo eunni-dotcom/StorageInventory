@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows.Input;
 using StorageInventory.App.Mvvm;
@@ -14,8 +15,10 @@ public enum AppStage
 }
 
 /// <summary>
-/// The window's state machine: Setup (paths, options, pre-flight) → Scanning → Results. All path safety comes from
-/// Core's <see cref="PathPolicy"/>; the scanner validates again before it starts, whatever the UI showed.
+/// The Scan page's view model: Setup (paths, options, pre-flight) → Scanning → Results. The scan itself, its stage,
+/// progress and result belong to the app-lifetime <see cref="ScanSession"/> (UI-12); this view model presents them
+/// under v1's names. All path safety comes from Core's <see cref="PathPolicy"/>; the scanner validates again before it
+/// starts, whatever the UI showed.
 /// </summary>
 public sealed partial class MainViewModel : ObservableObject
 {
@@ -23,7 +26,6 @@ public sealed partial class MainViewModel : ObservableObject
 
     private readonly IFolderPicker _folderPicker;
     private readonly SynchronizationContext _ui;
-    private AppStage _stage = AppStage.Setup;
     private string _sourcePath = "";
     private string _outputPath;
     private bool _sortFiles = true;
@@ -31,10 +33,13 @@ public sealed partial class MainViewModel : ObservableObject
     private int _validationVersion;
     private CancellationTokenSource? _pendingValidation;
 
-    public MainViewModel(IFolderPicker folderPicker)
+    public MainViewModel(ScanSession session, IFolderPicker folderPicker)
     {
+        Session = session;
         _folderPicker = folderPicker;
         _ui = SynchronizationContext.Current ?? new SynchronizationContext();
+        // Weak: the session outlives page view models, and must never keep one alive.
+        PropertyChangedEventManager.AddHandler(session, OnSessionChanged, string.Empty);
         _outputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "StorageInventory");
         BrowseSourceCommand = new RelayCommand(BrowseSource, () => Stage == AppStage.Setup);
         BrowseOutputCommand = new RelayCommand(BrowseOutput, () => Stage == AppStage.Setup);
@@ -43,22 +48,12 @@ public sealed partial class MainViewModel : ObservableObject
         ScheduleValidation();
     }
 
+    /// <summary>The app session's scan, shared by every view of the Scan page.</summary>
+    public ScanSession Session { get; }
+
     public PreflightViewModel Preflight { get; } = new();
 
-    public AppStage Stage
-    {
-        get => _stage;
-        private set
-        {
-            if (Set(ref _stage, value))
-            {
-                OnPropertyChanged(nameof(IsSetup));
-                OnPropertyChanged(nameof(IsScanning));
-                OnPropertyChanged(nameof(IsResults));
-                CommandManager.InvalidateRequerySuggested();
-            }
-        }
-    }
+    public AppStage Stage => Session.Stage;
 
     public bool IsSetup => Stage == AppStage.Setup;
     public bool IsScanning => Stage == AppStage.Scanning;
