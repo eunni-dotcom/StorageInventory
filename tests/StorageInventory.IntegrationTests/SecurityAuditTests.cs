@@ -274,18 +274,35 @@ public static class SecurityAuditTests
             "no manual native binding anywhere in src");
     }
 
+    /// <summary>A-12 as a function (so a negative self-test can run it on a violating list): what an assembly may not
+    /// reference: UI, process, network or registry assemblies, and SQLite (which only the Library assembly will ever use).</summary>
+    private static List<string> ReferenceViolations(string assembly, IEnumerable<string> references)
+    {
+        string[] forbidden = ["PresentationFramework", "PresentationCore", "WindowsBase", "System.Windows.Forms", "System.Diagnostics.Process",
+                              "System.Net.Http", "System.Net.Sockets", "System.Net.Primitives", "Microsoft.Win32.Registry"];
+        return references
+            .Where(r => forbidden.Contains(r) || r.StartsWith("Microsoft.Data.Sqlite", StringComparison.Ordinal) || r.StartsWith("SQLitePCL", StringComparison.Ordinal))
+            .Select(r => $"{assembly} references {r}")
+            .ToList();
+    }
+
+    /// <summary>A-13 as a function: the friend assemblies must all be approved, and the list must be exactly the expected one.</summary>
+    private static List<string> FriendViolations(string assembly, IEnumerable<string> visibleTo, IReadOnlyCollection<string> approved, IReadOnlyCollection<string> expectedExactly)
+    {
+        var actual = visibleTo.Order(StringComparer.Ordinal).ToList();
+        var violations = actual.Where(f => !approved.Contains(f)).Select(f => $"{assembly}: unapproved friend {f}").ToList();
+        if (!actual.SequenceEqual(expectedExactly.Order(StringComparer.Ordinal))) violations.Add($"{assembly}: friends are [{string.Join(", ", actual)}], expected exactly [{string.Join(", ", expectedExactly)}]");
+        return violations;
+    }
+
     [Test]
     public static void Core_and_History_have_no_UI_process_network_or_database_dependencies()
     {
         // A-12: unchanged for Core; History additionally may not reference any UI assembly, and neither may reference SQLite.
-        var forbiddenForBoth = new[] { "PresentationFramework", "PresentationCore", "WindowsBase", "System.Windows.Forms", "System.Diagnostics.Process",
-                                       "System.Net.Http", "System.Net.Sockets", "System.Net.Primitives", "Microsoft.Win32.Registry" };
         foreach (var (name, assembly) in new[] { ("Core", typeof(StorageScanResult).Assembly), ("History", typeof(StorageInventory.History.Identity.IdentityMatching).Assembly) })
         {
-            var refs = assembly.GetReferencedAssemblies().Select(a => a.Name!).ToList();
-            foreach (var forbidden in forbiddenForBoth) Assert.False(refs.Contains(forbidden), $"{name} references {forbidden}");
-            Assert.False(refs.Any(r => r.StartsWith("Microsoft.Data.Sqlite", StringComparison.Ordinal) || r.StartsWith("SQLitePCL", StringComparison.Ordinal)),
-                $"{name} references SQLite: {string.Join(", ", refs.Where(r => r.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) || r.StartsWith("SQLitePCL", StringComparison.Ordinal)))}");
+            var violations = ReferenceViolations(name, assembly.GetReferencedAssemblies().Select(a => a.Name!));
+            Assert.Equal(0, violations.Count, string.Join("; ", violations));
         }
 
         // History's whole dependency graph: Core and the framework, nothing else
@@ -294,6 +311,25 @@ public static class SecurityAuditTests
 
         // and no project under src carries a package reference (the product still builds from the SDK alone in C3)
         Assert.Equal(0, FilesMatching(@"<PackageReference|SQLitePCL|Microsoft\.Data\.Sqlite").Count, "no SQLite or package reference in src");
+    }
+
+    [Test]
+    public static void The_dependency_and_friend_rules_reject_violating_inputs()
+    {
+        // Negative self-tests (A-21) for the A-12 and A-13 rules that C3 extended to History.
+        var bad = ReferenceViolations("History", ["System.Runtime", "StorageInventory.Core", "Microsoft.Data.Sqlite", "SQLitePCLRaw.core", "PresentationFramework", "System.Net.Http", "Microsoft.Win32.Registry", "System.Diagnostics.Process"]);
+        foreach (var expected in new[] { "Microsoft.Data.Sqlite", "SQLitePCLRaw.core", "PresentationFramework", "System.Net.Http", "Microsoft.Win32.Registry", "System.Diagnostics.Process" })
+        {
+            Assert.True(bad.Any(v => v.EndsWith(expected, StringComparison.Ordinal)), $"the dependency rule misses a reference to {expected}: {string.Join("; ", bad)}");
+        }
+        Assert.Equal(0, ReferenceViolations("History", ["System.Runtime", "System.Linq", "System.Collections", "StorageInventory.Core"]).Count, "ordinary references are accepted");
+
+        string[] approved = ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests", "StorageInventory.Library", "StorageInventory.Library.Tests"];
+        string[] expectedList = ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests"];
+        Assert.Equal(0, FriendViolations("Core", expectedList, approved, expectedList).Count, "the expected list passes");
+        Assert.True(FriendViolations("Core", [.. expectedList, "StorageInventory.App"], approved, expectedList).Any(v => v.Contains("unapproved friend StorageInventory.App", StringComparison.Ordinal)), "an unapproved friend is detected");
+        Assert.True(FriendViolations("Core", [.. expectedList, "StorageInventory.Library"], approved, expectedList).Count == 1, "an approved assembly that is not in this gate's list is detected as a list difference");
+        Assert.True(FriendViolations("Core", expectedList.Take(3), approved, expectedList).Count == 1, "a missing friend is detected");
     }
 
     [Test]
@@ -381,9 +417,9 @@ public static class SecurityAuditTests
         var visibleTo = core.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
         string[] approved = ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests",
             "StorageInventory.Library", "StorageInventory.Library.Tests"];
-        Assert.True(visibleTo.All(approved.Contains), "unapproved InternalsVisibleTo: " + string.Join(", ", visibleTo));
-        Assert.SequenceEqual(["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests"], visibleTo,
-            "C3's list: v1's two test assemblies plus History and History.Tests");
+        var friendViolations = FriendViolations("Core", visibleTo, approved,
+            ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests"]);   // C3's list: v1's two test assemblies plus History and History.Tests
+        Assert.Equal(0, friendViolations.Count, string.Join("; ", friendViolations));
         foreach (var t in core.GetTypes().Where(t => t.Namespace is "StorageInventory.Core.Scanning" or "StorageInventory.Core.Spool" or "StorageInventory.Core.Identity"))
         {
             Assert.False(t.IsVisible, t.FullName + " is public");
@@ -401,6 +437,8 @@ public static class SecurityAuditTests
         var history = typeof(StorageInventory.History.Identity.IdentityMatching).Assembly;
         Assert.Equal(0, history.GetExportedTypes().Length, "public types: " + string.Join(", ", history.GetExportedTypes().Select(t => t.FullName)));
         var visibleTo = history.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
-        Assert.SequenceEqual(["StorageInventory.History.Tests", "StorageInventory.IntegrationTests"], visibleTo);
+        var friendViolations = FriendViolations("History", visibleTo, ["StorageInventory.History.Tests", "StorageInventory.IntegrationTests", "StorageInventory.Library", "StorageInventory.Library.Tests"],
+            ["StorageInventory.History.Tests", "StorageInventory.IntegrationTests"]);   // Library and its tests are added by C4
+        Assert.Equal(0, friendViolations.Count, string.Join("; ", friendViolations));
     }
 }
