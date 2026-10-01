@@ -133,6 +133,57 @@ public static class SourceIdentityTests
     }
 
     [Test]
+    public static void TEST_I1_a_source_deeper_than_MAX_PATH_is_read_through_the_extended_path()
+    {
+        var work = TestEnvironment.NewWorkFolder("identity_long");
+        try
+        {
+            var deep = Path.Combine(work, new string('a', 90), new string('b', 90), new string('c', 90), "Source");
+            Directory.CreateDirectory(deep);
+            Assert.True(deep.Length > 260, "the path is longer than MAX_PATH: " + deep.Length);
+
+            var e = Read(deep);
+            Assert.True(e.HandleOpened.IsAvailable, "the zero-access open works beyond MAX_PATH");
+            Assert.True(e.CanonicalPath.Value!.Length > 260);
+            Assert.True(SourceLocation.TryDerive(e.CanonicalPath.Value!, out var location));
+            Assert.True(location.RootInVolume.EndsWith(@"\Source", StringComparison.Ordinal) && location.RootInVolume.Length > 260, "the exact root is kept in full");
+            Assert.True(e.MountPoint.IsAvailable && e.CapacityBytes.IsAvailable, "the path queries work on a long path too");
+            Assert.True(IdentityClassifier.Assess(e).CanSave);
+        }
+        finally
+        {
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    [Test]
+    public static void TEST_I1_the_root_is_kept_as_the_exact_UTF16_the_filesystem_spells_it()
+    {
+        var work = TestEnvironment.NewWorkFolder("identity_unicode");
+        try
+        {
+            // Korean, a supplementary-plane emoji (a surrogate pair), a precomposed and a decomposed accent, and mixed case
+            var names = new[] { "음악", "Music 🎵", "Café", "Café", "MiXeD" };
+            foreach (var name in names)
+            {
+                var folder = Path.Combine(work, name);
+                Directory.CreateDirectory(folder);
+                var e = Read(folder);
+                Assert.True(SourceLocation.TryDerive(e.CanonicalPath.Value!, out var location), name);
+                Assert.True(location.RootInVolume.EndsWith("\\" + name, StringComparison.Ordinal), $"'{name}' is preserved code unit for code unit: {location.RootInVolume}");
+            }
+            // 'Café' and 'Café' (precomposed and decomposed) are two folders with different exact roots, so two different sources
+            var a = SourceLocation.TryDerive(Read(Path.Combine(work, "Café")).CanonicalPath.Value!, out var la);
+            var b = SourceLocation.TryDerive(Read(Path.Combine(work, "Café")).CanonicalPath.Value!, out var lb);
+            Assert.True(a && b && la.RootInVolume != lb.RootInVolume, "no normalisation: the two spellings stay different");
+        }
+        finally
+        {
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    [Test]
     public static void TEST_I1_a_path_that_cannot_be_opened_yields_no_invented_values()
     {
         var missing = Path.Combine(TestEnvironment.WorkRoot, "does-not-exist-" + Guid.NewGuid().ToString("N"), "nor-this");
