@@ -67,6 +67,7 @@ jobs:
             if ($text -notmatch "(?m)^$id\s+\S+\s+SURVIVED") { throw "expected $id to SURVIVE on the review commit" }
           }
           'the nine test-gap mutants and the reflection mutant survive on the review commit, as the review reported'
+          exit 0
       - name: Upload
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
