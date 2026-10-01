@@ -112,6 +112,7 @@ jobs:
           if ($c1 -ne 2 -or $c2 -ne 2) { throw 'a wrong -Manifest or -Root was not refused' }
           if ($before -ne $after) { throw 'a refused -Remove changed the volumes' }
           if (-not (Test-Path $foreign) -or -not (Test-Path "$env:RUNNER_TEMP\identity-media.json")) { throw 'a file went missing' }
+          exit 0
       - name: Run the identity experiments
         shell: powershell
         run: .\tests\identity\Invoke-IdentityExperiments.ps1 -Manifest "$env:RUNNER_TEMP\identity-media.json" -Out "$env:RUNNER_TEMP\identity-experiments.md"
