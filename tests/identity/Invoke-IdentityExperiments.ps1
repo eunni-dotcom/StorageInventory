@@ -117,8 +117,9 @@ Add-Md 'Each block is one run of the product''s probe: the raw items of one read
 Add-Md
 
 $targets = New-Object System.Collections.Generic.List[object]
+$manifestRoots = @(); if ($media) { $manifestRoots = @($media.ntfsA, $media.ntfsB, $media.fat32, $media.exfat, $media.refs, $media.udf | Where-Object { $_ }) }
 foreach ($d in [IO.DriveInfo]::GetDrives()) {
-    try { if ($d.IsReady -and $d.DriveType -in 'Fixed', 'Removable', 'CDRom') { $targets.Add(@{ Path = $d.Name; Label = "$($d.DriveType) $($d.DriveFormat) drive" }) } } catch { }
+    try { if ($d.IsReady -and $d.DriveType -in 'Fixed', 'Removable', 'CDRom' -and $manifestRoots -notcontains $d.Name) { $targets.Add(@{ Path = $d.Name; Label = "$($d.DriveType) $($d.DriveFormat) drive" }) } } catch { }
 }
 $systemFolder = Join-Path $env:SystemRoot 'System32'
 $targets.Add(@{ Path = $systemFolder; Label = 'a subfolder source (not a whole volume)' })
@@ -180,29 +181,38 @@ Add-Md
 # ---------------------------------------------------------------- Part 2: TEST-I2 drive letter change
 Add-Md '## Part 2: a drive-letter change does not change the identity (TEST-I2)'
 Add-Md
-if ($elevated -and $media -and $media.ntfsA) {
-    $oldLetter = $media.ntfsA.Substring(0, 1)
-    $newLetter = Get-FreeLetter
-    $before = Get-ProbeJson $media.ntfsA 'letter before'
-    try {
-        Get-Partition -DriveLetter $oldLetter | Set-Partition -NewDriveLetter $newLetter
-        $after = Get-ProbeJson "$($newLetter):\" 'letter after'
-        Get-Partition -DriveLetter $newLetter | Set-Partition -NewDriveLetter $oldLetter
+if ($elevated -and $media) {
+    # volumes that back no SMB share, so changing a letter disturbs nothing else: a Strong NTFS volume, a Moderate exFAT volume, a Strong ReFS volume
+    Add-Md '| volume | letter | filesystem | serial32 | serial64 | confidence | root in volume |'
+    Add-Md '|---|---|---|---|---|---|---|'
+    $verdicts = New-Object System.Collections.Generic.List[string]
+    foreach ($pair in @(@('ntfsB', 'NTFS (Strong)'), @('exfat', 'exFAT (Moderate)'), @('refs', 'ReFS (Strong)'))) {
+        $path = $media.($pair[0])
+        if (-not $path) { $verdicts.Add("$($pair[1]): NOT RUN, the volume was not provisioned"); continue }
+        $oldLetter = $path.Substring(0, 1)
+        $newLetter = Get-FreeLetter
+        $before = Get-ProbeJson $path 'letter before'
+        $after = $null
+        try {
+            Get-Partition -DriveLetter $oldLetter -ErrorAction Stop | Set-Partition -NewDriveLetter $newLetter -ErrorAction Stop
+            $after = Get-ProbeJson "$($newLetter):\" 'letter after'
+            Get-Partition -DriveLetter $newLetter -ErrorAction Stop | Set-Partition -NewDriveLetter $oldLetter -ErrorAction Stop
+        }
+        catch { $verdicts.Add("$($pair[1]): changing the letter failed: $($_.Exception.Message)") }
+        if ($before -and $after) {
+            $same = ($before.fileSystem -eq $after.fileSystem) -and ($before.serial32 -eq $after.serial32) -and ($before.serial64 -eq $after.serial64) -and ($before.confidence -eq $after.confidence) -and ($before.rootInVolume -eq $after.rootInVolume)
+            Add-Md ('| {0} | `{1}:` (before) | {2} | {3} | {4} | {5} | `{6}` |' -f $pair[1], $oldLetter, $before.fileSystem, $before.serial32, $before.serial64, $before.confidence, $before.rootInVolume)
+            Add-Md ('| {0} | `{1}:` (after) | {2} | {3} | {4} | {5} | `{6}` |' -f $pair[1], $newLetter, $after.fileSystem, $after.serial32, $after.serial64, $after.confidence, $after.rootInVolume)
+            $verdicts.Add(('{0}: same identity at both letters: **{1}**' -f $pair[1], $(if ($same) { 'YES' } else { 'NO' })))
+        }
     }
-    catch { $after = $null; Add-Md ('Changing the letter failed: `{0}`' -f $_.Exception.Message) }
-    if ($before -and $after) {
-        $same = ($before.fileSystem -eq $after.fileSystem) -and ($before.serial32 -eq $after.serial32) -and ($before.serial64 -eq $after.serial64) -and ($before.confidence -eq $after.confidence) -and ($before.rootInVolume -eq $after.rootInVolume)
-        Add-Md ('| | letter | filesystem | serial32 | serial64 | confidence | root in volume |')
-        Add-Md '|---|---|---|---|---|---|---|'
-        Add-Md ('| before | `{0}:` | {1} | {2} | {3} | {4} | `{5}` |' -f $oldLetter, $before.fileSystem, $before.serial32, $before.serial64, $before.confidence, $before.rootInVolume)
-        Add-Md ('| after | `{0}:` | {1} | {2} | {3} | {4} | `{5}` |' -f $newLetter, $after.fileSystem, $after.serial32, $after.serial64, $after.confidence, $after.rootInVolume)
-        Add-Md
-        Add-Md ('**Same identity at both letters: {0}.** The matcher takes no drive letter as input, so a Strong volume at either letter is the same source (unit-tested in `MatchingTests`).' -f $(if ($same) { 'YES' } else { 'NO' }))
-    }
+    Add-Md
+    foreach ($v in $verdicts) { Add-Md "* $v" }
+    Add-Md
+    Add-Md 'The matcher takes no drive letter as input, so a Strong volume, or a Moderate one that also corroborates, at either letter is the same source (unit-tested in `MatchingTests`; this proves the evidence it is given really is letter-independent).'
 }
 else { Add-NotRun 'TEST-I2 (drive-letter change)' 'Changing the letter of a mounted volume needs an elevated session and the provisioned VHDX volumes (see Provision-IdentityMedia.ps1). Manual form: README step 2 with a USB stick or any second volume.' }
 Add-Md
-
 # ---------------------------------------------------------------- Part 3: hold experiments (Q-19, TEST-I5, TEST-I6)
 Add-Md '## Part 3: holding the root handle (Q-19, TEST-I5, TEST-I6)'
 Add-Md
@@ -248,39 +258,49 @@ public static class SiVolumeLock {
     }
 }
 '@ -ErrorAction SilentlyContinue
-if ($elevated -and $media -and $media.ntfsA) {
-    $vol = $media.ntfsA.Substring(0, 1)
-    # a background scanner may hold the new volume for a moment, so the baseline is the first success within a few seconds
+if ($elevated -and $media -and $media.ntfsB) {
+    # ntfsB has no SMB share on it: a share's server would hold its own handle on the volume and refuse every lock
+    $lockTarget = $media.ntfsB
+    $vol = $lockTarget.Substring(0, 1)
+    # a background scanner may hold a new volume for a moment, so the baseline is the first success within a few seconds
     $baselineLock = ''
-    for ($try = 0; $try -lt 6; $try++) { $baselineLock = [SiVolumeLock]::TryLock($vol); if ($baselineLock -like 'LOCKED*') { break }; Start-Sleep -Seconds 1 }
-    $r = Invoke-Hold 'volume-lock' $media.ntfsA { 'lock attempt while the root handle is held: ' + [SiVolumeLock]::TryLock($vol) }
+    for ($try = 0; $try -lt 8; $try++) { $baselineLock = [SiVolumeLock]::TryLock($vol); if ($baselineLock -like 'LOCKED*') { break }; Start-Sleep -Seconds 1 }
+    $r = Invoke-Hold 'volume-lock' $lockTarget { 'lock attempt while the root handle is held: ' + [SiVolumeLock]::TryLock($vol) }
     $afterLock = [SiVolumeLock]::TryLock($vol)
     Add-HoldResult 'Orderly dismount (volume lock) while the handle is held' ('A volume lock is the first step of "Safely remove" and Eject. Before the hold: **{0}**. After the hold ended: **{1}**.' -f $baselineLock, $afterLock) $r
 }
 else { Add-NotRun 'volume lock with the handle held' 'Opening a volume for locking needs an elevated session and a virtual volume that is safe to lock (provision with Provision-IdentityMedia.ps1). For real removable media, use the manual "Safely remove" step in README.' }
 
-# 3e surprise removal and a swapped medium (needs virtual disks)
+# 3e surprise removal and a swapped medium (needs virtual disks). The storage cmdlets are used (not diskpart's path matching).
+function Get-ImageState([string] $File) { $i = Get-DiskImage -ImagePath $File -ErrorAction SilentlyContinue; if ($i) { "Attached=$($i.Attached)" } else { 'image not found' } }
+function Set-ImageDetached([string] $File) { Dismount-DiskImage -ImagePath $File -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Milliseconds 800; Get-ImageState $File }
+function Set-ImageAttached([string] $File, [string] $Letter) {
+    Mount-DiskImage -ImagePath $File -ErrorAction SilentlyContinue | Out-Null
+    Start-Sleep -Milliseconds 800
+    $partition = Get-DiskImage -ImagePath $File | Get-Disk | Get-Partition | Where-Object { $_.Type -in 'Basic', 'IFS' } | Select-Object -First 1
+    if ($partition -and $partition.DriveLetter -ne $Letter[0]) { try { $partition | Set-Partition -NewDriveLetter $Letter } catch { "could not assign ${Letter}: $($_.Exception.Message)" } }
+    Get-ImageState $File
+}
 if ($elevated -and $media -and $media.ntfsA -and $media.ntfsB) {
     $root = $media.root
     $fileA = Join-Path $root 'ntfsA.vhdx'; $fileB = Join-Path $root 'ntfsB.vhdx'
-    $letterA = $media.ntfsA.Substring(0, 1)
-    function Invoke-DiskpartLines([string[]] $Lines) { $s = Join-Path $Work 'dp.txt'; Set-Content -LiteralPath $s -Value $Lines -Encoding ASCII; (& diskpart.exe /s $s 2>&1 | Out-String) }
+    $letterA = $media.ntfsA.Substring(0, 1); $letterB = $media.ntfsB.Substring(0, 1)
 
-    $r = Invoke-Hold 'surprise-removal' $media.ntfsA { Invoke-DiskpartLines @("select vdisk file=`"$fileA`"", 'detach vdisk') }
+    $r = Invoke-Hold 'surprise-removal' $media.ntfsA { 'before: ' + (Get-ImageState $fileA); 'detaching the virtual disk with the root handle held: ' + (Set-ImageDetached $fileA) }
     Add-HoldResult 'Medium removed (virtual disk detached) while held' 'The virtual disk is detached with no warning: the equivalent of pulling a USB stick. Its drive letter disappears.' $r
-    Invoke-DiskpartLines @("select vdisk file=`"$fileA`"", 'attach vdisk', 'select partition 1', "assign letter=$letterA noerr") | Out-Null
+    Set-ImageAttached $fileA $letterA | Out-Null
 
     $r = Invoke-Hold 'medium-swapped' $media.ntfsA {
-        Invoke-DiskpartLines @("select vdisk file=`"$fileA`"", 'detach vdisk') | Out-Null
-        Invoke-DiskpartLines @("select vdisk file=`"$fileB`"", 'attach vdisk', 'select partition 1', "assign letter=$letterA noerr")
+        'detaching volume A: ' + (Set-ImageDetached $fileA)
+        $partition = Get-Partition -DriveLetter $letterB -ErrorAction Stop
+        $partition | Set-Partition -NewDriveLetter $letterA
+        "volume B (another serial) now has the letter ${letterA}:"
     }
-    Add-HoldResult 'Another medium appears at the same drive letter while held' 'Volume A is detached and volume B (another serial) is attached at the same letter.' $r
-    Invoke-DiskpartLines @("select vdisk file=`"$fileB`"", 'detach vdisk') | Out-Null
-    Invoke-DiskpartLines @("select vdisk file=`"$fileA`"", 'attach vdisk', 'select partition 1', "assign letter=$letterA noerr") | Out-Null
-    Invoke-DiskpartLines @("select vdisk file=`"$fileB`"", 'attach vdisk') | Out-Null
+    Add-HoldResult 'Another medium appears at the same drive letter while held' 'Volume A is detached and volume B (another serial) takes the same letter.' $r
+    try { Get-Partition -DriveLetter $letterA -ErrorAction Stop | Set-Partition -NewDriveLetter $letterB } catch { }
+    Set-ImageAttached $fileA $letterA | Out-Null
 }
 else { Add-NotRun 'surprise removal and a swapped medium' 'Needs an elevated session and the provisioned VHDX volumes. Manual form for real media: README step 5.' }
-
 # 3f UDF medium dismounted while held
 if ($elevated -and $media -and $media.udf) {
     $isoPath = Join-Path $media.root 'si_udf.iso'

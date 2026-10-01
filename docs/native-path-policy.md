@@ -41,7 +41,9 @@ silently "fixed": every normalisation is reported, at least as `Info`.
    and two report files already existed inside the tree. The native scanner keeps the tripwire as a second line of
    defence, for aliases that Windows itself doesn't resolve, such as `\\localhost\C$`.
    - This needs two read-only kernel32 calls (`CreateFileW` with **zero access rights** plus
-     `GetFinalPathNameByHandleW`), in `Paths/NativeMethods.cs`. These are the product's only native calls.
+     `GetFinalPathNameByHandleW`), in `Paths/NativeMethods.cs`. These two are the path policy's native calls. (v1.1
+     gate C3 added four more read-only queries beside them for volume and source identity: six in all, see
+     [native-security-review.md](native-security-review.md).)
 2. **Trailing dots and spaces are always refused.** Both .NET Framework and .NET 10 silently remove them during
    normalisation. The reference refused them only when the stripped path landed inside the source.
 3. **Relative paths are blocked by default.** The reference resolved them against the PowerShell location. A GUI has
