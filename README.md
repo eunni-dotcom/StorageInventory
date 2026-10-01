@@ -136,6 +136,8 @@ reproducible byte for byte. See [docs/release.md](docs/release.md).
 
 - **Unit tests** (`tests/StorageInventory.Core.Tests`): path normalisation, aggregation invariants, report formatting,
   CSV and workbook writers, and result contracts.
+- **Identity tests** (`tests/StorageInventory.History.Tests`): the rules that recognise a drive or folder again (confidence,
+  matching, end-of-scan re-verification) over fake evidence, with no filesystem.
 - **Integration tests** (`tests/StorageInventory.IntegrationTests`) run against an adversarial fixture tree:
   - junction loops, links pointing outside the tree, and deny-ACL folders;
   - paths over 260 characters, Unicode and emoji names, formula-like names, and invalid timestamps.

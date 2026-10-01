@@ -80,14 +80,21 @@ probing, a PowerShell or process fallback, any network-name resolution, or manua
 `GetProcAddress`, function pointers). The first-party surface after C3 is exactly the six calls of the inventory above, in
 one file, and the audit (`The_only_native_calls_are_six_read_only_kernel32_functions` and its negative self-test) fails if
 a seventh appears, if one is not in `kernel32`, if `CreateFileW` is called with any desired access but the literal 0, or if
-`GetFileInformationByHandleEx` is asked for anything but `FileIdInfo`.
+`GetFileInformationByHandleEx` is asked for anything but `FileIdInfo`. The last is enforced by type (a one-member enum)
+and by a text rule that allows the enum's name in exactly three kinds of place (its declaration, the P/Invoke's parameter,
+and the `.FileIdInfo` argument), so a cast, `default(...)`, `Enum.ToObject` and `Unsafe.As` are all rejected; the rule is
+shown to reject each of them. (Every information class is a read-only query: the point is that the reviewed surface is
+exactly one.)
 
 ### The zero-access root handle
 
 - **Which path.** The handle is opened on **the path the scan enumerates** (v1's validated, normalised path as entered),
-  converted only to the extended `\\?\` form, which adds no normalisation. It is never opened on the canonical path read
-  back from it: a SUBST or mapped letter that is re-pointed leaves the old target's canonical path unchanged, so opening it
-  would hide exactly the change the end-of-scan check exists to find.
+  converted only to the extended `\\?\` form, which adds no normalisation. No handle is ever opened on the canonical path
+  read back from it (`CreateFileW` is only given the enumerated path): a SUBST or mapped letter that is re-pointed leaves
+  the old target's canonical path unchanged, so opening it would hide exactly the change the end-of-scan check exists to
+  find. Two display queries do take a path they are handed (`GetVolumePathNameW` the canonical path, `GetDiskFreeSpaceExW`
+  the mount point): there is no handle form of either, they only read, and what they return (mount point, capacity, free
+  space) is recorded and never compared (ID-13), so it cannot change a verdict.
 - **Which rights.** `CreateFileW` with desired access **0**, sharing read, write and delete, `FILE_FLAG_BACKUP_SEMANTICS`
   (needed to open a directory) and `OPEN_EXISTING`. The granted access mask of such a handle was measured on Windows 11 as
   `0x00100080` (`SYNCHRONIZE` and `FILE_READ_ATTRIBUTES`, which `CreateFileW` itself adds); `GENERIC_READ` gives
@@ -109,10 +116,15 @@ a seventh appears, if one is not in `kernel32`, if `CreateFileW` is called with 
 **holds** the handle for the window, reads E2 through the same handle and E3 through a **fresh** open of the enumerated path
 when the scan has returned, and closes the held handle in the same step. A cancelled or failed scan never reaches that step
 and disposes the hold instead, which is idempotent. The handle is a `SafeFileHandle` (so a missed disposal is still
-released by the runtime, and a closed handle can never be used by accident); the wrapper adds no finalizer. Tests prove
-that every handle opened is closed when a read throws at E1, E2 or E3, when a path cannot be opened, and when the scan is
-abandoned. C3 does not call it from a scan: v1's scan, its reports and its observers are byte-for-byte unchanged, and a test
-shows a scan's three reports identical with the handle held.
+released by the runtime, and a closed handle can never be used by accident); the wrapper adds no finalizer. Two kinds of
+test cover the release, and they prove different things. The unit tests over a fake provider prove that the hold *asks* for
+every handle to be closed, on every ending (a read that throws at E1, E2 or E3, a path that cannot be opened, a scan that is
+abandoned, a double dispose). `The_real_root_handle_is_closed_however_the_window_ends` proves that the *real* handle is
+released: the handle has no rights and shares everything, so nothing done to the folder can show it, and the test counts
+the process's own handles instead, with a control (windows that are held do raise the count, so the measurement can fail),
+then 160 windows ending four different ways, with the collector held off so a leak cannot be quietly finalised. C3 does
+not call the hold from a scan: v1's scan, its reports and its observers are byte-for-byte unchanged, and a test shows a
+scan's three reports identical with the handle held.
 
 ### What holding the handle does (Q-19: measured on Windows 11 and on a hosted Windows Server 2025 runner)
 
@@ -127,6 +139,7 @@ shows a scan's three reports identical with the handle held.
 | Virtual disk detached, or a disc image dismounted (what pulling a stick or Eject does) | Not blocked; the held handle fails (Win32 21, not ready) and a fresh open fails (Win32 3), so the capture is not eligible |
 | Another medium at the same letter | E2 fails; E3 reads the other volume's serials |
 | SUBST letter re-pointed | The held handle still reaches the original folder; E3 reaches the new one and detects it. Re-pointed away and back is **not** detected (L-ID2) |
+| Source folder renamed away, another folder given its name | If left like that: E2 reports the original's new name (every filesystem) and E3 reaches a different directory (its root file ID on NTFS and ReFS): detected. If everything is put back before the window closes: **not** detected (L-ID2, G0F-O05) |
 | A network share's folder renamed by another client | E2 reports the new name; E3 cannot open the old one |
 
 So the effect of holding the root handle is the one the specification accepts: it can block "Safely remove" (and a
@@ -139,8 +152,12 @@ steps (`tests/identity/README.md`) and remain open acceptance evidence.
 
 - **L-ID1:** a disk clone copies the volume serial, and nothing read distinguishes a clone from its original unless both
   are mounted together (then the user is asked). Asserted as expected behaviour by `MatchingTests`.
-- **L-ID2:** a letter re-pointed away and back during a scan, with the original volume mounted throughout, cannot be
-  detected from start and end evidence. Asserted as documented behaviour, with no polling added to hide it.
+- **L-ID2:** a change that is **undone before the scan ends** cannot be detected from start and end evidence. Two cases:
+  a letter (drive letter, SUBST or mapped) re-pointed away and back while the original volume stays mounted; and, the same
+  limitation applied to the source folder itself (G0F-O05), the source folder renamed away, another folder given its name,
+  and both put back. In both the scan may have listed a different namespace in between. A replacement that is left in
+  place is detected (E2 on every filesystem, E3 too where the filesystem provides a root file ID). Both cases are asserted
+  as documented behaviour, with no polling added to hide them.
 - A Windows SMB server returns the **underlying volume's** filesystem name and both serials (measured, including for a share
   served from a FAT32 volume), so a share can look Strong on evidence alone. It is never Strong: confidence also requires a
   local source, so a network share is recognised by its canonical location only, and different spellings of a server
