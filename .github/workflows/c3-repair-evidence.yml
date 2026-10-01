@@ -1,0 +1,140 @@
+# TEMPORARY, evidence for the v1.1 C3 repair re-review only. Not part of C3 and never merged.
+#   guards  the script-safety fixtures (Windows PowerShell 5.1 and PowerShell 7, with a REAL attached VHDX), the guard mutants,
+#           and the C3 mutants against the repaired tree (all killed) and against the review commit (the review's survivors).
+#   media   real provisioning, the identity experiments (including the ancestor-rename experiment and its control), a refused
+#           foreign-manifest -Remove while real media is mounted, and the real guarded teardown.
+name: C3 repair Windows evidence (temporary)
+
+on:
+  push:
+    branches: ['v1.1/c3-repair-evidence']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    name: Guards and mutants
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+      - name: Fixtures, Windows PowerShell 5.1 (real VHDX case included)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\evidence" | Out-Null
+          & .\tests\identity\Test-IdentityScriptSafety.ps1 -IncludeRealMedia *>&1 | Tee-Object "$env:RUNNER_TEMP\evidence\fixtures-ps51.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Fixtures, PowerShell 7 (real VHDX case included)
+        shell: powershell
+        run: |
+          & .\tools\pwsh\pwsh.exe -NoProfile -File .\tests\identity\Test-IdentityScriptSafety.ps1 -IncludeRealMedia *>&1 | Tee-Object "$env:RUNNER_TEMP\evidence\fixtures-pwsh7.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Guard mutants (each weakened guard must turn the fixtures red)
+        shell: powershell
+        run: |
+          & powershell -NoProfile -File .\tests\mutation\Invoke-ScriptSafetyMutants.ps1 -Out "$env:RUNNER_TEMP\evidence\script-mutants.md" *>&1 | Tee-Object "$env:RUNNER_TEMP\evidence\script-mutants.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: C3 mutants against the repaired tree (all must be KILLED)
+        shell: powershell
+        run: |
+          $env:DOTNET_ROOT = (Resolve-Path .\tools\dotnet).Path
+          & .\tools\pwsh\pwsh.exe -NoProfile -File .\tests\mutation\Invoke-C3Mutants.ps1 -Dotnet (Resolve-Path .\tools\dotnet\dotnet.exe).Path -AuditProject tests/StorageInventory.IntegrationTests -Out "$env:RUNNER_TEMP\evidence\mutants-repaired.md" *>&1 | Tee-Object "$env:RUNNER_TEMP\evidence\mutants-repaired.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: C3 mutants against the review commit (reproduces the survivors)
+        shell: powershell
+        run: |
+          git worktree add "$env:RUNNER_TEMP\review" 98e76472d8d67bfac8e93b5cc6c0409e3ba42da2
+          $env:DOTNET_ROOT = (Resolve-Path .\tools\dotnet).Path
+          & .\tools\pwsh\pwsh.exe -NoProfile -File .\tests\mutation\Invoke-C3Mutants.ps1 -Source "$env:RUNNER_TEMP\review" -Dotnet (Resolve-Path .\tools\dotnet\dotnet.exe).Path -AuditProject tests/StorageInventory.IntegrationTests -Out "$env:RUNNER_TEMP\evidence\mutants-review.md" *>&1 | Tee-Object "$env:RUNNER_TEMP\evidence\mutants-review.txt"
+          $text = Get-Content "$env:RUNNER_TEMP\evidence\mutants-review.txt" -Raw
+          foreach ($id in 'T1','T2','T3','T4','T5','T6','T7','T8','T10c','C7') {
+            if ($text -notmatch "(?m)^$id\s+\S+\s+SURVIVED") { throw "expected $id to SURVIVE on the review commit" }
+          }
+          'the nine test-gap mutants and the reflection mutant survive on the review commit, as the review reported'
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: c3-repair-guards
+          path: ${{ runner.temp }}/evidence
+          retention-days: 30
+
+  media:
+    name: Real media, experiments and teardown
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+      - name: Build (Release)
+        shell: powershell
+        run: .\build.ps1 -Target Build -Configuration Release
+      - name: Provision virtual media
+        shell: powershell
+        run: .\tests\identity\Provision-IdentityMedia.ps1 -Root "$env:RUNNER_TEMP\SiIdentityMedia" -Manifest "$env:RUNNER_TEMP\identity-media.json"
+      - name: A foreign manifest and a wrong root are refused while real media is mounted
+        shell: powershell
+        run: |
+          $foreign = Join-Path $env:RUNNER_TEMP 'appsettings.json'; Set-Content $foreign '{ "Logging": "x" }'
+          $before = (Get-Volume | Where-Object DriveLetter | ForEach-Object { "$($_.DriveLetter) $($_.FileSystem)" } | Sort-Object) -join ';'
+          & powershell -NoProfile -File .\tests\identity\Provision-IdentityMedia.ps1 -Remove -Manifest $foreign; $c1 = $LASTEXITCODE
+          & powershell -NoProfile -File .\tests\identity\Provision-IdentityMedia.ps1 -Remove -Root $env:RUNNER_TEMP -Manifest (Join-Path $env:RUNNER_TEMP 'none.json'); $c2 = $LASTEXITCODE
+          $after = (Get-Volume | Where-Object DriveLetter | ForEach-Object { "$($_.DriveLetter) $($_.FileSystem)" } | Sort-Object) -join ';'
+          "exit codes: $c1, $c2 (both must be 2)"; "volumes before: $before"; "volumes after:  $after"
+          if ($c1 -ne 2 -or $c2 -ne 2) { throw 'a wrong -Manifest or -Root was not refused' }
+          if ($before -ne $after) { throw 'a refused -Remove changed the volumes' }
+          if (-not (Test-Path $foreign) -or -not (Test-Path "$env:RUNNER_TEMP\identity-media.json")) { throw 'a file went missing' }
+      - name: Run the identity experiments
+        shell: powershell
+        run: .\tests\identity\Invoke-IdentityExperiments.ps1 -Manifest "$env:RUNNER_TEMP\identity-media.json" -Out "$env:RUNNER_TEMP\identity-experiments.md"
+      - name: Show the report
+        if: always()
+        shell: powershell
+        run: |
+          "===== REPORT BEGIN ====="
+          if (Test-Path "$env:RUNNER_TEMP\identity-experiments.md") { Get-Content "$env:RUNNER_TEMP\identity-experiments.md" } else { "(no report was written)" }
+          "===== REPORT END ====="
+      - name: Real guarded teardown, then verify nothing is left
+        if: always()
+        shell: powershell
+        run: |
+          .\tests\identity\Provision-IdentityMedia.ps1 -Remove -Manifest "$env:RUNNER_TEMP\identity-media.json"
+          "root exists: $(Test-Path "$env:RUNNER_TEMP\SiIdentityMedia")"
+          "manifest exists: $(Test-Path "$env:RUNNER_TEMP\identity-media.json")"
+          "shares left: $(@(Get-SmbShare -Name SiEvidence* -ErrorAction SilentlyContinue).Count)"
+          if ((Test-Path "$env:RUNNER_TEMP\SiIdentityMedia") -or (Test-Path "$env:RUNNER_TEMP\identity-media.json") -or @(Get-SmbShare -Name SiEvidence* -ErrorAction SilentlyContinue).Count) { throw 'teardown left something behind' }
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: c3-repair-experiments
+          path: ${{ runner.temp }}/identity-experiments.md
+          retention-days: 30
