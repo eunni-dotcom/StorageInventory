@@ -102,8 +102,8 @@ function Invoke-Child([string] $Script, [string[]] $Arguments, [hashtable] $Envi
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
-    # PowerShell 7.6 wraps error text across lines and colours it; compare plain, single-spaced text
-    $plain = ($stdout.Result + $stderr.Result) -replace '\x1b\[[0-9;]*m', '' -replace '\s+', ' '
+    # PowerShell 7.6 wraps error text across lines, colours it and draws a gutter of | and ~; compare plain, single-spaced text
+    $plain = ($stdout.Result + $stderr.Result) -replace '\x1b\[[0-9;]*m', '' -replace '[|~]', ' ' -replace '\s+', ' '
     return [pscustomobject]@{ Code = $process.ExitCode; Output = $plain }
 }
 
