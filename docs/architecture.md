@@ -39,9 +39,12 @@ Consumers:         "What are those files, and what should be done with them?"
 |  Paths/      safe path policy (validation, canonical locations)   |
 |  Scanning/   metadata-only enumeration, reparse handling, errors, |
 |              incomplete-subtree propagation, aggregation,         |
-|              invariants, cancellation, progress                   |
+|              invariants, cancellation, progress, and the internal |
+|              observer fan-out (v1.1 C1)                           |
 |  Reports/    human/external-tool exports: CSV (authoritative),    |
 |              XLSX (optional post-processing)                      |
+|  Spool/      internal observation-spool codec (v1.1 C1; no file   |
+|              is written until the capture gate, C5)               |
 +-------------------------------------------------------------------+
 ```
 
@@ -100,12 +103,43 @@ Local-time formatting, unit conversion, file-type categories and the formula gua
 
 | Future need | v1 provision |
 |---|---|
-| Snapshot writer, consumer provider, NDJSON export | The traversal emits records to an **internal sink**; the CSV report writer is one sink. A public sink contract can be exposed later without rewriting traversal. |
+| Snapshot writer, consumer provider, NDJSON export | The traversal emits records to an **internal observer fan-out** (v1.1 C1, below); the CSV report writer is its critical observer. A public contract can be exposed later (1.2) without rewriting traversal. |
 | "Unknown", not "deleted", under unreadable folders | Every folder carries `Status` + `SubtreeComplete`; every scan carries `ScanCompletionState` and the error rows. A consumer can always tell *not observed* from *observed absent*. |
 | Change detection across scans | Stable root-relative paths, raw sizes and UTC timestamps in records. |
 | Volume identity | Not captured in v1. A 1.1 snapshot will record it at scan time; drive letters are never treated as identity. |
 | CLI | Core has no UI assumptions, and `IStorageInventoryScanner` is the entire entry point. |
 | Multi-million-file scans | Files are streamed, never held as a collection. Memory is per-folder records plus a compact sort index. |
+
+## Scan observers (internal, v1.1 gate C1)
+
+One traversal feeds every consumer of a scan. `ScanEngine` lists each folder once and passes file and error records
+to an `ObserverFanOut`, which repeats every call to each attached observer. The contract is `IScanObserver`
+(`Scanning/IScanObserver.cs`), which replaced v1's two-method `IScanSink`:
+
+| Call | When |
+|---|---|
+| `OnScanStarted` | Once, first, as soon as the run is named (not for a scan refused at validation) |
+| `OnFile`, `OnError` | During enumeration only, exactly v1's records in v1's order; one contiguous run of files per folder |
+| `OnFolderFinalised` | Once per folder, ascending index, after aggregation and its self-check and before the Folders report: totals, `Status`, `StatusReason` and `SubtreeComplete` are final. There is no discovery callback, so no observer sees a folder while its state is still provisional |
+| `OnScanEnded` | Once, last, on every path after `OnScanStarted`: Finished (with the result's totals, only after v1's reports are complete), Cancelled or Failed |
+
+Observers are **critical** or **isolated**. The only critical observer is the CSV report sink, wrapped by `OutputGuard`:
+its I/O errors abort the scan as `OutputError`, exactly as in v1. Isolated observers (the spool writer, test observers)
+are disconnected after an ordinary exception and the scan continues; cancellation with the run's token, and
+`OutOfMemoryException` or `InsufficientExecutionStackException`, are never isolated. Delivery is synchronous on the
+scanning thread (no queue or writer thread), so cancellation latency is v1's.
+
+All of this is **internal** (`InternalsVisibleTo` the test assemblies only). The public `IStorageInventoryScanner`,
+`InventoryScanner.Scan`/`ScanAsync`, options, results and records are unchanged; the public entry points attach no
+observer besides the reports. An internal `ScanObserved` entry point attaches isolated observers, for tests and for
+the capture pipeline of a later gate.
+
+**The observation spool codec** (`Spool/`) is the first isolated observer: `SpoolWriter` appends a private, versioned
+binary record of the scan (format 1: header, file and error records in emission order, the finalised folders, a run
+index, a trailer and a SHA-256 over every preceding byte), and `SpoolReader.Verify` is the verification pass that must
+succeed before any record is read back. It works over a `Stream` it is given and holds no per-file state. In v1.1 C1 no
+spool file exists: the file, its exclusive delete-on-close handle in the report folder and its space policy belong to
+the capture gate (C5). The spool is never a snapshot, an export or an interchange format.
 
 ## File identity (future design topic)
 
