@@ -45,6 +45,14 @@ function Test-PathInside([string] $Child, [string] $Folder) {
     return ($c.Length -gt $f.Length -and $c.StartsWith($f, $script:PathComparison))
 }
 
+# Is $Child strictly inside $Folder, both Windows paths (drive letters, either slash)? Pure string work, so it means the same on
+# any host: used for what SMB reports, which is always a Windows path.
+function Test-WindowsPathInside([string] $Child, [string] $Folder) {
+    $c = ($Child -replace '/', '\').TrimEnd('\')
+    $f = ($Folder -replace '/', '\').TrimEnd('\')
+    return ($f.Length -gt 0 -and $c.Length -gt $f.Length -and $c.StartsWith($f + '\', [StringComparison]::OrdinalIgnoreCase))
+}
+
 # A filesystem root, or too short to be a deliberate scratch location. (The length is a variable so a fixture can show that a
 # folder which carries the marker is still refused when it is "too general".)
 $script:MinimumScratchPathLength = 8
@@ -217,12 +225,14 @@ function Invoke-MediaTeardown {
         }
     }
 
-    # 5. shares: only the two names this script creates, and only while they still serve a folder inside the marked root
+    # 5. shares: only the two names this script creates, and only while they still serve a folder on the virtual volume the manifest
+    #    names for them (SiEvidenceA on ntfsA, SiEvidenceB on fat32; those volumes live on the images of the marked root)
+    $backing = @{ SiEvidenceA = $(if ($State) { [string]$State.ntfsA } else { '' }); SiEvidenceB = $(if ($State) { [string]$State.fat32 } else { '' }) }
     foreach ($name in 'SiEvidenceA', 'SiEvidenceB') {
         $served = [string](& $Actions.GetShare $name)
         if (-not $served) { continue }
-        if (Test-PathInside $served $full) { & $Actions.RemoveShare $name; $removed.Add("removed share $name") }
-        else { Write-Warning "Left the share $name alone: it serves '$served', which is not inside '$full'." }
+        if ($backing[$name] -and (Test-WindowsPathInside $served $backing[$name])) { & $Actions.RemoveShare $name; $removed.Add("removed share $name") }
+        else { Write-Warning "Left the share $name alone: it serves '$served', which is not on the volume '$($backing[$name])' the manifest names for it." }
     }
 
     # 6. images: only files directly inside the marked root, with the names this script gives them

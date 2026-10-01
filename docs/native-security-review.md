@@ -91,7 +91,8 @@ and the `.FileIdInfo` argument), so a cast, `default(...)`, `Enum.ToObject(typeo
 the rule is shown to reject each of them. That rule keys on the type's name, so it cannot see a call that never names the
 type: the independent C3 review showed that a reflective call (`MethodInfo.Invoke` with a class value taken from the
 parameter's own type) passed it. Reflection is therefore closed separately, as A-18 closes dynamic code: shipped code may
-not use it at all, enforced by a text rule over `src` and by a rule over the member references of the compiled assemblies,
+not use it at all, enforced by a text rule over all of `src` and by a rule over the member references of the compiled Core and
+History assemblies (the App is left to the text rule: its generated WPF code legitimately uses `Delegate.CreateDelegate`),
 each with a negative self-test (`Shipped_code_makes_no_reflective_call_so_the_FileIdInfo_only_rule_cannot_be_bypassed` and
 `The_reflection_rules_reject_the_bypass_the_review_demonstrated_and_its_variants`; `tests/mutation/Invoke-C3Mutants.ps1`
 re-runs the review's mutant and two variants). What is closed is those shapes: a deliberate change to the audit itself, or to
