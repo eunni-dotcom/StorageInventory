@@ -55,6 +55,26 @@ public static class IdentityEvidenceTests
     }
 
     [Test]
+    public static void The_device_namespace_prefixes_are_not_a_server_name()
+    {
+        // "\\?\" and "\\.\" look like a UNC server segment to a naive split ("?" and "." as the server, the next segment as the
+        // share). Each must be refused on its own, for every shape that follows it.
+        foreach (var prefix in new[] { @"\\?\", @"\\.\" })
+        {
+            foreach (var rest in new[] { @"x", @"x\y", @"C:\Media", @"UNC\nas\share", @"Volume{4b9a7c6e}\Media", @"GLOBALROOT\Device\x" })
+            {
+                Assert.False(SourceLocation.TryDerive(prefix + rest, out var location), $"'{prefix + rest}' must not be taken for a source location");
+                Assert.Equal(default, location, "a refused path leaves nothing behind");
+            }
+        }
+
+        // the neighbours that ARE servers: a server whose name merely contains or resembles the marker characters
+        Assert.True(SourceLocation.TryDerive(@"\\.x\share", out var dotted), "a name that starts with a dot is a server");
+        Assert.Equal(@"\\.x\share", dotted.NetworkRoot);
+        Assert.True(SourceLocation.TryDerive(@"\\a.b\share", out _));
+    }
+
+    [Test]
     public static void The_kind_follows_the_resolved_canonical_path_never_the_input_syntax()
     {
         // a mapped network letter resolves to a UNC canonical path, so it is network whatever letter was typed
