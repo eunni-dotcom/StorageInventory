@@ -1,8 +1,11 @@
 # TEMPORARY, evidence for the v1.1 C3 review only. Not part of C3 and never merged.
-# It runs the C3 identity experiments (tests/identity) on a hosted, elevated Windows runner, where virtual disks (VHDX),
-# an SMB share and a UDF image can be created: Q-02 (FAT32, exFAT, ReFS, a second NTFS volume, UDF, SMB, mapped drives),
-# Q-13 (root directory file IDs), Q-19 (what holding the root handle does) and TEST-I2 (a drive-letter change). The
-# repository's own CI workflow (ci.yml, dispatched on this branch) carries the regression suites and the publish hash.
+# Two jobs, on hosted Windows runners:
+#   media       the C3 identity experiments (tests/identity) on an elevated runner, where virtual disks (VHDX), SMB shares and
+#               a UDF image can be created: Q-02 (FAT32, exFAT, ReFS, a second NTFS volume, UDF, SMB, mapped drives), Q-13 (root
+#               directory file IDs), Q-19 (what holding the root handle does) and TEST-I2 (a drive-letter change).
+#   regression  the frozen base and the C3 head on the same runner image: the full suites with the synthetic benchmark trees
+#               present (which un-skips five v1 tests), the publish hash, and the release smoke test through UI Automation.
+# The repository's own CI workflow (ci.yml), dispatched on this branch, is the plain regression run.
 name: C3 Windows evidence (temporary)
 
 on:
@@ -84,6 +87,64 @@ jobs:
           name: c3-identity-experiments
           path: |
             ${{ runner.temp }}/identity-experiments.md
-            ${{ runner.temp }}/identity-media.json
           if-no-files-found: warn
           retention-days: 30
+
+  regression:
+    name: ${{ matrix.name }}
+    runs-on: windows-2025
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: base cf9c607 (v1.1/c2-final)
+            ref: cf9c6070f19f43e906e580696f1eeebf739c9cc0
+          - name: C3 head
+            ref: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+
+      - name: Show the commit under test
+        shell: powershell
+        run: git log -1 --format='%H %s'
+
+      - name: Build the synthetic benchmark trees (10k, 60k, 250k files)
+        shell: powershell
+        run: |
+          . .\powershell\tests\TestLib.ps1
+          $perf = Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf'
+          foreach ($size in 10000, 60000, 250000) {
+            $tree = Join-Path $perf "tree_$size"
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            New-BulkFixture -Root $tree -Artists ([int][Math]::Ceiling($size / 1000.0)) -Albums 25 -Tracks 40
+            "tree_$size built in $([Math]::Round($sw.Elapsed.TotalSeconds)) s"
+          }
+
+      - name: Build and test (Release), with the trees present
+        shell: powershell
+        run: .\build.ps1 -Target Test -Configuration Release
+
+      - name: Publish self-contained executable
+        shell: powershell
+        run: .\build.ps1 -Target Publish
+
+      - name: Release smoke test
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource (Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000')
