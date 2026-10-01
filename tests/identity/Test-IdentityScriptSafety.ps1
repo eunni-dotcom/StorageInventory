@@ -102,7 +102,9 @@ function Invoke-Child([string] $Script, [string[]] $Arguments, [hashtable] $Envi
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
-    return [pscustomobject]@{ Code = $process.ExitCode; Output = ($stdout.Result + $stderr.Result) }
+    # PowerShell 7.6 wraps error text across lines and colours it; compare plain, single-spaced text
+    $plain = ($stdout.Result + $stderr.Result) -replace '\x1b\[[0-9;]*m', '' -replace '\s+', ' '
+    return [pscustomobject]@{ Code = $process.ExitCode; Output = $plain }
 }
 
 # ================================================================== SET 1: Invoke-IdentityExperiments.ps1 (C3-H01)
@@ -266,7 +268,7 @@ function New-ImageFiles([string] $Dir, [string[]] $Names = @('ntfsA.vhdx', 'fat3
 }
 
 function Write-Manifest([string] $Path, [string] $Root, [hashtable] $Extra = @{}) {
-    $m = [ordered]@{ madeBy = 'Provision-IdentityMedia.ps1'; schema = 1; root = $Root; smbShareA = '\\localhost\SiEvidenceA'; mappedLetterA = 'R:\'; smbShareB = '\\localhost\SiEvidenceB'; mappedLetterB = 'S:\' }
+    $m = [ordered]@{ madeBy = 'Provision-IdentityMedia.ps1'; schema = 1; root = $Root; ntfsA = 'M:\'; fat32 = 'O:\'; smbShareA = '\\localhost\SiEvidenceA'; mappedLetterA = 'R:\'; smbShareB = '\\localhost\SiEvidenceB'; mappedLetterB = 'S:\' }
     foreach ($key in $Extra.Keys) { $m[$key] = $Extra[$key] }
     ($m | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $Path -Encoding UTF8
 }
@@ -386,7 +388,7 @@ Test-Case '2.10 a genuine marked root tears down only what the manifest vouches 
     $outside = Join-Path $case 'users-own-share-folder'; [void][IO.Directory]::CreateDirectory($outside)
     $manifest = Join-Path $case 'identity-media.json'; Write-Manifest $manifest $root
     # R: still points at our share; S: has since been re-mapped by the user to something else; SiEvidenceA is ours, SiEvidenceB now serves another folder
-    $rec = New-Recorder @{ 'R:' = '\\localhost\SiEvidenceA'; 'S:' = '\\fileserver\finance' } @{ SiEvidenceA = (Join-Path $root 'share'); SiEvidenceB = $outside }
+    $rec = New-Recorder @{ 'R:' = '\\localhost\SiEvidenceA'; 'S:' = '\\fileserver\finance' } @{ SiEvidenceA = 'M:\share'; SiEvidenceB = 'Z:\users-own-share-folder' }
     $out = Invoke-MediaTeardown -Root (Join-Path $case 'ignored-because-the-manifest-names-the-root') -ManifestPath $manifest -Actions $rec.Actions
     Check (-not $out.Refused) "refused: $($out.Reason)"
     $changes = Get-Changes $rec
@@ -405,8 +407,8 @@ Test-Case '2.10 a genuine marked root tears down only what the manifest vouches 
 
 Test-Case '2.11 the failure path (an in-memory state, no manifest file yet) tears down a marked root and deletes no manifest' {
     $case = New-Case 'failure-path'; $root = Join-Path $case 'media'; [void][IO.Directory]::CreateDirectory($root); Write-MediaMarker $root; New-ImageFiles $root @('ntfsA.vhdx')
-    $state = [pscustomobject]@{ madeBy = 'Provision-IdentityMedia.ps1'; schema = 1; root = $root; smbShareA = '\\localhost\SiEvidenceA'; mappedLetterA = 'R:\' }
-    $rec = New-Recorder @{ 'R:' = '\\localhost\SiEvidenceA' } @{ SiEvidenceA = (Join-Path $root 'share') }
+    $state = [pscustomobject]@{ madeBy = 'Provision-IdentityMedia.ps1'; schema = 1; root = $root; ntfsA = 'M:\'; fat32 = 'O:\'; smbShareA = '\\localhost\SiEvidenceA'; mappedLetterA = 'R:\' }
+    $rec = New-Recorder @{ 'R:' = '\\localhost\SiEvidenceA' } @{ SiEvidenceA = 'M:\share' }
     $out = Invoke-MediaTeardown -Root $root -RootWasSupplied -State $state -Actions $rec.Actions
     Check (-not $out.Refused) "refused: $($out.Reason)"
     $changes = Get-Changes $rec
