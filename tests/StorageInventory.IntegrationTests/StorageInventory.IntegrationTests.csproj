@@ -15,6 +15,8 @@
     <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
     <!-- WPF projects drop System.IO from implicit usings (it clashes with System.Windows.Shapes.Path). -->
     <Using Include="System.IO" />
+    <!-- TEST-U4's reference: v1's MainWindow.xaml, byte for byte. Read from the repository at run time, never compiled. -->
+    <Page Remove="V1Baseline\**" />
   </ItemGroup>
 
   <ItemGroup>
