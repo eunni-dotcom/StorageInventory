@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- History (D-41): pure, package-free semantics. In v1.1 C3 it holds only the identity matching rules (§7). It has no
+       UI, no database and no package reference; the SQLite adapter will live in StorageInventory.Library, never here (A-12).
+       It references Core for the identity evidence types, which Core shares with it as internals (A-13). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>StorageInventory.History</RootNamespace>
+    <AssemblyName>StorageInventory.History</AssemblyName>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <!-- Nothing here is public in C3: the identity matching types stay internal until a later gate needs a wider surface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="StorageInventory.History.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StorageInventory.Core\StorageInventory.Core.csproj" />
+  </ItemGroup>
+
+</Project>

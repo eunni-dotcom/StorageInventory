@@ -9,8 +9,13 @@
     <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
+  <!-- A-13: the only assemblies that may see Core's internals (the observer, spool and identity layers are not public).
+       The list grows to History, Library and their test projects exactly as those projects appear; v1.1 C3 adds History
+       and its tests. -->
   <ItemGroup>
     <InternalsVisibleTo Include="StorageInventory.Core.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.History" />
+    <InternalsVisibleTo Include="StorageInventory.History.Tests" />
     <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
   </ItemGroup>
 

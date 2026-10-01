@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests of the package-free identity matching layer (v1.1 C3): fake evidence and an in-memory candidate store,
+       no filesystem. They see Core's and History's internals through the approved InternalsVisibleTo entries (A-13). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>StorageInventory.History.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
+    <ProjectReference Include="..\..\src\StorageInventory.History\StorageInventory.History.csproj" />
+  </ItemGroup>
+
+</Project>

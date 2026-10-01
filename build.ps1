@@ -10,7 +10,7 @@
     failure, so running .\build.ps1 from an interactive window does not change that window's environment.
 .PARAMETER Target
     Build    - build the whole solution
-    Test     - build, then the unit tests and the integration tests (including PowerShell parity)
+    Test     - build, then the unit tests (Core, History) and the integration tests (including PowerShell parity)
     Bench    - Release build, then the C# benchmarks
     Publish  - clean, then a self-contained single-file win-x64 Release build into dist\ (prints its SHA-256)
     Dotnet   - run any dotnet command in the repo-local environment, e.g. -Target Dotnet -DotnetArgs sln,list
@@ -67,7 +67,7 @@ try {
         'Build' { Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false' }
         'Test' {
             Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false'
-            foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.IntegrationTests')) {
+            foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.History.Tests', 'StorageInventory.IntegrationTests')) {
                 $dir = Join-Path $repo "tests\$testProject"
                 if (Test-Path -LiteralPath $dir) { Invoke-Dotnet run --no-build -c $Configuration --project $dir -- @TestArgs }
             }
