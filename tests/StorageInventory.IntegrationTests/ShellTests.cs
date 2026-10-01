@@ -232,12 +232,28 @@ public static class ShellTests
     {
         var scanner = new GatedScanner();
         var session = new ScanSession(scanner);
+        var (vm, oldPage, shell, releasedWhileOpen) = ReplaceThePageDuringAScan(session, scanner);
+
+        // Only the session and the page's view model are referenced now: if the old view stays alive, they hold it.
+        ShellHost.CollectGarbage();
+        Console.WriteLine($"      replaced view released: {releasedWhileOpen} with the shell open, {!oldPage.IsAlive} once the shell closed; shell window released: {!shell.IsAlive}");
+        Assert.False(oldPage.IsAlive, "neither the app-lifetime session nor the page's view model keeps the replaced view alive");
+        Assert.True(UiHost.Invoke(() => vm.Session == session && session.Stage == AppStage.Results && !session.IsBusy), "the session and its result outlive every view");
+    }
+
+    /// <summary>Starts a held scan in a shell, takes the Scan page's view away, checks the scan, re-hosts the page in a
+    /// new view, lets the same scan finish and closes the shell. Returns only weak references to the views.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (MainViewModel Vm, WeakReference OldPage, WeakReference Shell, bool ReleasedWhileOpen) ReplaceThePageDuringAScan(ScanSession session, GatedScanner scanner)
+    {
         var w = ShellHost.Open(session);
         try
         {
             var vm = UiHost.Invoke(() => w.ViewModel);
-            var focusWasInOldPage = false;
             StartGatedScan(vm, scanner, NewOutput());
+            // Focus is not part of re-hosting: take keyboard and logical focus off the page first, so the window's
+            // focus bookkeeping does not hold the old view.
+            UiHost.Invoke(() => { Keyboard.ClearFocus(); FocusManager.SetFocusedElement(w, null); });
             var oldPage = RemovePage(w);   // the page's views are gone; nothing holds them but this weak reference
 
             UiHost.Settle();
@@ -259,10 +275,6 @@ public static class ShellTests
                 Assert.True(ShellHost.Single<ScanProgressView>(page).IsVisible, "the new view shows the running scan");
                 var card = ShellHost.All<Border>(page).First(b => b.DataContext is ScanProgressViewModel);
                 Assert.True(ReferenceEquals(session.Progress, card.DataContext), "bound to the same progress");
-                // The old page's source box had the window's logical focus; a window keeps that reference until focus
-                // moves, so move it to the page now shown (as the shell's initial focus does for its page).
-                focusWasInOldPage = FocusManager.GetFocusedElement(w) is DependencyObject focused && oldPage.Target is DependencyObject old && Accessibility.IsInside(focused, old);
-                FocusManager.SetFocusedElement(w, (IInputElement)ShellHost.Single<SetupView>(page).FindName("SourceBox"));
             });
             Assert.Equal(1, scanner.Calls, "no second scan was started");
 
@@ -276,13 +288,7 @@ public static class ShellTests
             });
             Assert.Equal(1, scanner.Calls, "still one scan");
             ShellHost.CollectGarbage();
-            var aliveWhileOpen = oldPage.IsAlive;
-            CloseShell(w, scanner);
-            ShellHost.CollectGarbage();
-            var aliveAfterClose = oldPage.IsAlive;
-            Console.WriteLine($"      replaced view alive: {aliveWhileOpen} with the shell open, {aliveAfterClose} after it closed (the session still referenced: {session.Stage}); the window's logical focus was in it: {focusWasInOldPage}");
-            Assert.False(aliveAfterClose, "the app-lifetime session does not keep the replaced view alive");
-            Assert.False(aliveWhileOpen, "nothing in the open shell keeps the replaced view alive");
+            return (vm, oldPage, new WeakReference(w), !oldPage.IsAlive);
         }
         finally { CloseShell(w, scanner); }
     }

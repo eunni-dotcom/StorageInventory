@@ -318,28 +318,23 @@ public static class Accessibility
         catch (Exception ex) when (ex is NullReferenceException or InvalidOperationException or ElementNotAvailableException) { return "<" + ex.GetType().Name + ">"; }
     }
 
-    private static readonly Lazy<(object Navigation, MethodInfo GetNextTab)> Navigation = new(() =>
-    {
-        var current = typeof(KeyboardNavigation).GetProperty("Current", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null)
-            ?? throw new InvalidOperationException("WPF's KeyboardNavigation.Current was not found");
-        var next = typeof(KeyboardNavigation).GetMethod("GetNextTab", BindingFlags.Instance | BindingFlags.NonPublic, [typeof(DependencyObject), typeof(DependencyObject), typeof(bool)])
-            ?? throw new InvalidOperationException("WPF's KeyboardNavigation.GetNextTab was not found");
-        return (current, next);
-    });
-
-    /// <summary>The Tab order of a window as WPF computes it (its own internal GetNextTab, so no focus is needed), one
-    /// full cycle from the window's first tab stop. Elements for which <paramref name="skip"/> is true are left out.</summary>
+    /// <summary>The Tab order of a window: keyboard focus goes to the window's first tab stop, then moves Next (what
+    /// the Tab key does) until it comes back round. Elements for which <paramref name="skip"/> is true are left out.
+    /// Keyboard focus is cleared again afterwards.</summary>
     public static List<string> TabOrder(Window window, Func<DependencyObject, bool> skip)
     {
-        var (navigation, getNextTab) = Navigation.Value;
         var order = new List<string>();
         var seen = new HashSet<DependencyObject>();
-        var e = (DependencyObject?)getNextTab.Invoke(navigation, [window, window, false]);
-        while (e is not null && seen.Add(e) && seen.Count < 500)
+        Keyboard.ClearFocus();
+        window.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+        var current = Keyboard.FocusedElement as DependencyObject;
+        while (current is UIElement element && seen.Add(current) && seen.Count < 500)
         {
-            if (!skip(e)) order.Add(DescribeStop(e));
-            e = (DependencyObject?)getNextTab.Invoke(navigation, [e, window, false]);
+            if (!skip(current)) order.Add(DescribeStop(current));
+            element.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            current = Keyboard.FocusedElement as DependencyObject;
         }
+        Keyboard.ClearFocus();
         return order;
     }
 
