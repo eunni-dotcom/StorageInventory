@@ -443,21 +443,223 @@ public static class SourceIdentityTests
     }
 
     [Test]
-    public static void The_held_handle_does_not_block_the_folder_it_holds_from_being_renamed_or_deleted_and_is_released_on_dispose()
+    public static void The_held_handle_does_not_block_the_folder_it_holds_from_being_renamed_or_deleted()
     {
+        // The handle shares read, write and delete, so it pins the volume (the orderly dismount, measured by the experiments),
+        // not the folder. This says nothing about whether the handle is released: see the next test.
         var work = TestEnvironment.NewWorkFolder("identity_effects");
         try
         {
             var folder = Path.Combine(work, "Held");
             Directory.CreateDirectory(folder);
-            using (var hold = RootIdentityHold.Open(Windows, folder))
-            {
-                Assert.True(hold.IsHeld);
-                Directory.Move(folder, folder + "Moved");   // sharing allows delete: a held handle pins the volume, not the folder
-            }
-            // after Dispose the handle is closed: the (empty) folder can be deleted and nothing keeps it alive
+            using var hold = RootIdentityHold.Open(Windows, folder);
+            Assert.True(hold.IsHeld);
+            Directory.Move(folder, folder + "Moved");
             Directory.Delete(folder + "Moved");
-            Assert.False(Directory.Exists(folder + "Moved"));
+            Assert.False(Directory.Exists(folder + "Moved"), "a held zero-access handle blocks neither a rename nor a delete");
+        }
+        finally
+        {
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    private static int ProcessHandleCount()
+    {
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return process.HandleCount;
+    }
+
+    [Test]
+    public static void The_real_root_handle_is_closed_however_the_window_ends()
+    {
+        // ID-10 and Q-19 depend on the held handle being released when the window ends, because the only accepted side effect is
+        // that it blocks "Safely remove" during a scan. The handle has no access rights and shares everything, so nothing a test
+        // can try on the FOLDER shows whether it is still open (a rename, a delete and a listing all succeed either way). What
+        // does show it is the process's own handle count, in three parts:
+        //   1. a control, so the count is known to be able to fail: windows that are held DO raise it;
+        //   2. disposing them gives the handles back;
+        //   3. many windows, each ending a different way, leave the count where it was.
+        // The collector is held off while counting, so a handle that was leaked cannot be quietly finalised in the middle of the
+        // measurement and make a broken release look fine.
+        const int control = 40;
+        const int windows = 160;
+        const int slack = 12;   // other threads open and close handles of their own
+
+        var work = TestEnvironment.NewWorkFolder("identity_handles");
+        var noGcRegion = false;
+        try
+        {
+            var folder = Path.Combine(work, "Held");
+            var moved = folder + "Moved";
+            Directory.CreateDirectory(folder);
+
+            for (var i = 0; i < 3; i++)
+            {
+                using var warmUp = RootIdentityHold.Open(Windows, folder);   // JIT, lazily created runtime handles
+                warmUp.Finish();
+            }
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            try { noGcRegion = GC.TryStartNoGCRegion(32 * 1024 * 1024); }
+            catch (ArgumentOutOfRangeException) { /* a region this size is not allowed here: measure without it */ }
+
+            var baseline = ProcessHandleCount();
+
+            // 1. the control
+            var held = new List<RootIdentityHold>();
+            for (var i = 0; i < control; i++) held.Add(RootIdentityHold.Open(Windows, folder));
+            var raised = ProcessHandleCount() - baseline;
+            Assert.True(raised >= control - slack, $"the control: {control} held windows raised the handle count by {raised}; the measurement could not detect a leak");
+
+            // 2. disposing gives them back
+            foreach (var hold in held) hold.Dispose();
+            var afterDispose = ProcessHandleCount() - baseline;
+            Assert.True(afterDispose <= slack, $"{control} disposed windows left {afterDispose} handles open (baseline {baseline})");
+
+            // 3. every way a window can end
+            for (var i = 0; i < windows; i++)
+            {
+                switch (i % 4)
+                {
+                    case 0:   // the normal ending: Finish reads E2 and E3 and closes the held handle itself
+                    {
+                        using var hold = RootIdentityHold.Open(Windows, folder);
+                        hold.Finish();
+                        break;
+                    }
+                    case 1:   // a cancelled or failed scan never reaches Finish: Dispose closes the held handle
+                    {
+                        using var hold = RootIdentityHold.Open(Windows, folder);
+                        break;
+                    }
+                    case 2:   // disposed twice (idempotent)
+                    {
+                        var hold = RootIdentityHold.Open(Windows, folder);
+                        hold.Dispose();
+                        hold.Dispose();
+                        break;
+                    }
+                    default:  // the source moved during the window: E3's fresh open fails, and the held handle is still closed
+                    {
+                        using var hold = RootIdentityHold.Open(Windows, folder);
+                        Directory.Move(folder, moved);
+                        try { hold.Finish(); }
+                        finally { Directory.Move(moved, folder); }
+                        break;
+                    }
+                }
+            }
+            var afterMany = ProcessHandleCount() - baseline;
+            Assert.True(afterMany <= slack, $"{windows} windows (Finish, abandoned, disposed twice, source moved) left {afterMany} handles open (baseline {baseline}); each leak would add one");
+        }
+        finally
+        {
+            if (noGcRegion)
+            {
+                try { GC.EndNoGCRegion(); }
+                catch (InvalidOperationException) { /* the region had already ended */ }
+            }
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    [Test]
+    public static void TEST_I1_the_handle_the_product_opens_is_granted_no_list_read_write_or_delete_right()
+    {
+        // TEST-I1 asks for evidence "through zero-access handles" and that no write access is requested. The product passes
+        // the literal 0 (audited); this measures what Windows then actually granted, through the handle the product's own open
+        // function returns, and shows with a contrast handle that the probe does see rights when they are there.
+        var work = TestEnvironment.NewWorkFolder("identity_access");
+        try
+        {
+            var folder = Path.Combine(work, "Source");
+            Directory.CreateDirectory(folder);
+
+            using var product = StorageInventory.Core.Paths.NativeMethods.TryOpenDirectoryZeroAccess(folder, out var error)
+                ?? throw new AssertionException("the product's zero-access handle did not open: Win32 " + error);
+            var granted = GrantedAccessProbe.GrantedTo(product);
+            Assert.Equal(0u, granted & ~(GrantedAccessProbe.Synchronize | GrantedAccessProbe.FileReadAttributes),
+                $"only SYNCHRONIZE and FILE_READ_ATTRIBUTES (which CreateFileW itself adds) were granted, not 0x{granted:X8}");
+            Assert.True((granted & GrantedAccessProbe.FileReadAttributes) != 0, "the right to read attributes is what the queries need");
+
+            var forbidden = GrantedAccessProbe.FileListDirectory | GrantedAccessProbe.FileAddFile | GrantedAccessProbe.FileAddSubdirectory | GrantedAccessProbe.FileReadEa
+                | GrantedAccessProbe.FileWriteEa | GrantedAccessProbe.FileTraverse | GrantedAccessProbe.FileDeleteChild | GrantedAccessProbe.FileWriteAttributes
+                | GrantedAccessProbe.Delete | GrantedAccessProbe.ReadControl | GrantedAccessProbe.WriteDac | GrantedAccessProbe.WriteOwner;
+            Assert.Equal(0u, granted & forbidden, "no list, read, write, delete or security right");
+
+            using var contrast = GrantedAccessProbe.OpenForReading(StorageInventory.Core.Paths.NativeMethods.ToExtendedPath(folder));
+            var wider = GrantedAccessProbe.GrantedTo(contrast);
+            Assert.True((wider & GrantedAccessProbe.FileListDirectory) != 0 && (wider & GrantedAccessProbe.ReadControl) != 0,
+                $"the contrast: a handle opened for reading DOES carry list and read-control rights (0x{wider:X8}), so the probe can see rights");
+        }
+        finally
+        {
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    // ---- L-ID2 for the source folder itself (G0F-O05) ----
+
+    [Test]
+    public static void TEST_I5_a_source_folder_renamed_away_replaced_and_restored_is_not_detected_limitation_L_ID2()
+    {
+        // L-ID2 as extended by G0F-O05: the source folder renamed away, another folder given its name, and everything put back
+        // before the window closes. The held handle follows the original object and the fresh open of the path reaches it again,
+        // so every reading equals E0 although the scan could have listed the other folder in between. Pinned as documented.
+        var work = TestEnvironment.NewWorkFolder("identity_swap_back");
+        try
+        {
+            var source = Path.Combine(work, "Source");
+            var other = Path.Combine(work, "Other");
+            Directory.CreateDirectory(Path.Combine(source, "inner"));
+            Directory.CreateDirectory(Path.Combine(other, "inner"));
+
+            var (result, _, _, _) = Window(source, () =>
+            {
+                Directory.Move(source, source + ".old");   // renamed away: the held handle goes with it
+                Directory.Move(other, source);             // another folder takes the name
+                Directory.Move(source, other);             // ...and everything is put back
+                Directory.Move(source + ".old", source);
+            });
+
+            Assert.Equal(ReverificationOutcome.Verified, result.Outcome, "L-ID2: a replacement that is undone before the window closes leaves nothing to see");
+        }
+        finally
+        {
+            TestEnvironment.RemoveTree(work);
+        }
+    }
+
+    [Test]
+    public static void TEST_I5_a_source_folder_replaced_by_another_folder_that_stays_is_not_eligible()
+    {
+        var work = TestEnvironment.NewWorkFolder("identity_swap");
+        try
+        {
+            var source = Path.Combine(work, "Source");
+            var other = Path.Combine(work, "Other");
+            Directory.CreateDirectory(Path.Combine(source, "inner"));
+            Directory.CreateDirectory(Path.Combine(other, "inner"));
+
+            var (result, _, e1, end) = Window(source, () =>
+            {
+                Directory.Move(source, source + ".old");
+                Directory.Move(other, source);
+            });
+
+            Assert.Equal(ReverificationOutcome.IdentityChangedDuringScan, result.Outcome);
+            // recorded behaviour: the held handle follows the ORIGINAL folder, so E2 reports its new name on every filesystem...
+            Assert.True(end.E2.CanonicalPath.Value!.EndsWith(@"\Source.old", StringComparison.Ordinal), "E2: " + end.E2.CanonicalPath.Value);
+            Assert.True(result.Failures.Any(f => f.Stage == EvidenceStage.E2WindowEndHeld && f.Item == IdentityItem.CanonicalPath), "E2 reports the original folder's new name");
+            // ...while the fresh open reaches the other folder under the same name: the same canonical path, and where the filesystem
+            // provides a root file ID (NTFS, ReFS) a different directory
+            Assert.Equal(e1.CanonicalPath.Value, end.E3.CanonicalPath.Value, "E3: the path leads to a folder with the same name");
+            if (e1.RootDirectoryFileId.IsAvailable)
+            {
+                Assert.True(result.Failures.Any(f => f.Stage == EvidenceStage.E3WindowEndFresh && f.Item == IdentityItem.RootDirectoryFileId), "E3: a different directory object (its root file ID)");
+            }
         }
         finally
         {
