@@ -18,7 +18,8 @@ public static class ParityTests
 
     private static PhaseAFixture Fx => PhaseAFixture.Shared;
 
-    private static ParityOutcome RunBoth(string root, bool sort = true)
+    /// <param name="shell">The reference shell: <see cref="TestEnvironment.ReferenceShell"/> unless given.</param>
+    private static ParityOutcome RunBoth(string root, bool sort = true, string? shell = null)
     {
         TestEnvironment.RequirePwsh();
         // A fresh tree's first listing can show folder times NTFS has not yet propagated (see Snapshot); settle it so
@@ -29,7 +30,7 @@ public static class ParityTests
         var csOut = Path.Combine(baseDir, "cs");
         var args = new List<string> { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", TestEnvironment.ReferenceScript, "-RootPath", root, "-OutputPath", psOut, "-SkipExcel" };
         if (!sort) args.Add("-NoSort");
-        var reference = TestEnvironment.Run(TestEnvironment.ReferenceShell, [.. args]);
+        var reference = TestEnvironment.Run(shell ?? TestEnvironment.ReferenceShell, [.. args]);
         var native = new InventoryScanner().Scan(new StorageScanOptions { RootPath = root, OutputPath = csOut, SortFiles = sort });
         return new ParityOutcome(reference.ExitCode, native, psOut, baseDir);
     }
@@ -145,5 +146,30 @@ public static class ParityTests
         Assert.True(reference.ExitCode != 0, "reference refuses");
         Assert.Equal(ScanFailureKind.InvalidPaths, native.Failure!.Kind);
         Assert.False(Directory.Exists(inside));
+    }
+
+    // v1.1 C1 (spec section 19): the refactored scanner must keep parity with BOTH PowerShell oracles. The suite runs
+    // against the repo-local PowerShell 7 (above); these repeat the fixture comparisons against Windows PowerShell 5.1.
+
+    private static string WindowsPowerShell()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+        if (!File.Exists(path)) Assert.Skip("Windows PowerShell 5.1 is not installed");
+        return path;
+    }
+
+    [Test]
+    public static void Windows_PowerShell_5_1_reference_agrees_on_the_Phase_A_fixture_sorted()
+        => AssertFullParity(RunBoth(Fx.Root, shell: WindowsPowerShell()), expectComplete: false);
+
+    [Test]
+    public static void Windows_PowerShell_5_1_reference_agrees_on_the_Phase_A_fixture_unsorted()
+        => AssertFullParity(RunBoth(Fx.Root, sort: false, shell: WindowsPowerShell()), expectComplete: false);
+
+    [Test]
+    public static void Windows_PowerShell_5_1_reference_agrees_on_the_readable_and_Unicode_subtrees()
+    {
+        AssertFullParity(RunBoth(Path.Combine(Fx.Root, "Kpop", "TWICE"), shell: WindowsPowerShell()), expectComplete: true);
+        AssertFullParity(RunBoth(Directory.GetDirectories(Fx.Root, "Weird*")[0], shell: WindowsPowerShell()), expectComplete: true);
     }
 }
