@@ -53,7 +53,7 @@ jobs:
         id: provision
         continue-on-error: true
         shell: powershell
-        run: .\tests\identity\Provision-IdentityMedia.ps1 -Manifest "$env:RUNNER_TEMP\identity-media.json"
+        run: .\tests\identity\Provision-IdentityMedia.ps1 -Root "$env:RUNNER_TEMP\SiIdentityMedia" -Manifest "$env:RUNNER_TEMP\identity-media.json"
 
       - name: Run the identity experiments
         id: experiments
