@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using StorageInventory.Core;
@@ -109,12 +111,16 @@ public static class SecurityAuditTests
 
     // ---- v1.1 C3 (A-08): the first-party native surface is exactly six read-only kernel32 functions ----
 
-    /// <summary>Every first-party assembly that can hold a P/Invoke: Core, History and the App (Library joins in C4).</summary>
+    /// <summary>Every first-party assembly that can hold a P/Invoke: Core, History and the App (Library joins in C4). The
+    /// <c>AUDIT_WITHOUT_APP</c> symbol exists only for <c>tests/mutation/AuditHarness</c>, which re-runs these audit rules on a
+    /// machine that cannot load the WPF App assembly (Linux); the real test project never defines it.</summary>
     private static readonly Assembly[] FirstPartyAssemblies =
     [
         typeof(StorageScanResult).Assembly,
         typeof(StorageInventory.History.Identity.IdentityMatching).Assembly,
+#if !AUDIT_WITHOUT_APP
         typeof(StorageInventory.App.App).Assembly,
+#endif
     ];
 
     /// <summary>The six, as "Type.Method -> dll!entry point": the two v1 functions and the four C3 identity queries (§7.8).</summary>
@@ -150,10 +156,13 @@ public static class SecurityAuditTests
 
     private const string NativeMethodsFile = "src/StorageInventory.Core/Paths/NativeMethods.cs";
 
-    /// <summary>The text rules of A-08 over a set of sources: <c>CreateFile</c> is called only with desired access 0 and
+    /// <summary>The call-shape text rules of A-08 over a set of sources: <c>CreateFile</c> is called only with desired access 0 and
     /// <c>GetFileInformationByHandleEx</c> only with <c>FileIdInfo</c>, whose enum has no other member and whose name appears in
     /// exactly three kinds of place: its declaration, the P/Invoke's parameter and the <c>.FileIdInfo</c> argument. That closes
-    /// the casts, <c>default(...)</c>, <c>Enum.ToObject</c> and <c>Unsafe.As</c> alike, whatever the spelling.</summary>
+    /// the shapes that SPELL the type: casts, <c>default(...)</c>, <c>Enum.ToObject(typeof(...))</c> and <c>Unsafe.As</c>. It
+    /// cannot see a call that never names the type, such as one made through reflection, which gets a value from the
+    /// method's own parameter type. That is closed by the separate reflection rules (<see cref="NativeReflectionPattern"/> over
+    /// the source, <see cref="ReflectiveMemberViolations"/> over the compiled assemblies), not by this one (C3-M03).</summary>
     private static List<string> NativeCallShapeViolations(IReadOnlyDictionary<string, string> sources)
     {
         var violations = new List<string>();
@@ -278,6 +287,107 @@ public static class SecurityAuditTests
         // the binding-outside-NativeMethods rule
         var declarations = new Dictionary<string, string> { ["src/StorageInventory.Core/Rogue.cs"] = "[DllImport(\"kernel32.dll\")] static extern bool DeleteFileW(string p);" };
         Assert.SequenceEqual(["src/StorageInventory.Core/Rogue.cs"], FilesMatching(@"\[DllImport|\[LibraryImport|\bextern\s+\w", declarations));
+    }
+
+    /// <summary>
+    /// A-08, C3-M03. Shipped code never uses reflection at all (nothing under <c>src</c> does today), so it is banned outright: a
+    /// reflective call into <c>NativeMethods</c> would reach <c>GetFileInformationByHandleEx</c> with a class value taken from
+    /// the method's own parameter type, and so never write the name <c>FileInfoByHandleClass</c> that the call-shape rule keys on.
+    /// The pattern lists the ways to obtain or invoke a method by reflection or a delegate, over the text of <c>src</c>.
+    /// </summary>
+    private const string NativeReflectionPattern =
+        @"System\s*\.\s*Reflection|\bMethodInfo\b|\bMethodBase\b|\bMemberInfo\b|\.\s*GetMethods?\s*\(|\.\s*GetMembers?\s*\(|\.\s*GetRuntimeMethods?\s*\(|\.\s*InvokeMember\s*\(|\bDynamicInvoke\s*\(|\bCreateDelegate\s*\(|\bExpression\s*\.\s*(Call|Lambda)\b|Linq\s*\.\s*Expressions|\bEnum\s*\.\s*ToObject\s*\(|typeof\s*\(\s*NativeMethods\s*\)";
+
+    /// <summary>The members that call or look up a method by reflection or conjure an enum value from a number, as "Type.Member".
+    /// Spelling does not matter at this level: whichever way the source is written the compiled call names one of these.</summary>
+    private static bool IsReflectiveMember(string type, string member) => type switch
+    {
+        "System.Reflection.MethodBase" or "System.Reflection.MethodInfo" or "System.Reflection.MemberInfo" or "System.Reflection.TypeInfo"
+            or "System.Reflection.RuntimeReflectionExtensions" => true,
+        "System.Type" => member.StartsWith("GetMethod", StringComparison.Ordinal) || member.StartsWith("GetMember", StringComparison.Ordinal)
+            || member is "InvokeMember" or "GetRuntimeMethod",
+        "System.Delegate" => member is "DynamicInvoke" or "CreateDelegate",
+        "System.Enum" => member == "ToObject",
+        "System.Runtime.InteropServices.Marshal" => member is "GetDelegateForFunctionPointer" or "GetFunctionPointerForDelegate",
+        _ => false,
+    };
+
+    /// <summary>
+    /// The compiled counterpart of <see cref="NativeReflectionPattern"/>: every member reference in the assembly's metadata
+    /// that <see cref="IsReflectiveMember"/> names, as "Type.Member". It reads the assembly's own metadata
+    /// (<c>System.Reflection.Metadata</c>, as A-25 does for leases), so a call spelled in a way the text rule's expressions do not
+    /// match is still found. It does not look inside method bodies, so it says where the assembly refers to a member, not from where.
+    /// </summary>
+    private static List<string> ReflectiveMemberViolations(Assembly assembly)
+    {
+        using var stream = File.OpenRead(assembly.Location);
+        using var pe = new PEReader(stream);
+        var reader = pe.GetMetadataReader();
+        var found = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var handle in reader.MemberReferences)
+        {
+            var reference = reader.GetMemberReference(handle);
+            if (reference.Parent.Kind != HandleKind.TypeReference) continue;
+            var parent = reader.GetTypeReference((TypeReferenceHandle)reference.Parent);
+            var type = $"{reader.GetString(parent.Namespace)}.{reader.GetString(parent.Name)}";
+            var member = reader.GetString(reference.Name);
+            if (IsReflectiveMember(type, member)) found.Add($"{type}.{member}");
+        }
+        return [.. found];
+    }
+
+    [Test]
+    public static void Shipped_code_makes_no_reflective_call_so_the_FileIdInfo_only_rule_cannot_be_bypassed()
+    {
+        // The source: no file under src names any way to find or invoke a method by reflection (C3-M03)
+        var textHits = FilesMatching(NativeReflectionPattern);
+        Assert.Equal(0, textHits.Count, "reflection in src: " + string.Join(", ", textHits));
+
+        // The compiled assemblies: no member reference to any of them, whatever the source looked like
+        foreach (var assembly in FirstPartyAssemblies)
+        {
+            var violations = ReflectiveMemberViolations(assembly);
+            Assert.Equal(0, violations.Count, $"{assembly.GetName().Name} refers to reflective members: {string.Join(", ", violations)}");
+        }
+    }
+
+    [Test]
+    public static void The_reflection_rules_reject_the_bypass_the_review_demonstrated_and_its_variants()
+    {
+        // Negative self-tests (A-21) for C3-M03. The first snippet is the reviewer's mutant C7, whose own regular expressions found nothing.
+        var bypasses = new Dictionary<string, string>
+        {
+            ["src/Rogue/C7.cs"] = "typeof(NativeMethods).GetMethod(\"GetFileInformationByHandleEx\", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object?[] { h, Enum.ToObject(m.GetParameters()[1].ParameterType, 5), null, 24u });",
+            ["src/Rogue/Typeof.cs"] = "var t = typeof( NativeMethods );",
+            ["src/Rogue/Members.cs"] = "var all = someType.GetMethods(BindingFlags.Static);",
+            ["src/Rogue/Runtime.cs"] = "var m = RuntimeReflectionExtensions.GetRuntimeMethod(t, \"x\", types);",
+            ["src/Rogue/Delegate.cs"] = "var d = Delegate.CreateDelegate(typeof(Func<int>), m); d.DynamicInvoke();",
+            ["src/Rogue/Invoke.cs"] = "type.InvokeMember(\"GetFileInformationByHandleEx\", flags, null, null, args);",
+            ["src/Rogue/Enum.cs"] = "var c = Enum.ToObject(someType, 5);",
+            ["src/Rogue/Expression.cs"] = "var e = Expression.Call(method, args);",
+            ["src/Rogue/Using.cs"] = "using System.Reflection;",
+            ["src/Rogue/Spaced.cs"] = "var m = typeof (NativeMethods). GetMethod (\"GetFileInformationByHandleEx\", flags); var v = Enum . ToObject (t, 5);",
+        };
+        var hits = FilesMatching(NativeReflectionPattern, bypasses);
+        foreach (var file in bypasses.Keys) Assert.True(hits.Contains(file), $"the reflection text rule misses {file}: {string.Join(", ", hits)}");
+
+        // comments mentioning reflection are not code, and a delegate's own Invoke is not reflection
+        var fine = new Dictionary<string, string>
+        {
+            ["src/Fine/Comment.cs"] = "// do not use MethodInfo or GetMethod( here\nvar x = 1;",
+            ["src/Fine/Callback.cs"] = "onRow?.Invoke(rows); callback.Invoke(1);",
+        };
+        Assert.Equal(0, FilesMatching(NativeReflectionPattern, fine).Count, "legitimate code is accepted");
+
+        // The compiled rule, over a real assembly that does it: this test assembly calls Type.GetMethod and MethodBase.Invoke
+        // (here and in RogueReflectionFixture, which makes exactly the call of mutant C7 and is never invoked)
+        var compiled = ReflectiveMemberViolations(typeof(SecurityAuditTests).Assembly);
+        foreach (var member in new[] { "System.Type.GetMethod", "System.Reflection.MethodBase.Invoke", "System.Enum.ToObject" })
+        {
+            Assert.True(compiled.Contains(member), $"the compiled rule misses {member}: {string.Join(", ", compiled)}");
+        }
+        Assert.True(IsReflectiveMember("System.Delegate", "DynamicInvoke") && IsReflectiveMember("System.Type", "GetMethods") && !IsReflectiveMember("System.Type", "GetTypeFromHandle"),
+            "the member list names the delegate and lookup routes, and not a plain typeof");
     }
 
     [Test]
