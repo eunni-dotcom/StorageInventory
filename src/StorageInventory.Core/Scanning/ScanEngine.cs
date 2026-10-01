@@ -14,8 +14,10 @@ internal sealed class OutputInsideScannedTreeException(string foundPath)
 /// <summary>
 /// The traversal. Metadata only: folders are listed, files are never opened, and reparse points are never followed.
 /// Depth-first with an explicit stack (no recursion), in the same order as the PowerShell reference so that parity
-/// can be proven row by row. Files and error rows are streamed to an <see cref="IScanSink"/>; only one
-/// <see cref="FolderState"/> per folder is kept.
+/// can be proven row by row. Files and error rows are streamed to an <see cref="IScanObserver"/> (in the pipeline, the
+/// <see cref="ObserverFanOut"/>, so one traversal feeds every consumer); only one <see cref="FolderState"/> per folder
+/// is kept. The engine calls only <see cref="IScanObserver.OnFile"/> and <see cref="IScanObserver.OnError"/>: folder
+/// states stay provisional and private to it until the pipeline finalises them after aggregation (SINK-08).
 /// </summary>
 internal sealed class ScanEngine
 {
@@ -28,14 +30,14 @@ internal sealed class ScanEngine
     };
 
     private readonly string _rootFullPath;
-    private readonly IScanSink _sink;
+    private readonly IScanObserver _observer;
     private readonly IReadOnlySet<string> _ownReportNames;
     private readonly Action<string>? _onProgress;
 
-    public ScanEngine(string rootFullPath, IScanSink sink, IReadOnlySet<string> ownReportNames, Action<string>? onProgress = null)
+    public ScanEngine(string rootFullPath, IScanObserver observer, IReadOnlySet<string> ownReportNames, Action<string>? onProgress = null)
     {
         _rootFullPath = rootFullPath;
-        _sink = sink;
+        _observer = observer;
         _ownReportNames = ownReportNames;
         _onProgress = onProgress;
     }
@@ -54,7 +56,7 @@ internal sealed class ScanEngine
     public Dictionary<ScanErrorType, long> ErrorCounts { get; } = [];
 
     /// <summary>Walks the tree. Throws <see cref="OperationCanceledException"/> on cancellation,
-    /// <see cref="OutputInsideScannedTreeException"/> for the tripwire, and lets sink exceptions through.</summary>
+    /// <see cref="OutputInsideScannedTreeException"/> for the tripwire, and lets observer exceptions through.</summary>
     public void Run(CancellationToken cancellationToken)
     {
         AddRoot();
@@ -206,7 +208,7 @@ internal sealed class ScanEngine
 
         var record = new FileInventoryRecord(entry.Name, ExtensionOf(entry.Name), relativePath, folder.RelativePath, entry.FullPath,
             entry.Length, entry.CreatedUtc, entry.ModifiedUtc, entry.AccessUtc, entry.Attributes);
-        _sink.OnFile(record, folderIndex);
+        _observer.OnFile(record, folderIndex);
 
         if (FileCount % 1024 == 0) _onProgress?.Invoke(folder.RelativePath);
     }
@@ -256,7 +258,7 @@ internal sealed class ScanEngine
         else if (type == ScanErrorType.ReparsePointFile) FileReparsePoints++;
         else ScanErrorCount++;
         ErrorCounts[type] = ErrorCounts.GetValueOrDefault(type) + 1;
-        _sink.OnError(new ScanErrorRecord(path, type, message));
+        _observer.OnError(new ScanErrorRecord(path, type, message));
     }
 
     /// <summary>Failures of reading the scanned tree. Cancellation and out-of-memory are never swallowed.</summary>

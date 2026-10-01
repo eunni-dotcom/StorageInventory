@@ -4,8 +4,9 @@ using StorageInventory.Testing;
 
 namespace StorageInventory.IntegrationTests;
 
-/// <summary>A test sink that keeps everything (fine for small fixtures; the product never does this).</summary>
-internal sealed class CollectingSink : IScanSink
+/// <summary>A test sink that keeps everything (fine for small fixtures; the product never does this). The engine calls
+/// only OnFile and OnError; the lifecycle callbacks of the observer contract are not used here.</summary>
+internal sealed class CollectingSink : IScanObserver
 {
     public List<(FileInventoryRecord File, int FolderIndex)> Files { get; } = [];
     public List<ScanErrorRecord> Errors { get; } = [];
@@ -18,6 +19,10 @@ internal sealed class CollectingSink : IScanSink
     }
 
     public void OnError(ScanErrorRecord error) => Errors.Add(error);
+
+    public void OnScanStarted(in ScanStartInfo start) { }
+    public void OnFolderFinalised(int index, int parentIndex, FolderInventoryRecord folder) { }
+    public void OnScanEnded(in ScanEndInfo end) { }
 }
 
 public static class ScanEngineTests

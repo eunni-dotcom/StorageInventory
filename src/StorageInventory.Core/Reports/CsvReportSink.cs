@@ -13,8 +13,12 @@ internal readonly record struct SortEntry(long Size, long Offset, int Length, in
 /// final Files CSV (unsorted mode) or to the run's temporary file plus a compact sort index (sorted mode).
 /// Write failures propagate and abort the scan; they are never recorded as scan errors.
 /// </summary>
-internal sealed class CsvReportSink : IScanSink, IDisposable
+/// <remarks>The scan's critical observer (SINK-04): it is always wrapped by <see cref="OutputGuard"/>. It creates its
+/// two files when the scan starts, in v1's order, and ignores the folder and end callbacks: the Folders report and the
+/// sorted Files report are written by the pipeline (<see cref="ReportWriters"/>), exactly as in v1.</remarks>
+internal sealed class CsvReportSink : IScanObserver, IDisposable
 {
+    private readonly ReportRun _run;
     private readonly bool _sortFiles;
     private readonly StringBuilder _row = new(512);
     private FileStream? _records;
@@ -24,19 +28,34 @@ internal sealed class CsvReportSink : IScanSink, IDisposable
 
     public CsvReportSink(ReportRun run, bool sortFiles)
     {
+        _run = run;
         _sortFiles = sortFiles;
-        _errors = new StreamWriter(run.CreateNew(run.ErrorsCsv), CsvFormat.Utf8WithBom, 65536) { NewLine = "\r\n" };
+    }
+
+    /// <summary>Creates the ScanErrors report and the Files report (or, sorted, the run's temporary file).</summary>
+    public void OnScanStarted(in ScanStartInfo start)
+    {
+        if (_errors is not null || _records is not null) throw new InvalidOperationException("The report files were already created.");
+        _errors = new StreamWriter(_run.CreateNew(_run.ErrorsCsv), CsvFormat.Utf8WithBom, 65536) { NewLine = "\r\n" };
         _errors.WriteLine(CsvFormat.ErrorsHeader);
 
-        if (sortFiles)
+        if (_sortFiles)
         {
-            _records = run.CreateNew(run.FilesTemporary);
+            _records = _run.CreateNew(_run.FilesTemporary);
         }
         else
         {
-            _records = run.CreateNew(run.FilesCsv);
+            _records = _run.CreateNew(_run.FilesCsv);
             WriteBomAndHeader(_records, CsvFormat.FilesHeader);
         }
+    }
+
+    public void OnFolderFinalised(int index, int parentIndex, FolderInventoryRecord folder)
+    {
+    }
+
+    public void OnScanEnded(in ScanEndInfo end)
+    {
     }
 
     /// <summary>Sort index in discovery order (sorted mode only).</summary>
