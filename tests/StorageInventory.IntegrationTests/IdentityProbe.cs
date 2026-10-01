@@ -93,6 +93,34 @@ public static class IdentityProbe
         return 0;
     }
 
+    /// <summary>
+    /// CONTROL for the hold experiments: what a scan already does. Opens a directory enumeration on the path and leaves it
+    /// part-way through (a scan always has one open while it lists), prints <c>HELD</c>, and waits for the release file. The
+    /// experiments run the same actions against this and against <c>--identity-hold</c>, to show that holding the identity
+    /// handle adds no kind of effect that listing a folder does not already have. It reads names only and never opens a file.
+    /// </summary>
+    public static int RunEnumerateHold(string[] args)
+    {
+        var path = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "";
+        var releaseFile = Option(args, "--release-file");
+        var timeout = int.TryParse(Option(args, "--timeout"), out var t) ? t : 300;
+        if (path.Length == 0 || releaseFile is null)
+        {
+            Console.Error.WriteLine("usage: --identity-enumerate <path> --release-file file [--timeout seconds]");
+            return 2;
+        }
+
+        using var entries = new DirectoryInfo(path).EnumerateFileSystemInfos("*", new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true }).GetEnumerator();
+        var any = entries.MoveNext();   // the enumeration handle is open from here until the enumerator is disposed or exhausted
+        Console.WriteLine($"ENUMERATING {path} (an entry was read: {any})");
+        Console.WriteLine("HELD");
+        Console.Out.Flush();
+        var deadline = DateTime.UtcNow.AddSeconds(timeout);
+        while (!File.Exists(releaseFile) && DateTime.UtcNow < deadline) Thread.Sleep(200);
+        Console.WriteLine("DONE");
+        return 0;
+    }
+
     // ---- one path ----
 
     private sealed record ProbeResult(string Label, string Path, VolumeEvidence E0, IdentityAssessment Assessment, ReverificationResult Cycle, string DriveInfoText)

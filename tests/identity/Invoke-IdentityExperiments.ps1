@@ -64,12 +64,14 @@ function Get-ProbeJson([string] $Path, [string] $Label) {
 function Quote-Arg([string] $Value) { if ($Value.EndsWith('\')) { $Value += '\' }; return '"' + $Value + '"' }
 
 # Holds the root handle on $Path while $Action runs, then reads E2 and E3. Returns the hold tool's output and the action's own output.
-function Invoke-Hold([string] $Name, [string] $Path, [scriptblock] $Action, [int] $TimeoutSec = 90) {
+function Invoke-Hold([string] $Name, [string] $Path, [scriptblock] $Action, [int] $TimeoutSec = 90, [string] $Mode = 'hold') {
     $outFile = Join-Path $Work "$Name.out.txt"
     $errFile = Join-Path $Work "$Name.err.txt"
     $release = Join-Path $Work "$Name.release"
     Remove-Item -LiteralPath $release -ErrorAction SilentlyContinue
-    $argList = @((Quote-Arg $TestDll), '--identity-hold', (Quote-Arg $Path), '--release-file', (Quote-Arg $release), '--timeout', $TimeoutSec, '--label', (Quote-Arg $Name))
+    # Mode 'enumerate' is the CONTROL: no identity handle, only a folder listing left open, which is what a scan always has
+    $flag = if ($Mode -eq 'enumerate') { '--identity-enumerate' } else { '--identity-hold' }
+    $argList = @((Quote-Arg $TestDll), $flag, (Quote-Arg $Path), '--release-file', (Quote-Arg $release), '--timeout', $TimeoutSec, '--label', (Quote-Arg $Name))
     $process = Start-Process -FilePath $Dotnet -ArgumentList $argList -RedirectStandardOutput $outFile -RedirectStandardError $errFile -PassThru -NoNewWindow
     $deadline = (Get-Date).AddSeconds(60)
     $held = $false
@@ -94,7 +96,7 @@ function Add-HoldResult([string] $Title, [string] $Setup, $Result) {
     Add-Md '*What was done while the handle was held:*'
     Add-Fence $Result.Action
     Add-Md '*What the product recorded:*'
-    Add-Fence (($Result.Tool -split "`r?`n" | Where-Object { $_ -match '^(E0|E1|E2|E3|RESULT=|HELD|DONE|  )' -or $_ -match 'threw|no release' }) -join "`n")
+    Add-Fence (($Result.Tool -split "`r?`n" | Where-Object { $_ -match '^(E0|E1|E2|E3|RESULT=|HELD|DONE|ENUMERATING|  )' -or $_ -match 'threw|no release' }) -join "`n")
 }
 
 function Get-FreeLetter {
@@ -176,6 +178,39 @@ Add-Md
 Add-Md '| Source | Input path | Open | Filesystem | Serial32 | Serial64 | Root file ID | Label | Capacity / free | Kind | Confidence | FileIdInfo | Save |'
 Add-Md '|---|---|---|---|---|---|---|---|---|---|---|---|---|'
 foreach ($r in $matrixRows) { Add-Md $r }
+Add-Md
+
+# ---------------------------------------------------------------- Part 1b: access or support?
+Add-Md '### Is a failed `FileIdInfo` about access or about support?'
+Add-Md
+Add-Md 'The gate stops if any identity call needs MORE than zero access. This asks the same two calls through a handle opened with progressively richer access rights. If the answer never changes with the access requested, the failure is the filesystem not implementing the query (Win32 87), not a missing right. (This probe is test tooling; the product always opens with access 0.)'
+Add-Md
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+public static class SiAccessProbe {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern SafeFileHandle CreateFileW(string f, uint a, uint s, IntPtr sa, uint d, uint fl, IntPtr t);
+    [StructLayout(LayoutKind.Sequential)] struct FILE_ID_INFO { public ulong Serial; public ulong Lo; public ulong Hi; }
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int cls, out FILE_ID_INFO info, uint size);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool GetVolumeInformationByHandleW(SafeFileHandle h, char[] vn, uint vns, out uint serial, out uint max, out uint flags, char[] fs, uint fss);
+    public static string Try(string root, uint access) {
+        using (SafeFileHandle h = CreateFileW(@"\\?\" + root, access, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+            if (h.IsInvalid) return "open failed, Win32 " + Marshal.GetLastWin32Error();
+            FILE_ID_INFO i; string a = GetFileInformationByHandleEx(h, 18, out i, 24) ? "FileIdInfo OK" : "FileIdInfo FAILED, Win32 " + Marshal.GetLastWin32Error();
+            uint s, m, f; char[] vn = new char[261], fs = new char[261];
+            string b = GetVolumeInformationByHandleW(h, vn, 261, out s, out m, out f, fs, 261) ? "VolumeInformation OK" : "VolumeInformation FAILED, Win32 " + Marshal.GetLastWin32Error();
+            return a + "; " + b;
+        }
+    }
+}
+'@ -ErrorAction SilentlyContinue
+Add-Md '| Volume | Access 0 (the product) | FILE_READ_ATTRIBUTES (0x80) | GENERIC_READ (0x80000000) |'
+Add-Md '|---|---|---|---|'
+foreach ($candidate in $targets) {
+    if ($candidate.Path -match '^[A-Za-z]:\\$') {
+        $cells = foreach ($access in [uint32]0, [uint32]0x80, [uint32]2147483648) { [SiAccessProbe]::Try($candidate.Path, $access) }
+        Add-Md ('| {0} `{1}` | {2} |' -f $candidate.Label, $candidate.Path, ($cells -join ' | '))
+    }
+}
 Add-Md
 
 # ---------------------------------------------------------------- Part 2: TEST-I2 drive letter change
@@ -271,6 +306,14 @@ if ($elevated -and $media -and $media.ntfsB) {
 }
 else { Add-NotRun 'volume lock with the handle held' 'Opening a volume for locking needs an elevated session and a virtual volume that is safe to lock (provision with Provision-IdentityMedia.ps1). For real removable media, use the manual "Safely remove" step in README.' }
 
+# the control: the same lock attempt while a plain folder listing is open, which is what a scan has open while it lists
+if ($elevated -and $media -and $media.ntfsB) {
+    $controlFolder = Join-Path $media.ntfsB 'scan-control'
+    New-Item -ItemType Directory -Force (Join-Path $controlFolder 'a'), (Join-Path $controlFolder 'b') | Out-Null
+    $r = Invoke-Hold 'control-listing-lock' $controlFolder { 'lock attempt while a folder listing is open: ' + [SiVolumeLock]::TryLock($vol) } -Mode 'enumerate'
+    Add-HoldResult 'CONTROL: the volume lock while an ordinary folder listing is open (what a scan does)' 'No identity handle is held here. A directory enumeration is simply left open on the volume, as it is throughout a scan; this shows whether the held identity handle adds a kind of effect that listing already has.' $r
+}
+
 # 3e surprise removal and a swapped medium (needs virtual disks). The storage cmdlets are used (not diskpart's path matching).
 function Get-ImageState([string] $File) { $i = Get-DiskImage -ImagePath $File -ErrorAction SilentlyContinue; if ($i) { "Attached=$($i.Attached)" } else { 'image not found' } }
 function Set-ImageDetached([string] $File) { Dismount-DiskImage -ImagePath $File -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Milliseconds 800; Get-ImageState $File }
@@ -330,6 +373,10 @@ if ($shareA -and $mapLetter) {
     $r = Invoke-Hold 'mapped-disconnect-blocked' "$($mapLetter):\" { 'disconnect WITHOUT force while the handle is held (answering N to the prompt):'; (cmd.exe /c "echo n| net use $($mapLetter): /delete 2>&1" | Out-String) }
     $after = (cmd.exe /c "net use $($mapLetter): /delete 2>&1" | Out-String)
     Add-HoldResult 'Mapped drive disconnected (not forced) while held' ('A normal disconnect while a handle is open asks for confirmation, as it does for any open file. After the hold ended the same command gave: `{0}`' -f ($after -replace '\s+', ' ').Trim()) $r
+
+    & net.exe use "$($mapLetter):" $shareA /persistent:no 2>&1 | Out-Null
+    $r = Invoke-Hold 'control-listing-disconnect' "$($mapLetter):\" { 'disconnect WITHOUT force while a folder listing is open (answering N to the prompt):'; (cmd.exe /c "echo n| net use $($mapLetter): /delete 2>&1" | Out-String) } -Mode 'enumerate'
+    Add-HoldResult 'CONTROL: the same disconnect while an ordinary folder listing is open (what a scan does)' 'No identity handle is held here, only a directory enumeration left open on the share.' $r
 }
 else { Add-NotRun 'mapped-drive experiments' 'No SMB share to map: pass a manifest from an elevated Provision-IdentityMedia.ps1 run, or use -IncludeLoopbackAdminShare. Manual form against a Windows server and a Samba server: README step 6.' }
 
