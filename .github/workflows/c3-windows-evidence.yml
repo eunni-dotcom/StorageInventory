@@ -1,0 +1,89 @@
+# TEMPORARY, evidence for the v1.1 C3 review only. Not part of C3 and never merged.
+# It runs the C3 identity experiments (tests/identity) on a hosted, elevated Windows runner, where virtual disks (VHDX),
+# an SMB share and a UDF image can be created: Q-02 (FAT32, exFAT, ReFS, a second NTFS volume, UDF, SMB, mapped drives),
+# Q-13 (root directory file IDs), Q-19 (what holding the root handle does) and TEST-I2 (a drive-letter change). The
+# repository's own CI workflow (ci.yml, dispatched on this branch) carries the regression suites and the publish hash.
+name: C3 Windows evidence (temporary)
+
+on:
+  push:
+    branches: ['v1.1/c3-windows-evidence']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  media:
+    name: Identity experiments on virtual media
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+
+      - name: Build (Release)
+        shell: powershell
+        run: .\build.ps1 -Target Build -Configuration Release
+
+      - name: Session facts
+        shell: powershell
+        run: |
+          $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          "elevated: $($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          [Environment]::OSVersion.VersionString
+          Get-Volume | Format-Table DriveLetter, FileSystemLabel, FileSystem, DriveType, Size -AutoSize | Out-String -Width 200
+          Get-Service LanmanServer, LanmanWorkstation | Format-Table Name, Status -AutoSize | Out-String
+
+      - name: Provision virtual media
+        id: provision
+        continue-on-error: true
+        shell: powershell
+        run: .\tests\identity\Provision-IdentityMedia.ps1 -Manifest "$env:RUNNER_TEMP\identity-media.json"
+
+      - name: Run the identity experiments
+        id: experiments
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $manifest = Join-Path $env:RUNNER_TEMP 'identity-media.json'
+          if (Test-Path $manifest) { .\tests\identity\Invoke-IdentityExperiments.ps1 -Manifest $manifest -Out "$env:RUNNER_TEMP\identity-experiments.md" }
+          else { .\tests\identity\Invoke-IdentityExperiments.ps1 -IncludeLoopbackAdminShare -Out "$env:RUNNER_TEMP\identity-experiments.md" }
+
+      - name: Show the report
+        if: always()
+        shell: powershell
+        run: |
+          "===== REPORT BEGIN ====="
+          if (Test-Path "$env:RUNNER_TEMP\identity-experiments.md") { Get-Content "$env:RUNNER_TEMP\identity-experiments.md" } else { "(no report was written)" }
+          "===== REPORT END ====="
+
+      - name: Tear down virtual media
+        if: always()
+        shell: powershell
+        run: .\tests\identity\Provision-IdentityMedia.ps1 -Remove -Manifest "$env:RUNNER_TEMP\identity-media.json"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: c3-identity-experiments
+          path: |
+            ${{ runner.temp }}/identity-experiments.md
+            ${{ runner.temp }}/identity-media.json
+          if-no-files-found: warn
+          retention-days: 30
