@@ -1,7 +1,7 @@
 # TEMPORARY, evidence for the v1.1 C2 review only. Not part of C2 and never merged.
-# Runs what the regular CI cannot: the three v1 UI tests that need %TEMP%\StorageInventoryPerf\tree_60000 (and the
-# 10k-tree tests), and the release smoke test through UI Automation, on the frozen base and on the C2 head, on the
-# same runner image.
+# Run 2: the release smoke test and a UI Automation diagnostic on the frozen base, on the C2 head, and on the C2 head
+# with the views' ViewAutomationPeer removed (default UserControl peers), to find why the C2 smoke test could not
+# find the "New scan" button.
 name: C2 Windows evidence (temporary)
 
 on:
@@ -15,21 +15,29 @@ jobs:
   evidence:
     name: ${{ matrix.name }}
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: base bf3fa36 (v1.1/c1-final)
             ref: bf3fa36c7c9f8f710e86762bbc20faaf9755ca02
+            variant: none
           - name: C2 head
             ref: ca7d3f5959c08c04e2f5a97dd2a918edbe21cfb1
-    env:
-      SI_SCREENSHOTS: ${{ github.workspace }}\evidence-screenshots
+            variant: none
+          - name: C2 head without ViewAutomationPeer (diagnostic variant)
+            ref: ca7d3f5959c08c04e2f5a97dd2a918edbe21cfb1
+            variant: default-peers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: evidence-branch
           persist-credentials: false
 
       - name: Cache repo-local toolchain
@@ -45,39 +53,33 @@ jobs:
         shell: powershell
         run: .\tools\fetch-tools.ps1
 
-      - name: Show the commit under test
+      - name: Diagnostic variant: remove the views' ViewAutomationPeer
+        if: matrix.variant == 'default-peers'
         shell: powershell
-        run: git log -1 --format='%H %s'
+        run: |
+          foreach ($f in Get-ChildItem src\StorageInventory.App\Views\*.xaml.cs) {
+            $t = [IO.File]::ReadAllText($f.FullName)
+            $u = $t.Replace("    protected override AutomationPeer OnCreateAutomationPeer() => new ViewAutomationPeer(this);`n", "")
+            if ($u -ne $t) { [IO.File]::WriteAllText($f.FullName, $u); "patched $($f.Name)" }
+          }
+          git diff --stat
 
-      - name: Build the synthetic benchmark trees (10k, 60k, 250k files)
+      - name: Build the 250k-file tree for the smoke test's cancelled scan
         shell: powershell
         run: |
           . .\powershell\tests\TestLib.ps1
-          $perf = Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf'
-          foreach ($size in 10000, 60000, 250000) {
-            $tree = Join-Path $perf "tree_$size"
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            New-BulkFixture -Root $tree -Artists ([int][Math]::Ceiling($size / 1000.0)) -Albums 25 -Tracks 40
-            "tree_$size built in $([Math]::Round($sw.Elapsed.TotalSeconds)) s"
-          }
-
-      - name: Build and test (Release), with the trees present
-        shell: powershell
-        run: .\build.ps1 -Target Test -Configuration Release
+          New-BulkFixture -Root (Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000') -Artists 250 -Albums 25 -Tracks 40
 
       - name: Publish self-contained executable
         shell: powershell
         run: .\build.ps1 -Target Publish
 
       - name: Release smoke test
+        continue-on-error: true
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke\Invoke-ReleaseSmokeTest.ps1 -Source (Join-Path $pwd 'docs') -LargeSource (Join-Path ([IO.Path]::GetTempPath()) 'StorageInventoryPerf\tree_250000')
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: screenshots-${{ strategy.job-index }}
-          path: evidence-screenshots
-          if-no-files-found: warn
-          retention-days: 30
+      - name: UI Automation diagnostic
+        continue-on-error: true
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\evidence-branch\.github\evidence\uia-dump.ps1 -Source (Join-Path $pwd 'docs') -Exe (Join-Path $pwd 'dist\StorageInventory.exe')
