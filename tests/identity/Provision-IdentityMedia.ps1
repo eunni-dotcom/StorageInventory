@@ -30,6 +30,15 @@ function Test-Elevated {
 }
 if (-not (Test-Elevated)) { throw 'Run this from an elevated PowerShell: attaching VHDX files and creating SMB shares needs administrator rights.' }
 
+Add-Type -Namespace SiPath -Name Native -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern uint GetLongPathNameW(string shortPath, System.Text.StringBuilder longPath, uint length);'
+# A hosted runner's %TEMP% is an 8.3 path (C:\Users\RUNNER~1\...); virtual-disk tooling is happier with one spelling, so use the long form.
+function Get-LongPath([string] $Path) {
+    $builder = New-Object System.Text.StringBuilder 1024
+    $length = [SiPath.Native]::GetLongPathNameW($Path, $builder, 1024)
+    if ($length -gt 0 -and $length -lt 1024) { return $builder.ToString() } else { return $Path }
+}
+if (Test-Path -LiteralPath $Root) { $Root = Get-LongPath $Root }
+
 function Get-FreeLetters {
     $used = [IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name[0] }
     ('M','N','O','P','Q','R','S','T','U','W' | Where-Object { $used -notcontains $_ -and -not (Test-Path "$($_):\") })
@@ -44,6 +53,7 @@ function Invoke-Diskpart([string[]] $Lines) {
 }
 
 function Remove-All($state) {
+    $ErrorActionPreference = 'Continue'   # "already gone" is fine while tearing down; native tools write that to stderr
     if (-not $state -and (Test-Path -LiteralPath $Manifest)) { $state = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json }
     foreach ($mapping in 'mappedLetterA', 'mappedLetterB') { if ($state -and $state.$mapping) { & net.exe use ($state.$mapping.Substring(0, 2)) /delete /y 2>&1 | Out-Null } }
     foreach ($share in 'SiEvidenceA', 'SiEvidenceB') { Remove-SmbShare -Name $share -Force -ErrorAction SilentlyContinue }
@@ -59,6 +69,7 @@ function Remove-All($state) {
 if ($Remove) { Remove-All $null; return }
 
 New-Item -ItemType Directory -Force $Root | Out-Null
+$Root = Get-LongPath $Root
 $result = [ordered]@{}
 $notes = [ordered]@{}
 $letters = [System.Collections.Queue]::new(@(Get-FreeLetters))
