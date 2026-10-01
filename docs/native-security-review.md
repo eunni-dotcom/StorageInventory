@@ -2,6 +2,11 @@
 
 **STATUS: PASS** (see "Evidence").
 
+> **The v1.1 gate C3 text of this document is an implementer record awaiting independent re-review.** The first independent
+> review (`docs/v1.1-c3-review.md`, verdict `C3 REQUIRES REVISION`) found it incomplete or over-general in the places that
+> `docs/v1.1-c3-repair-evidence.md` lists (C3-M03, C3-M04, C3-M05) and they are corrected below. The `PASS` above is the v1
+> review's; it is not an acceptance of C3.
+
 This review was done separately from implementation, reading the shipped code (`src/`) as an adversary would and asking
 *"if this were malicious or buggy, where could it hurt the user's files or privacy?"* The claims below are enforced by
 `tests/StorageInventory.IntegrationTests/SecurityAuditTests.cs`, which fails if the code drifts: it checks the source
@@ -27,7 +32,7 @@ text, the compiled assemblies' references, the P/Invoke methods found by reflect
 | Existing files never overwritten | Holds | Creation is only `FileMode.CreateNew`; the only rename is `File.Move(..., overwrite: false)`. Tests exist for races on CSV, `.xlsx` and `.partial` names. |
 | Cancellation and failure leave the tree untouched and never look complete | Holds | Four distinct `ScanCompletionState`s; `Cancelled`/`Failed` expose no reports and list every created file as incomplete; nothing is deleted automatically. |
 | Every output mutation has a narrow purpose | Holds | See the inventory below. |
-| Identity capture (v1.1 C3) never reads content or changes anything | Holds | The four new calls are read-only queries through a directory handle opened with **desired access 0** (its granted access was measured as `0x00100080`, `SYNCHRONIZE` plus `FILE_READ_ATTRIBUTES`, against `0x00120089` for `GENERIC_READ`), or by path. The handle is shared read, write and delete, so it never blocks a rename, a delete or a listing. A test shows a tree's names, sizes, attributes and timestamps identical before and after capture. |
+| Identity capture (v1.1 C3) never reads content or changes anything | Holds | The four new calls are read-only queries through a directory handle opened with **desired access 0** (its granted access was measured as `0x00100080`, `SYNCHRONIZE` plus `FILE_READ_ATTRIBUTES`, against `0x00120089` for `GENERIC_READ`), or by path. The handle is opened shared read, write and delete (as the specification states it), and holding it does not stop the source folder itself from being renamed, deleted or listed (measured). It is **not** free of effects: while it is held, Windows refuses to rename or remove a **parent or ancestor** of the source folder, refuses the orderly volume lock that "Safely remove" begins with, and asks for confirmation before a mapped drive is disconnected, exactly as it does for any open folder listing (Q-19, below). A test shows a tree's names, sizes, attributes and timestamps identical before and after capture. |
 
 ## API inventory: everything that can write, delete, move, launch or call native code
 
@@ -82,9 +87,16 @@ one file, and the audit (`The_only_native_calls_are_six_read_only_kernel32_funct
 a seventh appears, if one is not in `kernel32`, if `CreateFileW` is called with any desired access but the literal 0, or if
 `GetFileInformationByHandleEx` is asked for anything but `FileIdInfo`. The last is enforced by type (a one-member enum)
 and by a text rule that allows the enum's name in exactly three kinds of place (its declaration, the P/Invoke's parameter,
-and the `.FileIdInfo` argument), so a cast, `default(...)`, `Enum.ToObject` and `Unsafe.As` are all rejected; the rule is
-shown to reject each of them. (Every information class is a read-only query: the point is that the reviewed surface is
-exactly one.)
+and the `.FileIdInfo` argument), so a cast, `default(...)`, `Enum.ToObject(typeof(...))` and `Unsafe.As` are all rejected;
+the rule is shown to reject each of them. That rule keys on the type's name, so it cannot see a call that never names the
+type: the independent C3 review showed that a reflective call (`MethodInfo.Invoke` with a class value taken from the
+parameter's own type) passed it. Reflection is therefore closed separately, as A-18 closes dynamic code: shipped code may
+not use it at all, enforced by a text rule over `src` and by a rule over the member references of the compiled assemblies,
+each with a negative self-test (`Shipped_code_makes_no_reflective_call_so_the_FileIdInfo_only_rule_cannot_be_bypassed` and
+`The_reflection_rules_reject_the_bypass_the_review_demonstrated_and_its_variants`; `tests/mutation/Invoke-C3Mutants.ps1`
+re-runs the review's mutant and two variants). What is closed is those shapes: a deliberate change to the audit itself, or to
+a project file outside `src`, is for a human reviewer. (Every information class is a read-only query: the point is that the
+reviewed surface is exactly one.)
 
 ### The zero-access root handle
 
@@ -104,8 +116,9 @@ exactly one.)
   canonical path (every source), or the filesystem name and 32-bit serial (a local volume), cannot be obtained at
   preflight, the source cannot be re-verified and is **not saveable** (reports only): the code never falls back to trusting
   the path.
-- **Zero access is enough everywhere that was tried.** On NTFS, ReFS, FAT32, exFAT, UDF, SMB shares served from NTFS and
-  from FAT32, and mapped and SUBST letters, the open, the canonical path and the volume query worked with access 0.
+- **Zero access is enough everywhere that was tried.** On NTFS, ReFS, FAT32 and exFAT (virtual disks), UDF (a mounted image
+  and a vendor's virtual CD drive; no physical disc), SMB shares served by Windows **on the same machine (loopback)** from
+  NTFS and from FAT32, and mapped and SUBST letters, the open, the canonical path and the volume query worked with access 0.
   `FileIdInfo` answers Win32 87 on FAT32, exFAT and UDF with access 0, with `FILE_READ_ATTRIBUTES` and with `GENERIC_READ`
   alike, so it is a filesystem that does not implement the query, not a missing right. That is why the 64-bit serial and the
   root directory ID are required later only when the call succeeded at preflight.
@@ -128,25 +141,35 @@ scan's three reports identical with the handle held.
 
 ### What holding the handle does (Q-19: measured on Windows 11 and on a hosted Windows Server 2025 runner)
 
+Scope of the evidence: the virtual disks are VHDX files and a mounted UDF image; every SMB and mapped-drive row was measured
+against a **Windows SMB server on the same machine (loopback)**, not against another machine. A remote Windows server, a
+Samba server, a NAS and DFS were not measured.
+
 | Action while the handle is held | Observed |
 |---|---|
 | Orderly dismount: the volume lock that "Safely remove" and Eject start with (virtual NTFS volume) | **Refused** (Win32 5); it succeeded before the hold and succeeds again after it ends |
 | The same lock while an ordinary folder listing is open and no identity handle is held (the control: what a scan already has) | **Refused** too (Win32 5). Listing a folder already blocks an orderly dismount, so the held handle adds no new *kind* of effect. (By construction, not measured: a scan's own listing handles are open only while it enumerates, whereas the held handle spans the whole observation window, so the refusal lasts the window) |
-| Rename or delete the held folder from outside | Allowed (the handle shares delete). E2, read through the handle, then reports the new canonical name, or a `$Deleted` name; E3, a fresh open of the old path, cannot open it |
+| Rename or delete the **source folder itself** from outside | Allowed (measured). E2, read through the handle, then reports the new canonical name, or a `$Deleted` name; E3, a fresh open of the old path, cannot open it |
+| Rename a **parent or ancestor** of the source folder (handle held on `A\B\C`: rename `A\B`, or `A`) | **Blocked: Access denied.** An ordinary open folder listing on the same folder gives the identical result (the control), so this is an effect a scan already has while it enumerates, not one the identity handle introduces; renaming the source itself is allowed in both cases. Reviewer experiment (`docs/v1.1-c3-review.md`, B.3), now also part of `Invoke-IdentityExperiments.ps1` with its control (`docs/v1.1-c3-repair-evidence.md`) |
 | List or scan the same tree meanwhile | Unchanged: the three reports are byte-identical to a scan without the handle |
 | Mapped network drive: a normal disconnect | Asks for confirmation ("open files and/or incomplete directory searches pending"), as it does for any open handle, including an ordinary open folder listing; declined, the drive stays and the capture still verifies |
 | Mapped network drive: a forced disconnect and re-map | The held handle is invalidated (Win32 59); E2 fails and E3 reads the other share |
-| Virtual disk detached, or a disc image dismounted (what pulling a stick or Eject does) | Not blocked; the held handle fails (Win32 21, not ready) and a fresh open fails (Win32 3), so the capture is not eligible |
+| Virtual disk detached (what pulling a stick looks like to the volume), or a disc image dismounted with `Dismount-DiskImage` | Not blocked; the held handle fails (Win32 21, not ready) and a fresh open fails (Win32 3), so the capture is not eligible. `Dismount-DiskImage` takes no volume lock, so it is **not** what Eject does on a physical disc |
 | Another medium at the same letter | E2 fails; E3 reads the other volume's serials |
 | SUBST letter re-pointed | The held handle still reaches the original folder; E3 reaches the new one and detects it. Re-pointed away and back is **not** detected (L-ID2) |
 | Source folder renamed away, another folder given its name | If left like that: E2 reports the original's new name (every filesystem) and E3 reaches a different directory (its root file ID on NTFS and ReFS): detected. If everything is put back before the window closes: **not** detected (L-ID2, G0F-O05) |
-| A network share's folder renamed by another client | E2 reports the new name; E3 cannot open the old one |
+| A share's backing folder renamed on the **server's own filesystem** (loopback: the same machine, not another client) | E2 reports the new name; E3 cannot open the old one |
 
-So the effect of holding the root handle is the one the specification accepts: it can block "Safely remove" (and a
-non-forced disconnect of a mapped drive) while a scan runs, and it is released when the window ends. Nothing else was
-observed. **Not measured here:** the Windows "Safely Remove Hardware" dialog on a physical USB drive, a Samba server, a
-physical medium swap, and interaction with third-party antivirus or indexers beyond the hosted images. Those are manual
-steps (`tests/identity/README.md`) and remain open acceptance evidence.
+Holding the root handle blocks the orderly volume lock that "Safely remove" begins with, makes Windows ask before a mapped
+drive is disconnected without force, and makes Windows refuse to rename or remove a parent or ancestor folder of the source,
+for as long as it is held. Each of these is produced identically by an ordinary open folder listing (the controls), which a
+scan has throughout its enumeration, so the held handle adds **duration** (the observation window outlasts the enumeration)
+and no new kind of effect. The independent C3 review (`docs/v1.1-c3-review.md` §15) judged on that basis that the stop
+condition of §19 C3 is not triggered; this document does not pre-judge that point. The Windows "Safely Remove Hardware"
+dialog itself was not observed. **Not measured here:** that dialog on a physical USB drive, a physical medium swap, a physical
+optical disc, a Samba server, a remote Windows server, a NAS, DFS, and interaction with third-party antivirus or indexers
+beyond the hosted images. Those are manual steps (`tests/identity/README.md`) and remain open acceptance evidence. A note for the
+History screens (gate C8): removing, disconnecting or renaming a parent of a source while a scan runs is refused by Windows.
 
 ### Limitations stated, not hidden
 
@@ -158,8 +181,10 @@ steps (`tests/identity/README.md`) and remain open acceptance evidence.
   and both put back. In both the scan may have listed a different namespace in between. A replacement that is left in
   place is detected (E2 on every filesystem, E3 too where the filesystem provides a root file ID). Both cases are asserted
   as documented behaviour, with no polling added to hide them.
-- A Windows SMB server returns the **underlying volume's** filesystem name and both serials (measured, including for a share
-  served from a FAT32 volume), so a share can look Strong on evidence alone. It is never Strong: confidence also requires a
+- A Windows SMB server returns the **underlying volume's** filesystem name and its serials: both the 32-bit and the 64-bit
+  serial for a share served from NTFS, and **only the 32-bit serial** for a share served from FAT32 (`FileIdInfo` answers Win32
+  87 there, as on FAT32 itself). Measured against a loopback server; a remote server was not measured. A share can therefore
+  look Strong on evidence alone. It is never Strong: confidence also requires a
   local source, so a network share is recognised by its canonical location only, and different spellings of a server
   (`\\nas`, `\\nas.local`, an address) are different sources because no name is ever resolved.
 
