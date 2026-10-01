@@ -36,14 +36,16 @@ internal sealed class Scenario
 
     public IdentityAssessment Assess(Core.Identity.VolumeEvidence e0) => IdentityClassifier.Assess(e0);
 
+    /// <summary>The matcher requires the mounted volumes; these helpers default to "no other volume is mounted" so the many
+    /// tests that are not about clones need not say so.</summary>
     public MatchOutcome Match(Core.Identity.VolumeEvidence e0, IReadOnlyList<MountedVolume>? others = null) =>
-        IdentityMatching.Match(IdentityClassifier.Assess(e0), Store, Key, others);
+        IdentityMatching.Match(IdentityClassifier.Assess(e0), Store, Key, others ?? []);
 
     /// <summary>A capture that the algorithm settles without asking: applied to the store, returning the rows.</summary>
     public AppliedIdentity Save(Core.Identity.VolumeEvidence e0, IReadOnlyList<MountedVolume>? others = null)
     {
         var capture = IdentityClassifier.Assess(e0);
-        var outcome = IdentityMatching.Match(capture, Store, Key, others);
+        var outcome = IdentityMatching.Match(capture, Store, Key, others ?? []);
         if (outcome is not MatchOutcome.Decided decided) throw new AssertionException($"the scenario expected no prompt but got {Out.Describe(outcome)}");
         return Store.Apply(decided.Decision, capture) ?? throw new AssertionException("the decision saved nothing");
     }
@@ -52,14 +54,13 @@ internal sealed class Scenario
     public AppliedIdentity SaveAnswering(Core.Identity.VolumeEvidence e0, Func<IdentityPrompt, IdentityAnswer> answer, IReadOnlyList<MountedVolume>? others = null)
     {
         var capture = IdentityClassifier.Assess(e0);
-        var outcome = IdentityMatching.Match(capture, Store, Key, others);
+        var outcome = IdentityMatching.Match(capture, Store, Key, others ?? []);
         while (outcome is MatchOutcome.Ask ask) outcome = IdentityMatching.Answer(ask.Prompt, answer(ask.Prompt), capture, Store, Key);
         if (outcome is not MatchOutcome.Decided decided) throw new AssertionException($"expected a decision but got {Out.Describe(outcome)}");
         return Store.Apply(decided.Decision, capture) ?? throw new AssertionException("the decision saved nothing");
     }
 
-    /// <summary>What a currently mounted second volume with this reading looks like to the matcher (ID-05).</summary>
-    public static MountedVolume Mounted(Core.Identity.VolumeEvidence e) =>
-        new(e.FileSystemName.Value, e.VolumeSerial32.IsAvailable ? e.VolumeSerial32.Value : null, e.VolumeSerial64.IsAvailable ? e.VolumeSerial64.Value : null,
-            e.VolumeLabel.IsAvailable ? e.VolumeLabel.Value : null, e.CapacityBytes.IsAvailable ? e.CapacityBytes.Value : null);
+    /// <summary>What a currently mounted volume with this reading looks like to the matcher (ID-05), its mount point read the
+    /// way the capture's was.</summary>
+    public static MountedVolume Mounted(Core.Identity.VolumeEvidence e) => MountedVolume.From(e);
 }

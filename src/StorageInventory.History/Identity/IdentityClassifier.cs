@@ -46,6 +46,9 @@ internal sealed record ConfidenceReason(ConfidenceReasonKind Kind, string? Detai
 /// <param name="Serial64">The 64-bit serial as read (0 is kept as 0 but never matched on); null when unavailable.</param>
 /// <param name="VolumeLabel">Exact label; null when unavailable.</param>
 /// <param name="CapacityBytes">Capacity; null when unavailable.</param>
+/// <param name="MountPoint">Where Windows says the volume holding the opened object is mounted (<c>C:\</c>), read from the
+/// canonical path, so a SUBST letter for a folder of <c>C:</c> reports <c>C:\</c>. Observed location, never identity (ID-03);
+/// the matcher uses it for one thing only: telling the captured volume's own other names from a second volume (ID-05).</param>
 /// <param name="NetworkRoot">For network sources the exact canonical <c>\\server\share</c>; otherwise null.</param>
 /// <param name="RootInVolume">The root's exact path inside its volume or share (<c>\</c>, <c>\Media\Music</c>); null only when
 /// the source cannot be saved.</param>
@@ -59,6 +62,7 @@ internal sealed record IdentityAssessment(
     ulong? Serial64,
     string? VolumeLabel,
     long? CapacityBytes,
+    string? MountPoint,
     string? NetworkRoot,
     string? RootInVolume,
     IReadOnlyList<ConfidenceReason> Reasons,
@@ -96,7 +100,7 @@ internal static class IdentityClassifier
         var minimum = MinimumEvidence.Check(e0);
 
         SourceLocation? location = e0.CanonicalPath.IsAvailable && SourceLocation.TryDerive(e0.CanonicalPath.Value!, out var derived) ? derived : null;
-        var kind = location?.Kind ?? e0.Kind;
+        var kind = e0.ResolvedKind;   // the same answer ID-13's minimum evidence used
 
         var fileSystem = e0.FileSystemName.IsAvailable ? e0.FileSystemName.Value : null;
         var reasons = new List<ConfidenceReason>();
@@ -110,6 +114,7 @@ internal static class IdentityClassifier
             e0.VolumeSerial64.IsAvailable ? e0.VolumeSerial64.Value : null,
             e0.VolumeLabel.IsAvailable ? e0.VolumeLabel.Value : null,
             e0.CapacityBytes.IsAvailable ? e0.CapacityBytes.Value : null,
+            e0.MountPoint.IsAvailable ? e0.MountPoint.Value : null,
             location?.NetworkRoot,
             location?.RootInVolume,
             reasons,

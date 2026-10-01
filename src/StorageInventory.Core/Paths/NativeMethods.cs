@@ -32,8 +32,11 @@ internal static class NativeMethods
     private const uint FileNameNormalized = 0x0;
     private const int NameBufferLength = 261;                  // MAX_PATH + 1: volume labels and filesystem names are far shorter
 
-    /// <summary>The only <c>FILE_INFO_BY_HANDLE_CLASS</c> value StorageInventory ever passes. A one-member enum, so no other
-    /// information class can be requested without a cast, which the security audit forbids.</summary>
+    /// <summary>The only <c>FILE_INFO_BY_HANDLE_CLASS</c> value StorageInventory ever passes. A one-member enum, and the
+    /// security audit allows the type's name in exactly three places in <c>src</c> (this declaration, the P/Invoke's
+    /// parameter, and the one call's <c>FileInfoByHandleClass.FileIdInfo</c> argument), so asking for another information
+    /// class means writing something the audit rejects. (Every class is a read-only query; the point is that the surface is
+    /// reviewed as exactly one.)</summary>
     private enum FileInfoByHandleClass
     {
         FileIdInfo = 18,

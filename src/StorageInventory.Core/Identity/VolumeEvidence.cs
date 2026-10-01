@@ -41,6 +41,12 @@ internal sealed record VolumeEvidence(EvidenceStage Stage, string EnumeratedPath
     /// letter resolves to a UNC path and so counts as network), never from the drive-letter syntax of the input.</summary>
     public SourceKind Kind { get; init; } = SourceKind.LocalVolume;
 
+    /// <summary>The kind of source this reading describes, decided in ONE place so that ID-13 (what is required), ID-01 (the
+    /// confidence) and ID-10 (what must not change) cannot disagree: from where Windows says the opened object is, a UNC
+    /// canonical path being a network source and a drive-letter one a local volume; only when no canonical path was
+    /// obtained, from the <see cref="Kind"/> the reading carries.</summary>
+    public SourceKind ResolvedKind => CanonicalPath.IsAvailable && SourceLocation.TryDerive(CanonicalPath.Value!, out var location) ? location.Kind : Kind;
+
     // ---- identity items (ID-13) ----
 
     /// <summary>The canonical path of the opened object, from <c>GetFinalPathNameByHandleW</c> on the handle (ID-13 item 1).</summary>

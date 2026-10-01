@@ -187,10 +187,18 @@ What each reading can and cannot tell:
   leads now. A letter re-pointed during the scan and still re-pointed at the end is caught by E3. A letter re-pointed
   **away and back** while the original volume stays mounted cannot be detected from start and end evidence (limitation L-ID2).
 - **Renamed, moved or deleted source folder.** The held handle follows the object, so E2 reports its new canonical path
-  (a deleted directory reports a `$Deleted` name), and the original path stops opening, so E3 fails.
+  (a deleted directory reports a `$Deleted` name), and the original path stops opening, so E3 fails. The same limitation
+  applies to the folder itself (L-ID2, G0F-O05): a source folder **renamed away, another folder given its name, and
+  everything put back** before the scan ends leaves four equal readings, although the scan may have listed the other folder
+  in between. A replacement that is *left in place* is caught: E2 reports the original's new name on every filesystem, and E3
+  reaches a different directory (its root file ID, where the filesystem provides one).
 - **Clones.** A disk clone copies the volume serial and nothing StorageInventory reads tells it from its original. Two
   volumes mounted together with the same identity are asked about; a clone that is never mounted beside its original is
-  treated as the same source (limitation L-ID1), and the interface will say so.
+  treated as the same source (limitation L-ID1), and the interface will say so. The matcher takes the list of mounted
+  volumes as a required input and never probes: the caller reads each drive the way the capture was read, so a SUBST letter
+  or a second drive-list entry for the captured volume reports the captured volume's own mount point and is not mistaken for
+  a clone. With no saved volume there is nothing to attach to and nothing to ask: the first of two never-saved clones becomes
+  a new volume, and scanning the second while the first is mounted asks.
 - **Network sources** are recognised by their canonical location only. A Windows SMB server returns the underlying volume's
   filesystem name and serials, so a share can look Strong on evidence alone; it never is, because confidence also needs a
   local source. Different spellings of a server (`\\nas`, `\\nas.local`, an address) are different sources: no name is resolved.

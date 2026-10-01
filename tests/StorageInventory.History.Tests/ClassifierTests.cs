@@ -83,6 +83,34 @@ public static class ClassifierTests
     }
 
     [Test]
+    public static void One_answer_to_local_or_network_decides_both_the_minimum_evidence_and_the_confidence()
+    {
+        // The kind is derived in one place (VolumeEvidence.ResolvedKind: where the canonical path says the object is). A reading
+        // whose own Kind was left at its default (LocalVolume) but whose canonical path is a UNC path is a network source for
+        // ID-13 (no filesystem name or serial is needed to save it) and for ID-01 (PathOnly) alike, and the reverse.
+        var failedName = EvidenceItem<string>.Failed("GetVolumeInformationByHandleW", 5);
+        var failedSerial = EvidenceItem<uint>.Failed("GetVolumeInformationByHandleW", 5);
+
+        var unc = Ev.Share(@"\\nas\media") with { Kind = SourceKind.LocalVolume, FileSystemName = failedName, VolumeSerial32 = failedSerial };
+        var network = IdentityClassifier.Assess(unc);
+        Assert.Equal(SourceKind.Network, unc.ResolvedKind);
+        Assert.Equal(SourceKind.Network, network.Kind);
+        Assert.Equal(IdentityConfidence.PathOnly, network.Confidence);
+        Assert.True(network.CanSave, "a network source needs only its canonical path (ID-13)");
+
+        var drive = Ev.Ntfs(@"C:\Media") with { Kind = SourceKind.Network, FileSystemName = failedName, VolumeSerial32 = failedSerial };
+        var local = IdentityClassifier.Assess(drive);
+        Assert.Equal(SourceKind.LocalVolume, drive.ResolvedKind);
+        Assert.Equal(SourceKind.LocalVolume, local.Kind);
+        Assert.False(local.CanSave, "a local volume needs its filesystem name and 32-bit serial (ID-13)");
+
+        // with no canonical path at all the reading's own Kind is all there is
+        var noPath = Ev.Ntfs(@"C:\Media") with { Kind = SourceKind.Network, CanonicalPath = EvidenceItem<string>.Failed("GetFinalPathNameByHandleW", 5) };
+        Assert.Equal(SourceKind.Network, noPath.ResolvedKind);
+        Assert.False(IdentityClassifier.Assess(noPath).CanSave, "no canonical path: not saveable whatever the kind");
+    }
+
+    [Test]
     public static void Evidence_failures_keep_their_reason_for_the_user_interface()
     {
         var failed = Ev.Reading(@"C:\x", @"C:\x", "NTFS", 1, null, "x", 1000, null);
@@ -187,7 +215,7 @@ public static class MatchingInvariantTests
             // three stores: empty; one holding exactly this capture's source; one holding two volumes with its identity
             foreach (var store in StoresFor(e0, capture))
             {
-                var outcome = IdentityMatching.Match(capture, store, AsciiFoldKey.Instance);
+                var outcome = IdentityMatching.Match(capture, store, AsciiFoldKey.Instance, []);
                 total++;
                 if (outcome is not MatchOutcome.Decided { Decision: IdentityDecision.AttachToSource attach }) continue;
                 automatic++;
@@ -214,7 +242,7 @@ public static class MatchingInvariantTests
         yield return new InMemoryIdentityStore();
 
         var one = new InMemoryIdentityStore();
-        var decision = (IdentityMatching.Match(capture, one, AsciiFoldKey.Instance) as MatchOutcome.Decided)?.Decision;
+        var decision = (IdentityMatching.Match(capture, one, AsciiFoldKey.Instance, []) as MatchOutcome.Decided)?.Decision;
         if (decision is IdentityDecision.CreateSource) one.Apply(decision, capture);
         yield return one;
 
@@ -242,7 +270,7 @@ public static class MatchingInvariantTests
                 var volume = store.AddVolume(capture.FileSystemName!, capture.UsableSerial64, capture.UsableSerial32, capture.Confidence, capture.VolumeLabel, capture.CapacityBytes);
                 store.AddLocalSource(volume.VolumeId, capture.RootInVolume!, capture.Confidence, IdentityBasis.Evidence);
             }
-            var prompt = Out.Asked(IdentityMatching.Match(capture, store, AsciiFoldKey.Instance));
+            var prompt = Out.Asked(IdentityMatching.Match(capture, store, AsciiFoldKey.Instance, []));
             Assert.Equal(2, prompt.Volumes.Count, e0.FileSystemName.Value);
         }
     }

@@ -64,8 +64,12 @@ internal sealed record ReverificationResult(ReverificationOutcome Outcome, IRead
 /// could not obtain is not required later, whatever a later reading shows. The source kind must not change either.</para>
 /// <para><b>Never compared:</b> label, capacity, free space, flags and the mount point. They change legitimately (a label
 /// is renamed, a file is written elsewhere on the volume), and none of them is identity.</para>
-/// <para><b>Not detectable, and not pretended to be</b> (limitation L-ID2): a letter re-pointed away and back between E1 and
-/// the end while the original volume stays mounted gives four equal readings.</para>
+/// <para><b>Not detectable, and not pretended to be</b> (limitation L-ID2): a change that is UNDONE before the window closes
+/// leaves four equal readings. Two cases are documented. A letter (a drive letter, SUBST or a mapped letter) re-pointed
+/// away and back between E1 and the end, while the original volume stays mounted. And, the same limitation applied to the
+/// source folder itself (G0F-O05), the source folder renamed away, another folder given its name, and both put back. In both
+/// the scan may have listed a different namespace in between. A replacement that is left in place is detected: the held
+/// handle then reports a different canonical path (E2) and a fresh open reaches a different folder (E3).</para>
 /// </remarks>
 internal static class Reverification
 {
@@ -93,9 +97,9 @@ internal static class Reverification
 
     private static void Compare(VolumeEvidence e0, VolumeEvidence later, List<ReverificationFailure> failures)
     {
-        if (later.Kind != e0.Kind)
+        if (later.ResolvedKind != e0.ResolvedKind)
         {
-            failures.Add(new ReverificationFailure(later.Stage, IdentityItem.SourceKind, ReverificationFailureKind.Different, e0.Kind.ToString(), later.Kind.ToString(), null));
+            failures.Add(new ReverificationFailure(later.Stage, IdentityItem.SourceKind, ReverificationFailureKind.Different, e0.ResolvedKind.ToString(), later.ResolvedKind.ToString(), null));
         }
 
         Check(IdentityItem.CanonicalPath, e0.CanonicalPath, later.CanonicalPath, later.Stage, failures);
