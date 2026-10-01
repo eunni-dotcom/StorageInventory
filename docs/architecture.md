@@ -31,12 +31,19 @@ Consumers:         "What are those files, and what should be done with them?"
             | IStorageInventoryScanner, records, results
 +-------------------------------------------------------------------+
 |  (future, 1.1)  Persistent inventory / index                      |
-|  snapshots, volume identity, history, change detection            |
+|  snapshots, history, change detection (the Library, gate C4+)     |
 +-------------------------------------------------------------------+
             | consumes scan observations, never re-scans itself
 +-------------------------------------------------------------------+
+|  StorageInventory.History  (v1.1 C3; package-free, internal)      |
+|  Identity/   pure volume/source matching rules: confidence,       |
+|              re-verification, the identity prompt; no database    |
++-------------------------------------------------------------------+
+            | reads the identity evidence Core captures
++-------------------------------------------------------------------+
 |  StorageInventory.Core  (v1 priority)                             |
 |  Paths/      safe path policy (validation, canonical locations)   |
+|              and the six read-only native calls                   |
 |  Scanning/   metadata-only enumeration, reparse handling, errors, |
 |              incomplete-subtree propagation, aggregation,         |
 |              invariants, cancellation, progress, and the internal |
@@ -45,6 +52,8 @@ Consumers:         "What are those files, and what should be done with them?"
 |              XLSX (optional post-processing)                      |
 |  Spool/      internal observation-spool codec (v1.1 C1; no file   |
 |              is written until the capture gate, C5)               |
+|  Identity/   internal volume/source evidence capture and the held |
+|              root handle (v1.1 C3; nothing is stored)             |
 +-------------------------------------------------------------------+
 ```
 
@@ -65,8 +74,9 @@ Consumers:         "What are those files, and what should be done with them?"
 
 - **No UI dependency.** No WPF, WinForms, dialogs, message boxes, UI-thread assumptions, view models, Explorer
   launching or GUI preferences. `Core_assembly_has_no_UI_framework_references` enforces this.
-- **No process launching, no network code, no registry, no content reads.** The only native calls are the two
-  read-only calls in `Paths/NativeMethods.cs`.
+- **No process launching, no network code, no registry, no content reads.** The only native calls are the six
+  read-only `kernel32` calls in `Paths/NativeMethods.cs` (v1.1 C3 added four identity queries to v1's two; see
+  [native-security-review.md](native-security-review.md)).
 - **All output mutations go through one owned-file mechanism** (Gate B5): only create-new, only in the validated output
   folder, and every cleanup proven to belong to the current run.
 - **User-facing text in Core is a default English rendering.** The stable contract is the codes and enums
@@ -106,7 +116,7 @@ Local-time formatting, unit conversion, file-type categories and the formula gua
 | Snapshot writer, consumer provider, NDJSON export | The traversal emits records to an **internal observer fan-out** (v1.1 C1, below); the CSV report writer is its critical observer. A public contract can be exposed later (1.2) without rewriting traversal. |
 | "Unknown", not "deleted", under unreadable folders | Every folder carries `Status` + `SubtreeComplete`; every scan carries `ScanCompletionState` and the error rows. A consumer can always tell *not observed* from *observed absent*. |
 | Change detection across scans | Stable root-relative paths, raw sizes and UTC timestamps in records. |
-| Volume identity | Not captured in v1. A 1.1 snapshot will record it at scan time; drive letters are never treated as identity. |
+| Volume identity | Not captured in v1. C3 (v1.1) provides the evidence capture and the matching rules (below), still without persistence; a snapshot will record it at scan time once the Library exists. Drive letters are never treated as identity. |
 | CLI | Core has no UI assumptions, and `IStorageInventoryScanner` is the entire entry point. |
 | Multi-million-file scans | Files are streamed, never held as a collection. Memory is per-folder records plus a compact sort index. |
 
@@ -157,18 +167,56 @@ and the commands) by delegating to the session through a weak subscription, so t
 Closing the shell during a scan asks, cancels through the session and waits until Core has closed every report file,
 as v1 did. Later gates add pages (C8) and the Library services (C4, C5) beside the session without moving the scan.
 
-## File identity (future design topic)
+## Volume and source identity (v1.1 gate C3: evidence and matching, no persistence)
+
+A saved scan will belong to a **source**: a volume plus the root's exact location inside it (`\` for a whole volume,
+`\Media\Music` for a folder; a network share by its canonical `\\server\share` plus the path inside it). Drive letters and
+mount points are never identity. C3 builds the identity machinery and nothing that stores it: there is no database, no
+Library and no UI; the capture gate (C5) will wire it in.
+
+| Part | Where | What it does |
+|---|---|---|
+| **Evidence** | `Core/Identity/` (internal) | One reading of a source root: a zero-access directory handle opened on **the path the scanner enumerates** (v1's normalised path as entered, never the canonical path read back from it), then the identity items through that handle: the canonical path (`GetFinalPathNameByHandleW`), filesystem name, 32-bit serial, label and flags (`GetVolumeInformationByHandleW`), the 64-bit serial and the root directory's 128-bit file ID (`GetFileInformationByHandleEx`, class `FileIdInfo` only), and, by path, the mount point (`GetVolumePathNameW`) and capacity and free space (`GetDiskFreeSpaceExW`). Every item is *available*, *unavailable*, *call failed* or *not provided by the source type*, and keeps the Win32 error, so nothing is invented when a call fails |
+| **Held handle** | `Core/Identity/RootIdentityHold` | Opens the enumerated path and reads **E1**, then holds the handle for the whole observation window; at the end reads **E2** through that same handle and **E3** through a fresh open of the enumerated path, and closes the handle. E0 is the preflight reading |
+| **Rules** | `History/Identity/` (new, package-free, internal) | Confidence (Strong, Moderate, PathOnly) keyed by filesystem name and source kind; the minimum re-verification evidence (without which a source cannot be saved); the E0 = E1 = E2 = E3 check over the identity items; the matching algorithm with its identity prompt (clones, label and capacity corroboration, case-variant roots suggested but never merged) over an in-memory candidate store |
+
+What each reading can and cannot tell:
+
+- **SUBST, mapped and re-pointed letters.** Opening the enumerated path resolves the letter exactly as the scanner's own
+  listings do. The held handle keeps reporting the object the window began with; the fresh open reports where the letter
+  leads now. A letter re-pointed during the scan and still re-pointed at the end is caught by E3. A letter re-pointed
+  **away and back** while the original volume stays mounted cannot be detected from start and end evidence (limitation L-ID2).
+- **Renamed, moved or deleted source folder.** The held handle follows the object, so E2 reports its new canonical path
+  (a deleted directory reports a `$Deleted` name), and the original path stops opening, so E3 fails.
+- **Clones.** A disk clone copies the volume serial and nothing StorageInventory reads tells it from its original. Two
+  volumes mounted together with the same identity are asked about; a clone that is never mounted beside its original is
+  treated as the same source (limitation L-ID1), and the interface will say so.
+- **Network sources** are recognised by their canonical location only. A Windows SMB server returns the underlying volume's
+  filesystem name and serials, so a share can look Strong on evidence alone; it never is, because confidence also needs a
+  local source. Different spellings of a server (`\\nas`, `\\nas.local`, an address) are different sources: no name is resolved.
+
+## File identity
 
 In v1 a file is identified within a scan by its **root-relative path**. That is enough for reports, but not for
-detecting moves or renames between scans. The topics to research for 1.1 are:
+detecting moves or renames between scans. Per-file identifiers are **not collected in v1.1** (move and rename
+detection is deferred, FID-01), because they cannot be relied on across filesystems:
 
-- **Volume identity:** a stable volume serial or ID, not the drive letter (`D:` may become `E:`).
-- **NTFS file IDs** (FRN / 128-bit file ID): stable across renames within a volume, and readable from metadata. They
-  can change after defragmentation of some file systems or on copy.
-- Path + size + timestamps as a heuristic when IDs are unavailable (FAT/exFAT, network shares).
+- **NTFS** file IDs stay the same until the file is deleted: they survive renames and moves within the volume
+  (Microsoft: "a file keeps the same file ID until it is deleted"). They are not guaranteed unique over time, because a
+  filesystem may reuse them, and a copy or a restore from backup is a new file with a new ID.
+- **FAT** file IDs are generated from the first cluster of the containing directory and the byte offset of the entry in
+  it, so they can change after defragmentation by third-party tools, or when a rename needs a longer directory entry.
+- **ReFS** has 128-bit identifiers; the 64-bit form is not guaranteed to be unique there.
+- **Network (SMB)** IDs come from the server's filesystem or are synthesised: there is no portable guarantee.
 
-Constraints that remain: **no content reads and no hashing** in StorageInventory, and nothing invasive (no USN journal
-or file watchers) unless snapshot performance proves it necessary.
+The only file ID v1.1 records is the **root directory's**, and only as information. For a whole-volume source it is not
+volume identity: on NTFS the root directory is MFT record 5 on every volume (C3 measured the identical value on every
+NTFS volume it read). For a subfolder source it lets a later comparison say "the source folder was recreated since the
+older snapshot".
+
+Path + size + timestamps remain the comparison basis where IDs are unavailable (FAT/exFAT, network shares). Constraints
+that remain: **no content reads and no hashing** in StorageInventory, and nothing invasive (no USN journal or file
+watchers) unless snapshot performance proves it necessary.
 
 ## Safety contract (applies to every layer)
 
