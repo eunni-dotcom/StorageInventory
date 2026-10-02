@@ -96,8 +96,9 @@ or version that is not in the lock file fails with NU1004, and `nuget.config` so
 A change to a package version is a reviewed change to a lock file.
 
 **Reproducibility (Q-08, TEST-R1).** Three independent publishes gave the same SHA-256 above: two fresh clones of the C4 commit
-(each with an empty package cache, the SDK shared by junction) and the development tree. The hosted-runner build is recorded in
-[v1.1-c4-implementation-evidence.md](v1.1-c4-implementation-evidence.md).
+(each with an empty package cache, the SDK shared by junction) and the development tree. The hosted `windows-2025` runner's locked
+publish (temporary evidence workflow, run 37006608313) gave the same 133,620,553 bytes and SHA-256, and passed the native file set check.
+Details: [v1.1-c4-implementation-evidence.md](v1.1-c4-implementation-evidence.md).
 
 ## Smoke test
 

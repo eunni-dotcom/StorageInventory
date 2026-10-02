@@ -35,8 +35,29 @@ log of the same run is the source of the phase timings quoted here).
 - **Deletion (T-DELETE) of a 2M snapshot:** 2.4 to 2.6 s, peak journal about 128 MB (deleting journals the pages it frees; this is
   expected, not covered by PERF-15). Separate read-only verification of a committed 2M snapshot: 7.7 s to 9.7 s.
 - **Q-17 (engine level):** a 2M import against a database capped at 80 MiB failed with `LibraryFull` (code 201) after 3.56 s,
-  rolled back completely, size unchanged (37.8 MB), the three earlier snapshots intact. A real full volume was **not run** (needs
-  administrator rights to create and fill a VHD; only possible on a hosted runner).
+  rolled back completely, size unchanged (37.8 MB), the three earlier snapshots intact. The real thing is in the next section.
+
+## Hosted Windows runner (windows-2025), two runs of the evidence workflow
+
+Same exe, same synthetic data, run on GitHub's hosted runner by a temporary workflow that is not part of the C4 branch
+(runs [37005996727](https://github.com/eunni-dotcom/StorageInventory/actions/runs/37005996727) and
+[37006608313](https://github.com/eunni-dotcom/StorageInventory/actions/runs/37006608313); the second one is the full green run).
+
+| Run | 1M (rows/s) | 2M (rows/s) | 10M (rows/s) | Deletion of the 2M snapshot | Verification of the 2M snapshot |
+|---|---:|---:|---:|---:|---:|
+| 37005996727 | 190,211 | 212,315 | 180,380 | 3.86 s | 3.2 s |
+| 37006608313 | 123,367 | 138,410 | 149,020 | 3.30 s | 5.0 s |
+
+PERF-01 (>= 100,000 rows/s) is met in all six hosted runs, PERF-14's engine share (2M saved in 9.4 s and 14.4 s, limit 60 s) and PERF-15
+(journal 0.19 MB) in both. Hosted runners differ from one run to the next by about 1.5x, as the table shows. Q-07 on the hosted runner
+(run 37005996727, three paired rounds of 2M): 8.89/9.61/9.83 s without foreign keys and 11.08/11.23/13.88 s with them, +25%, +17% and +41%:
+the same direction and a similar size as on the workstation, so the decision stands.
+
+**SQLITE_FULL on a really full volume (Q-17), run 37006608313.** A 200 MB fixed VHDX formatted NTFS (diskpart on the elevated runner)
+held the Library (37.8 MB after the prefill); a 2M import filled it. The engine reported disk full, the Library classified it as
+`LibraryFull` (201), and the import rolled back in 7.07 s: the database file was 37.8 MB again when measured through a handle, the
+three older snapshots verified (invariants 1 to 12) and the Library re-opened as Available. (In run 37005996727 the same test printed
+186.6 MB after the failure; that was a stale NTFS directory listing, not the file, and the benchmark now asks the file through a handle.)
 
 ## Q-07: cost of declaring observation foreign keys
 
