@@ -32,6 +32,10 @@ internal sealed class LibraryFaultInjection
     /// limit, so the engine itself fails with <c>SQLITE_FULL</c>. The only fixed-size value; there is no way to pass a number to SQL.</summary>
     internal bool LimitDatabaseToTwoThousandPages { get; init; }
 
+    /// <summary>Pretends the pinned engine is something else, so that the "unexpected SQLite engine" state can be forced
+    /// deterministically (the real engine is the one shipped and cannot be swapped in a test).</summary>
+    internal (string Version, string SourceId)? ExpectedEngine { get; init; }
+
     /// <summary>Called right after <c>BEGIN IMMEDIATE</c> succeeded.</summary>
     internal Action? AfterBegin { get; init; }
 
@@ -81,7 +85,7 @@ internal static class LibraryDatabase
         try
         {
             connection.Open();
-            AssertEngine(connection);
+            AssertEngine(connection, faults);
             writer.Configure(importCache);
             return writer;
         }
@@ -96,7 +100,7 @@ internal static class LibraryDatabase
 
     /// <summary>Opens a read-only connection. It never recovers a hot journal (it fails with <c>SQLITE_READONLY_ROLLBACK</c>) and
     /// writes nothing. Needs no lease (OBS-03, A-25 part d).</summary>
-    internal static ReaderConnection OpenReader(string mainFile)
+    internal static ReaderConnection OpenReader(string mainFile, LibraryFaultInjection? faults = null)
     {
         EnsureProvider();
         var builder = new SqliteConnectionStringBuilder { DataSource = mainFile, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
@@ -104,7 +108,7 @@ internal static class LibraryDatabase
         try
         {
             connection.Open();
-            AssertEngine(connection);
+            AssertEngine(connection, faults);
             var reader = new ReaderConnection(connection);
             reader.Configure();
             return reader;
@@ -118,19 +122,34 @@ internal static class LibraryDatabase
 
     // ---- shared ----
 
+    /// <summary>The same assertion without a connection (<c>sqlite3_libversion</c> and <c>sqlite3_sourceid</c>), so that it can run
+    /// before the first file of a new Library is created: an unexpected engine must leave nothing written (BLD-15, §5.6).</summary>
+    internal static void AssertEngineLoaded(LibraryFaultInjection? faults = null)
+    {
+        EnsureProvider();
+        var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
+        var version = raw.sqlite3_libversion().utf8_to_string();
+        var sourceId = raw.sqlite3_sourceid().utf8_to_string();
+        if (version != expectedVersion || sourceId != expectedSourceId)
+        {
+            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
+        }
+    }
+
     /// <summary>The first statement of every connection (reads no database page): <c>sqlite_version()</c> and
     /// <c>sqlite_source_id()</c> must equal the pinned values, exactly (BLD-15). Not a lower bound.</summary>
-    internal static void AssertEngine(SqliteConnection connection)
+    internal static void AssertEngine(SqliteConnection connection, LibraryFaultInjection? faults = null)
     {
+        var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
         using var command = connection.CreateCommand();
         command.CommandText = OpenSql.SelectEngine;
         using var result = command.ExecuteReader();
         if (!result.Read()) throw new UnexpectedEngineException("The SQLite engine did not report its version.");
         var version = result.GetString(0);
         var sourceId = result.GetString(1);
-        if (version != LibraryNames.PinnedSqliteVersion || sourceId != LibraryNames.PinnedSqliteSourceId)
+        if (version != expectedVersion || sourceId != expectedSourceId)
         {
-            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {LibraryNames.PinnedSqliteVersion} ({LibraryNames.PinnedSqliteSourceId}).");
+            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
         }
     }
 

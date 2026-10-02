@@ -161,6 +161,8 @@ internal sealed class LibrarySession
         LibraryStatus result;
         try
         {
+            // BLD-15: the exact engine, before anything is touched, so an unexpected engine leaves nothing written (not even the lock).
+            LibraryDatabase.AssertEngineLoaded(_faults);
             result = DeriveCore(lease, mode);
         }
         catch (Exception ex) when (LibraryInterlock.IsClassC(ex))
@@ -373,9 +375,12 @@ internal sealed class LibrarySession
             writer.Commit(lease);
             return true;
         }
-        catch (SqliteException)
+        catch (SqliteException ex)
         {
             RollBackQuietly(writer, lease);
+            // A failure to WRITE (a full disk, a busy file) leaves the Library usable with recovery pending; corruption met here is
+            // damage, and is classified by the caller.
+            if (LibraryDatabase.Classify(ex) == DatabaseFailure.Corrupt) throw;
             return false;
         }
     }
@@ -395,7 +400,7 @@ internal sealed class LibrarySession
     {
         try
         {
-            using var reader = LibraryDatabase.OpenReader(Store.MainPath);
+            using var reader = LibraryDatabase.OpenReader(Store.MainPath, _faults);
             var check = reader.QuickCheck();
             return check == "ok"
                 ? Fail(LibraryReason.IoError, "SQLite reported corruption but quick_check passed: " + original.Message)
@@ -567,6 +572,7 @@ internal sealed class LibrarySession
 
     private static void Delete(WriterConnection writer, MutationLease lease, string sql, long snapshotId, bool expectOne, string what, CancellationToken cancellation)
     {
+        cancellation.ThrowIfCancellationRequested();
         using var statement = writer.Prepare(lease, sql, "$snapshot_id");
         var changed = statement.Set(0, snapshotId).ExecuteNonQuery(lease, cancellation);
         if (expectOne && changed != 1) throw new DeleteException($"Could not {what}: {changed} rows changed.");
@@ -594,7 +600,7 @@ internal sealed class LibrarySession
         ReaderConnection? reader = null;
         try
         {
-            reader = LibraryDatabase.OpenReader(Store.MainPath);
+            reader = LibraryDatabase.OpenReader(Store.MainPath, _faults);
             reader.Token = ticket.Token;
             return read(reader);
         }

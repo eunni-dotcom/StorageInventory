@@ -121,7 +121,8 @@ internal static class SnapshotImporter
         InsertExtensionTotals(writer, lease, snapshotId, extensions);
         options?.AfterRows?.Invoke();
 
-        // IMP-05: verification inside the transaction, before the final statements.
+        // IMP-05: verification inside the transaction, before the final statements. Cancelling here rolls everything back (CAN-01d).
+        cancellation.ThrowIfCancellationRequested();
         VerifyCounts(header, counts);
         var failure = SnapshotVerifier.Verify(new WriterQueryRunner(writer, lease), snapshotId, sourceId, header.Files, header.Bytes, header.Folders, header.ScanErrors,
             header.Completion == ScanCompletionState.Complete);

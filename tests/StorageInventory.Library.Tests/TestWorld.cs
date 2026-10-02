@@ -82,12 +82,14 @@ internal sealed class World
     /// <summary>The names of the files in the Library directory, sorted (names only: sizes and times can lag).</summary>
     internal List<string> Names() => !Directory.Exists(LibraryDirectory) ? [] : [.. Directory.EnumerateFileSystemEntries(LibraryDirectory).Select(p => Path.GetFileName(p)).Order(StringComparer.Ordinal)];
 
-    /// <summary>SHA-256 of every member's CONTENTS, read through a handle that shares everything, keyed by name.</summary>
+    /// <summary>SHA-256 of every member's CONTENTS, read through a handle that shares everything, keyed by name. The lock file is
+    /// held with <c>FileShare.None</c> by its owner and is never written, so it is represented by its length (0) instead.</summary>
     internal Dictionary<string, string> ContentHashes()
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var name in Names())
         {
+            if (name == LibraryNames.LockFile) { hashes[name] = "length=" + new FileInfo(Member(name)).Length; continue; }
             using var stream = new FileStream(Member(name), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             hashes[name] = Convert.ToHexString(SHA256.HashData(stream));
         }
