@@ -18,7 +18,7 @@ body:
     attributes:
       label: StorageInventory version
       description: Right-click StorageInventory.exe > Properties > Details > Product version.
-      placeholder: 1.0.0
+      placeholder: 1.0.1
     validations:
       required: true
   - type: input
