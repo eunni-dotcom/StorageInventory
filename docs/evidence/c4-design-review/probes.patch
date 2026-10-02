@@ -1,0 +1,358 @@
+diff --git a/src/StorageInventory.Library/DrProbe.cs b/src/StorageInventory.Library/DrProbe.cs
+new file mode 100644
+index 0000000..0640f9f
+--- /dev/null
++++ b/src/StorageInventory.Library/DrProbe.cs
+@@ -0,0 +1,57 @@
++﻿using System.Globalization;
++
++namespace StorageInventory.Library;
++
++/// <summary>C4 DESIGN REVIEW PROBES ONLY (scratch build, never committed to src): environment-gated variants of the import.</summary>
++internal static class DrProbe
++{
++    internal static readonly bool PerSource = Environment.GetEnvironmentVariable("SI_DR_PERSOURCE") == "1";
++    internal static readonly bool Presort = Environment.GetEnvironmentVariable("SI_DR_PRESORT") == "1";
++    internal static readonly bool PresortChunk = Environment.GetEnvironmentVariable("SI_DR_PRESORT") == "chunk";
++    internal const int ChunkFiles = 262_144;
++    internal static int Chunks;
++    internal static readonly int CacheKib = int.TryParse(Environment.GetEnvironmentVariable("SI_DR_CACHE_KIB"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var k) ? k : 0;
++    internal static readonly int BatchRows = int.TryParse(Environment.GetEnvironmentVariable("SI_DR_BATCH_ROWS"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var b) ? b : 0;
++    internal static readonly int BatchFailAfter = int.TryParse(Environment.GetEnvironmentVariable("SI_DR_BATCH_FAIL_AFTER"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var f) ? f : 0;
++    internal static string? JournalPath;
++    internal static int Batches;
++    internal static long JournalBytesTotal;
++    internal static long JournalMaxAtCommit;
++    internal static long PresortNames;
++    internal static double PresortSeconds;
++
++    internal static long JournalNow()
++    {
++        if (JournalPath is null) return 0;
++        try
++        {
++            using var fs = new FileStream(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
++            return fs.Length;
++        }
++        catch (IOException) { return 0; }
++    }
++
++    internal static void SampleBeforeCommit()
++    {
++        var j = JournalNow();
++        JournalBytesTotal += j;
++        if (j > JournalMaxAtCommit) JournalMaxAtCommit = j;
++    }
++
++    internal static void EndBatch(WriterConnection writer, MutationLease lease)
++    {
++        SampleBeforeCommit();
++        writer.Commit(lease);
++        Batches++;
++        if (BatchFailAfter > 0 && Batches >= BatchFailAfter) throw new ImportException(CaptureFailureKind.LibraryIoError, $"probe: planted failure after {Batches} committed batches");
++        writer.Begin(lease);
++    }
++
++    internal static void Report()
++    {
++        var path = Environment.GetEnvironmentVariable("SI_DR_PROBE_REPORT");
++        if (path is null) return;
++        File.WriteAllText(path, string.Create(CultureInfo.InvariantCulture,
++            $"batches={Batches} journal_bytes_written_total={JournalBytesTotal} journal_max_at_a_commit={JournalMaxAtCommit} presort_names={PresortNames} presort_seconds={PresortSeconds:0.00} chunks={Chunks}"));
++    }
++}
+diff --git a/src/StorageInventory.Library/Import/SnapshotImporter.cs b/src/StorageInventory.Library/Import/SnapshotImporter.cs
+index 492b460..4fc3343 100644
+--- a/src/StorageInventory.Library/Import/SnapshotImporter.cs
++++ b/src/StorageInventory.Library/Import/SnapshotImporter.cs
+@@ -35,12 +35,15 @@ internal static class SnapshotImporter
+             if (info.Exists && info.Length > peakJournal) peakJournal = info.Length;
+         }
+ 
++        DrProbe.JournalPath = journalPath;
+         try
+         {
+             writer.Begin(lease);
+             var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, SampleJournal, cancellation, stopwatch);
+             var commitStart = Stopwatch.GetTimestamp();
++            DrProbe.SampleBeforeCommit();
+             writer.Commit(lease);
++            DrProbe.Report();
+             var commit = Stopwatch.GetElapsedTime(commitStart);
+             SampleJournal();
+             return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = peakJournal, Phases = result.Phases! with { Commit = commit } };
+@@ -48,6 +51,7 @@ internal static class SnapshotImporter
+         catch (Exception ex)
+         {
+             RollBackQuietly(writer, lease);
++            DrProbe.Report();
+             throw Translate(ex, lease);
+         }
+     }
+@@ -105,7 +109,7 @@ internal static class SnapshotImporter
+         }
+         InsertSnapshotRow(writer, lease, snapshotId, sourceId, attempt, header);
+ 
+-        using var names = new NameCache(writer, lease);
++        using var names = new NameCache(writer, lease, sourceId);
+         var counts = new Counters();
+ 
+         // IMP-03 step 3: folders in ascending discovery index, parents first, interning folder paths.
+@@ -119,7 +123,21 @@ internal static class SnapshotImporter
+         // IMP-03 step 4: files, visiting folders in path-id order and inserting each run in name-id order.
+         phase = Stopwatch.GetTimestamp();
+         var extensions = new ExtensionTotals();
+-        InsertFiles(writer, lease, rows, snapshotId, names, pathIds, extensions, counts, options, sampleJournal, cancellation);
++        Dictionary<byte[], long>? presorted = null;
++        if (DrProbe.Presort)
++        {
++            // probe: intern the snapshot's distinct file names in key order first (one ordered sweep of the name index)
++            var presortWatch = Stopwatch.StartNew();
++            var distinct = new HashSet<byte[]>(ByteArrayComparer.Instance);
++            for (var i = 0; i < folderCount; i++) foreach (var f in rows.FilesOfFolder(i)) distinct.Add(f.Name);
++            var ordered = distinct.ToArray();
++            Array.Sort(ordered, (a, b) => a.AsSpan().SequenceCompareTo(b));
++            presorted = new Dictionary<byte[], long>(ordered.Length, ByteArrayComparer.Instance);
++            foreach (var n in ordered) presorted[n] = names.Intern(n);
++            DrProbe.PresortNames = ordered.Length;
++            DrProbe.PresortSeconds = presortWatch.Elapsed.TotalSeconds;
++        }
++        InsertFiles(writer, lease, rows, snapshotId, names, pathIds, extensions, counts, options, sampleJournal, cancellation, presorted);
+         var filesTime = Stopwatch.GetElapsedTime(phase);
+ 
+         // IMP-03 step 5: error records. Step 6: the extension totals.
+@@ -261,7 +279,7 @@ internal static class SnapshotImporter
+     }
+ 
+     private static void InsertFiles(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, NameCache names, long[] pathIds,
+-        ExtensionTotals extensions, Counters counts, ImportOptions? options, Action sampleJournal, CancellationToken cancellation)
++        ExtensionTotals extensions, Counters counts, ImportOptions? options, Action sampleJournal, CancellationToken cancellation, Dictionary<byte[], long>? presorted = null)
+     {
+         var order = new int[pathIds.Length];
+         for (var i = 0; i < order.Length; i++) order[i] = i;
+@@ -300,6 +318,69 @@ internal static class SnapshotImporter
+             pendingCount = 0;
+         }
+ 
++        if (DrProbe.PresortChunk)
++        {
++            // probe: chunked key-ordered interning. Folders are still visited in path-id order; for each chunk of about
++            // 262,144 files, the chunk's distinct names are interned in byte order (one ordered sweep of the dictionary
++            // range they fall in), then its rows are inserted exactly as before. Memory is bounded by the chunk.
++            var position = 0;
++            while (position < order.Length)
++            {
++                var chunk = new List<(int Folder, IReadOnlyList<ImportFile> Files)>();
++                long inChunk = 0;
++                while (position < order.Length && inChunk < DrProbe.ChunkFiles)
++                {
++                    var fi = order[position++];
++                    var fl = rows.FilesOfFolder(fi);
++                    if (fl.Count == 0) continue;
++                    chunk.Add((fi, fl));
++                    inChunk += fl.Count;
++                }
++                var watch = Stopwatch.StartNew();
++                var distinct = new HashSet<byte[]>(ByteArrayComparer.Instance);
++                foreach (var (_, fl) in chunk) foreach (var f in fl) distinct.Add(f.Name);
++                var ordered = distinct.ToArray();
++                Array.Sort(ordered, (a, b) => a.AsSpan().SequenceCompareTo(b));
++                var map = new Dictionary<byte[], long>(ordered.Length, ByteArrayComparer.Instance);
++                foreach (var n in ordered) map[n] = names.Intern(n);
++                DrProbe.PresortNames += ordered.Length;
++                DrProbe.PresortSeconds += watch.Elapsed.TotalSeconds;
++                DrProbe.Chunks++;
++                foreach (var (fi, files) in chunk) InsertFolderFiles(fi, files, map);
++            }
++            Flush();
++            return;
++        }
++
++        void InsertFolderFiles(int folderIndex, IReadOnlyList<ImportFile> files, Dictionary<byte[], long>? map)
++        {
++            var pathId = pathIds[folderIndex];
++            var ids = new long[files.Count];
++            var sorted = new int[files.Count];
++            for (var i = 0; i < files.Count; i++)
++            {
++                ids[i] = map is not null && map.TryGetValue(files[i].Name, out var known) ? known : names.Intern(files[i].Name);
++                sorted[i] = i;
++            }
++            Array.Sort(ids, sorted);
++            for (var k = 0; k < sorted.Length; k++)
++            {
++                var file = files[sorted[k]];
++                pending[pendingCount++] = (pathId, ids[k], file);
++                extensions.Add(file.Name, file.Size);
++                counts.Files++;
++                if (pendingCount == BatchRows) Flush();
++                if (counts.Files >= nextCheck)
++                {
++                    nextCheck += CheckInterval;
++                    writer.CheckCurrent(lease);
++                    cancellation.ThrowIfCancellationRequested();
++                    sampleJournal();
++                    options?.OnFileRows?.Invoke(counts.Files);
++                }
++            }
++        }
++
+         foreach (var folderIndex in order)
+         {
+             var files = rows.FilesOfFolder(folderIndex);
+@@ -309,7 +390,7 @@ internal static class SnapshotImporter
+             var sorted = new int[files.Count];
+             for (var i = 0; i < files.Count; i++)
+             {
+-                ids[i] = names.Intern(files[i].Name);
++                ids[i] = presorted is not null && presorted.TryGetValue(files[i].Name, out var known) ? known : names.Intern(files[i].Name);
+                 sorted[i] = i;
+             }
+             Array.Sort(ids, sorted);
+@@ -320,6 +401,11 @@ internal static class SnapshotImporter
+                 extensions.Add(file.Name, file.Size);
+                 counts.Files++;
+                 if (pendingCount == BatchRows) Flush();
++                if (DrProbe.BatchRows > 0 && counts.Files % DrProbe.BatchRows == 0)
++                {
++                    Flush();
++                    DrProbe.EndBatch(writer, lease);
++                }
+                 if (counts.Files >= nextCheck)
+                 {
+                     nextCheck += CheckInterval;
+@@ -426,14 +512,28 @@ internal static class SnapshotImporter
+         private Dictionary<byte[], long> _young = new(ByteArrayComparer.Instance);
+         private Dictionary<byte[], long> _old = new(ByteArrayComparer.Instance);
+ 
+-        internal NameCache(WriterConnection writer, MutationLease lease)
++        private readonly long _sourceId;
++
++        internal NameCache(WriterConnection writer, MutationLease lease, long sourceId)
+         {
+             _lease = lease;
+-            _select = writer.Prepare(lease, ImportSql.SelectNameId, "$utf16");
+-            _insert = writer.Prepare(lease, ImportSql.InsertName, "$utf16");
+-            _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsent, "$utf16");
++            _sourceId = sourceId;
++            if (DrProbe.PerSource)
++            {
++                _select = writer.Prepare(lease, ImportSql.SelectNameIdPerSource, "$source_id", "$utf16");
++                _insert = writer.Prepare(lease, ImportSql.InsertNamePerSource, "$source_id", "$utf16");
++                _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsentPerSource, "$source_id", "$utf16");
++            }
++            else
++            {
++                _select = writer.Prepare(lease, ImportSql.SelectNameId, "$utf16");
++                _insert = writer.Prepare(lease, ImportSql.InsertName, "$utf16");
++                _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsent, "$utf16");
++            }
+         }
+ 
++        private WriterStatement Bind(WriterStatement statement, byte[] name) => DrProbe.PerSource ? statement.Set(0, _sourceId).Set(1, name) : statement.Set(0, name);
++
+         internal long NewNames { get; private set; }
+ 
+         internal long Intern(byte[] name)
+@@ -450,14 +550,14 @@ internal static class SnapshotImporter
+             bool isNew;
+             if (_newRate > 0.5)
+             {
+-                isNew = _insertIfAbsent.Set(0, name).ExecuteInsertIfAbsent(_lease, out id);
++                isNew = Bind(_insertIfAbsent, name).ExecuteInsertIfAbsent(_lease, out id);
+                 if (!isNew) id = LookUp(name);
+             }
+             else
+             {
+-                var found = _select.Set(0, name).ExecuteScalar(_lease);
++                var found = Bind(_select, name).ExecuteScalar(_lease);
+                 isNew = found is null;
+-                id = isNew ? _insert.Set(0, name).ExecuteInsert(_lease) : (long)found!;
++                id = isNew ? Bind(_insert, name).ExecuteInsert(_lease) : (long)found!;
+             }
+             if (isNew) NewNames++;
+             _newRate = _newRate * 0.995 + (isNew ? 0.005 : 0);
+@@ -466,7 +566,7 @@ internal static class SnapshotImporter
+         }
+ 
+         private long LookUp(byte[] name) =>
+-            (long?)_select.Set(0, name).ExecuteScalar(_lease) ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A name that conflicted on insert could not be found.");
++            (long?)Bind(_select, name).ExecuteScalar(_lease) ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A name that conflicted on insert could not be found.");
+ 
+         private void Remember(byte[] name, long id)
+         {
+diff --git a/src/StorageInventory.Library/LibraryDatabase.cs b/src/StorageInventory.Library/LibraryDatabase.cs
+index e0421d5..a5992d1 100644
+--- a/src/StorageInventory.Library/LibraryDatabase.cs
++++ b/src/StorageInventory.Library/LibraryDatabase.cs
+@@ -217,6 +217,12 @@ internal sealed class WriterConnection : IDisposable
+         SetAndReadBack(_connection, OpenSql.SetForeignKeys, OpenSql.GetForeignKeys, "1", "foreign_keys");
+         SetAndReadBack(_connection, OpenSql.SetTrustedSchema, OpenSql.GetTrustedSchema, "0", "trusted_schema");
+         if (importCache) SetAndReadBack(_connection, OpenSql.SetImportCacheSize, OpenSql.GetCacheSize, "-65536", "cache_size");
++        if (importCache && DrProbe.CacheKib > 0)
++        {
++            using var probe = _connection.CreateCommand();
++            probe.CommandText = "PRAGMA cache_size = -" + DrProbe.CacheKib.ToString(System.Globalization.CultureInfo.InvariantCulture);
++            probe.ExecuteNonQuery();
++        }
+         if (_faults?.LimitDatabaseToTwoThousandPages == true)
+         {
+             using var limit = _connection.CreateCommand();
+diff --git a/src/StorageInventory.Library/LibrarySchema.cs b/src/StorageInventory.Library/LibrarySchema.cs
+index 85604ca..14c1546 100644
+--- a/src/StorageInventory.Library/LibrarySchema.cs
++++ b/src/StorageInventory.Library/LibrarySchema.cs
+@@ -46,6 +46,7 @@ internal static class LibrarySchema
+     /// matches) whether a definition changed. Empty when the fingerprint matches.</summary>
+     internal static IReadOnlyList<string> Differences(IReadOnlyCollection<SchemaRow> rows)
+     {
++        if (DrProbe.PerSource) return [];
+         var found = rows.Select(r => $"{r.Type} {r.Name}").ToHashSet(StringComparer.Ordinal);
+         var differences = new List<string>();
+         differences.AddRange(found.Except(Schema1Objects).Order(StringComparer.Ordinal).Select(o => "unexpected " + o));
+diff --git a/src/StorageInventory.Library/Sql/ImportSql.cs b/src/StorageInventory.Library/Sql/ImportSql.cs
+index 1876327..74543e9 100644
+--- a/src/StorageInventory.Library/Sql/ImportSql.cs
++++ b/src/StorageInventory.Library/Sql/ImportSql.cs
+@@ -52,6 +52,12 @@ internal static class ImportSql
+     // ---- T-IMPORT: dictionaries (names are library-wide, folder paths per source) ----
+     internal const string SelectNameId = "SELECT name_id FROM name WHERE utf16 = $utf16";
+ 
++    internal const string SelectNameIdPerSource = "SELECT name_id FROM name WHERE source_id = $source_id AND utf16 = $utf16";
++
++    internal const string InsertNamePerSource = "INSERT INTO name (source_id, utf16) VALUES ($source_id, $utf16)";
++
++    internal const string InsertNameIfAbsentPerSource = "INSERT INTO name (source_id, utf16) VALUES ($source_id, $utf16) ON CONFLICT (source_id, utf16) DO NOTHING";
++
+     /// <summary>No <c>RETURNING</c>: the engine's ephemeral result table costs about 8 microseconds a statement (TEST-P1's micro
+     /// benchmark), so the new id is read with <c>sqlite3_last_insert_rowid</c> instead (<c>WriterStatement.ExecuteInsert</c>).</summary>
+     internal const string InsertName = "INSERT INTO name (utf16) VALUES ($utf16)";
+diff --git a/src/StorageInventory.Library/Sql/SchemaSql.cs b/src/StorageInventory.Library/Sql/SchemaSql.cs
+index c88b3e5..a712acb 100644
+--- a/src/StorageInventory.Library/Sql/SchemaSql.cs
++++ b/src/StorageInventory.Library/Sql/SchemaSql.cs
+@@ -128,6 +128,15 @@ internal static class SchemaSql
+         ) STRICT
+         """;
+ 
++    internal const string CreateNamePerSource = """
++        CREATE TABLE name (
++          name_id   INTEGER PRIMARY KEY,
++          source_id INTEGER NOT NULL REFERENCES source (source_id),
++          utf16     BLOB NOT NULL,
++          UNIQUE (source_id, utf16)
++        ) STRICT
++        """;
++
+     internal const string CreateFolderPath = """
+         CREATE TABLE folder_path (
+           path_id        INTEGER PRIMARY KEY,
+@@ -201,7 +210,7 @@ internal static class SchemaSql
+     internal static readonly string[] CreateAll =
+     [
+         CreateLibraryInfo, CreateVolume, CreateVolumeBySerial, CreateSource, CreateSourceLocalKey, CreateSourceNetworkKey,
+-        CreateScanAttempt, CreateScanAttemptBySource, CreateSnapshot, CreateSnapshotBySource, CreateName, CreateFolderPath,
++        CreateScanAttempt, CreateScanAttemptBySource, CreateSnapshot, CreateSnapshotBySource, DrProbe.PerSource ? CreateNamePerSource : CreateName, CreateFolderPath,
+         CreateFolderPathChild, CreateFolderPathRoot, CreateFolderObs, CreateFileObs, CreateScanError, CreateSnapshotExtensionTotal,
+     ];
+ 

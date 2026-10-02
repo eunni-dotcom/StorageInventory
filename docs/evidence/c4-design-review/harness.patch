@@ -1,0 +1,1266 @@
+diff --git a/tests/StorageInventory.Library.Tests/DesignReviewBench.cs b/tests/StorageInventory.Library.Tests/DesignReviewBench.cs
+new file mode 100644
+index 0000000..bf45214
+--- /dev/null
++++ b/tests/StorageInventory.Library.Tests/DesignReviewBench.cs
+@@ -0,0 +1,1248 @@
++using System.Buffers.Binary;
++using System.Diagnostics;
++using System.Globalization;
++using System.Runtime.InteropServices;
++using System.Text;
++using System.Text.Json;
++using StorageInventory.Core;
++using StorageInventory.Core.Identity;
++using StorageInventory.History.Identity;
++using StorageInventory.History.Library;
++
++namespace StorageInventory.Library.Tests;
++
++/// <summary>
++/// C4 design review (C4-B01 / C4-H02) reproduction harness. NOT part of the product or of the committed test suite: a scratch
++/// harness kept as a patch in docs/evidence/c4-design-review. It drives the unmodified production T-IMPORT (SnapshotImporter
++/// through LibrarySession.ImportSnapshotAsync) with several file-name distributions and Library sizes, samples the rollback journal
++/// through a live handle every 1 ms, records machine load, and can attribute every journalled page to the B-tree that owned it
++/// before the import (by walking a copy of the pre-import database file; the shipped engine has no dbstat).
++/// <para>Usage: StorageInventory.Library.Tests.exe --benchmark dr plan &lt;plan&gt; &lt;outDir&gt;</para>
++/// </summary>
++internal static class DesignReviewBench
++{
++    internal static int Run(string[] args)
++    {
++        return args switch
++        {
++            ["child", ..] => Child(args[1..]),
++            ["recover", var dir, var appData] => Recover(dir, appData),
++            ["prefill", ..] => Prefill(args[1..]),
++            ["harvest", var outFile] => Harvest(outFile),
++            ["plan", var plan, var outDir, ..] => Orchestrate(plan, outDir, args[3..]),
++            _ => Usage(),
++        };
++    }
++
++    private static int Usage()
++    {
++        Console.Error.WriteLine("usage: --benchmark dr plan <name> <outDir> | child ... | recover <dir> <appData> | prefill ... | harvest <file>");
++        return 2;
++    }
++
++    // ================================================================================================================ the plans
++
++    internal sealed record RunSpec(string Label, string Family, long Target, long Prefill, string TargetSource = "existing", double Churn = 0,
++        string Mode = "normal", bool Analyse = false, Dictionary<string, string>? Env = null, bool InProcessPrefill = false);
++
++    private static List<RunSpec> Plan(string name, int repeat)
++    {
++        var runs = new List<RunSpec>();
++        const long K = 1000;
++        var three = new (long T, long P)[] { (1_000 * K, 250 * K), (2_000 * K, 250 * K), (1_000 * K, 1_000 * K) };
++        switch (name)
++        {
++            case "smoke":
++                runs.Add(new("smoke append", "append", 200 * K, 50 * K));
++                runs.Add(new("smoke hash", "hash", 200 * K, 50 * K, Analyse: true));
++                runs.Add(new("smoke mixed", "mixed", 200 * K, 50 * K));
++                runs.Add(new("smoke rescan", "rescan", 50 * K, 50 * K, Churn: 0.01));
++                runs.Add(new("smoke cancel", "hash", 200 * K, 50 * K, Mode: "cancel"));
++                runs.Add(new("smoke crash", "hash", 200 * K, 50 * K, Mode: "crash"));
++                break;
++            case "repro":   // families 1 and 2 at the three required configurations, interleaved so slow drift hits every cell
++                for (var r = 1; r <= repeat; r++)
++                    foreach (var (t, p) in three)
++                        foreach (var fam in new[] { "append", "hash" })
++                            runs.Add(new($"{fam} {t / 1_000_000}M/{3 * p / 1000}k r{r}", fam, t, p));
++                break;
++            case "mixed":   // family 3: realistic mixtures
++                for (var r = 1; r <= repeat; r++)
++                    foreach (var (t, p) in three)
++                        foreach (var fam in new[] { "mixed", "real" })
++                            runs.Add(new($"{fam} {t / 1_000_000}M/{3 * p / 1000}k r{r}", fam, t, p));
++                break;
++            case "rescan":  // the periodic case: the same source again with a little churn
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"rescan 1% 1M/3000k r{r}", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01));
++                    runs.Add(new($"rescan 5% 1M/3000k r{r}", "rescan", 1_000 * K, 1_000 * K, Churn: 0.05));
++                    runs.Add(new($"rescan 1% 250k/750k r{r}", "rescan", 250 * K, 250 * K, Churn: 0.01));
++                }
++                break;
++            case "size":    // family 4: Library-size sensitivity at a fixed 1M target
++                for (var r = 1; r <= repeat; r++)
++                {
++                    foreach (var p in new long[] { 0, 100 * K, 250 * K, 500 * K, 1_000 * K, 2_000 * K })
++                        runs.Add(new($"hash 1M/{3 * p / 1000}k r{r}", "hash", 1_000 * K, p));
++                    runs.Add(new($"append 1M/6000k r{r}", "append", 1_000 * K, 2_000 * K));
++                    runs.Add(new($"hash 2M/3000k r{r}", "hash", 2_000 * K, 1_000 * K));
++                }
++                break;
++            case "newsource":   // the same interleaved names, but the target is the first snapshot of a NEW source
++                for (var r = 1; r <= repeat; r++)
++                    foreach (var (t, p) in three)
++                        runs.Add(new($"hash new-source {t / 1_000_000}M/{3 * p / 1000}k r{r}", "hash", t, p, TargetSource: "new"));
++                break;
++            case "big":
++                runs.Add(new("append 10M/750k", "append", 10_000 * K, 250 * K));
++                runs.Add(new("hash 10M/750k", "hash", 10_000 * K, 250 * K));
++                break;
++            case "analyse":   // journal composition (one run each; the journal copy perturbs timing, so these are not timed results)
++                runs.Add(new("analyse append 1M/3000k", "append", 1_000 * K, 1_000 * K, Analyse: true));
++                runs.Add(new("analyse hash 1M/750k", "hash", 1_000 * K, 250 * K, Analyse: true));
++                runs.Add(new("analyse hash 2M/750k", "hash", 2_000 * K, 250 * K, Analyse: true));
++                runs.Add(new("analyse hash 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true));
++                runs.Add(new("analyse hash new-source 1M/3000k", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Analyse: true));
++                runs.Add(new("analyse mixed 1M/3000k", "mixed", 1_000 * K, 1_000 * K, Analyse: true));
++                runs.Add(new("analyse real 1M/3000k", "real", 1_000 * K, 1_000 * K, Analyse: true));
++                runs.Add(new("analyse rescan 1% 1M/3000k", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01, Analyse: true));
++                break;
++            case "rollback":   // cancellation at the journal's peak and a crash there (then the next open's recovery)
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"cancel append 1M/3000k r{r}", "append", 1_000 * K, 1_000 * K, Mode: "cancel"));
++                    runs.Add(new($"cancel hash 1M/750k r{r}", "hash", 1_000 * K, 250 * K, Mode: "cancel"));
++                    runs.Add(new($"cancel hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Mode: "cancel"));
++                    runs.Add(new($"cancel hash 2M/6000k r{r}", "hash", 2_000 * K, 2_000 * K, Mode: "cancel"));
++                    runs.Add(new($"crash hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Mode: "crash"));
++                    runs.Add(new($"crash append 1M/3000k r{r}", "append", 1_000 * K, 1_000 * K, Mode: "crash"));
++                }
++                break;
++            case "extra":   // the worst-case cell with C4's mechanics: 2M into three 2M snapshots, normal and killed
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"hash 2M/6000k r{r}", "hash", 2_000 * K, 2_000 * K));
++                    runs.Add(new($"mixed 2M/6000k r{r}", "mixed", 2_000 * K, 2_000 * K));
++                }
++                runs.Add(new("crash hash 2M/6000k", "hash", 2_000 * K, 2_000 * K, Mode: "crash"));
++                break;
++            case "realrescan":   // the periodic save of a source with a real vocabulary (C4's mechanics)
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"rescanreal 1% 1M/3000k r{r}", "rescanreal", 1_000 * K, 1_000 * K, Churn: 0.01));
++                    runs.Add(new($"rescanreal 1% 2M/6000k r{r}", "rescanreal", 2_000 * K, 2_000 * K, Churn: 0.01));
++                    runs.Add(new($"real new-source 2M/6000k r{r}", "real", 2_000 * K, 2_000 * K, TargetSource: "new"));
++                }
++                break;
++            case "prefillcheck":   // the cached-prefill method against the in-process prefill of the original benchmark
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"hash 1M/750k cached r{r}", "hash", 1_000 * K, 250 * K));
++                    runs.Add(new($"hash 1M/750k in-process r{r}", "hash", 1_000 * K, 250 * K, InProcessPrefill: true));
++                }
++                break;
++            default:
++                if (name.StartsWith("probe:", StringComparison.Ordinal)) return ProbePlan(name[6..], repeat);
++                throw new ArgumentException("unknown plan " + name);
++        }
++        return runs;
++    }
++
++    /// <summary>Design probes (need the probe build, whose SnapshotImporter reads SI_DR_* variables).</summary>
++    private static List<RunSpec> ProbePlan(string name, int repeat)
++    {
++        var runs = new List<RunSpec>();
++        const long K = 1000;
++        Dictionary<string, string> E(params string[] kv) { var d = new Dictionary<string, string>(); for (var i = 0; i < kv.Length; i += 2) d[kv[i]] = kv[i + 1]; return d; }
++        for (var r = 1; r <= repeat; r++)
++        {
++            switch (name)
++            {
++                case "cache":
++                    runs.Add(new($"cache 256MiB hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_CACHE_KIB", "262144")));
++                    runs.Add(new($"cache 16MiB hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_CACHE_KIB", "16384")));
++                    break;
++                case "presort":
++                    runs.Add(new($"presort hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_PRESORT", "1")));
++                    runs.Add(new($"presort hash 2M/750k r{r}", "hash", 2_000 * K, 250 * K, Env: E("SI_DR_PRESORT", "1")));
++                    runs.Add(new($"presort append 1M/3000k r{r}", "append", 1_000 * K, 1_000 * K, Env: E("SI_DR_PRESORT", "1")));
++                    break;
++                case "persource":
++                    runs.Add(new($"persource hash existing 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource hash new-source 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource rescan 1% 1M/3000k r{r}", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource real 1M/3000k r{r}", "real", 1_000 * K, 1_000 * K, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource real new-source 1M/3000k r{r}", "real", 1_000 * K, 1_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1")));
++                    break;
++                case "batch":
++                    runs.Add(new($"batched 131072 hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_BATCH_ROWS", "131072")));
++                    runs.Add(new($"batched 16384 hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_BATCH_ROWS", "16384")));
++                    runs.Add(new($"batched 131072 fails after 4 batches hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_BATCH_ROWS", "131072", "SI_DR_BATCH_FAIL_AFTER", "4")));
++                    break;
++                case "combined":   // per-source dictionary with chunked key-ordered interning (the candidate design)
++                    runs.Add(new($"persource+chunked hash existing 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked hash new-source 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked rescan 1% 1M/3000k r{r}", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked mixed existing 1M/3000k r{r}", "mixed", 1_000 * K, 1_000 * K, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked mixed new-source 1M/3000k r{r}", "mixed", 1_000 * K, 1_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked hash existing 2M/6000k r{r}", "hash", 2_000 * K, 2_000 * K, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"persource+chunked append existing 1M/3000k r{r}", "append", 1_000 * K, 1_000 * K, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    break;
++                case "persource-real":   // the per-source dictionary alone, on the realistic and the mixed cells
++                    runs.Add(new($"persource rescanreal 1% 1M/3000k r{r}", "rescanreal", 1_000 * K, 1_000 * K, Churn: 0.01, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource rescanreal 1% 2M/6000k r{r}", "rescanreal", 2_000 * K, 2_000 * K, Churn: 0.01, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource real new-source 2M/6000k r{r}", "real", 2_000 * K, 2_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource mixed new-source 1M/3000k r{r}", "mixed", 1_000 * K, 1_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource mixed existing 2M/6000k r{r}", "mixed", 2_000 * K, 2_000 * K, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource hash existing 2M/6000k r{r}", "hash", 2_000 * K, 2_000 * K, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"persource hash new-source 2M/6000k r{r}", "hash", 2_000 * K, 2_000 * K, TargetSource: "new", Env: E("SI_DR_PERSOURCE", "1")));
++                    break;
++                case "persource-analyse":
++                    runs.Add(new($"analyse persource hash new-source 1M/3000k", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Analyse: true, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"analyse persource hash existing 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"analyse persource rescanreal 1% 1M/3000k", "rescanreal", 1_000 * K, 1_000 * K, Churn: 0.01, Analyse: true, Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"cancel persource hash existing 2M/6000k", "hash", 2_000 * K, 2_000 * K, Mode: "cancel", Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"crash persource hash existing 2M/6000k", "hash", 2_000 * K, 2_000 * K, Mode: "crash", Env: E("SI_DR_PERSOURCE", "1")));
++                    runs.Add(new($"cancel persource rescanreal 1% 2M/6000k", "rescanreal", 2_000 * K, 2_000 * K, Churn: 0.01, Mode: "cancel", Env: E("SI_DR_PERSOURCE", "1")));
++                    break;
++                case "chunked":   // chunked key-ordered interning alone (global dictionary)
++                    runs.Add(new($"chunked hash 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: E("SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"chunked rescan 1% 1M/3000k r{r}", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01, Env: E("SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"chunked mixed 1M/3000k r{r}", "mixed", 1_000 * K, 1_000 * K, Env: E("SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"chunked append 1M/3000k r{r}", "append", 1_000 * K, 1_000 * K, Env: E("SI_DR_PRESORT", "chunk")));
++                    break;
++                case "combined-analyse":
++                    runs.Add(new($"analyse persource+chunked hash new-source 1M/3000k", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Analyse: true, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"analyse persource+chunked rescan 1% 1M/3000k", "rescan", 1_000 * K, 1_000 * K, Churn: 0.01, Analyse: true, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"analyse persource+chunked hash existing 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true, Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"cancel persource+chunked hash existing 2M/6000k", "hash", 2_000 * K, 2_000 * K, Mode: "cancel", Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    runs.Add(new($"crash persource+chunked hash existing 2M/6000k", "hash", 2_000 * K, 2_000 * K, Mode: "crash", Env: E("SI_DR_PERSOURCE", "1", "SI_DR_PRESORT", "chunk")));
++                    break;
++                case "cache-analyse":   // whether a smaller or larger page cache changes the number of journal syncs
++                    runs.Add(new($"analyse cache 16MiB hash 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true, Env: E("SI_DR_CACHE_KIB", "16384")));
++                    runs.Add(new($"analyse cache 256MiB hash 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true, Env: E("SI_DR_CACHE_KIB", "262144")));
++                    break;
++                default:
++                    throw new ArgumentException("unknown probe " + name);
++            }
++        }
++        return runs;
++    }
++
++    // ================================================================================================================ the parent
++
++    private static int Orchestrate(string plan, string outDir, string[] extra)
++    {
++        var repeat = extra.Length > 0 ? int.Parse(extra[0], CultureInfo.InvariantCulture) : 3;
++        Directory.CreateDirectory(outDir);
++        var runs = Plan(plan, repeat);
++        var jsonl = Path.Combine(outDir, $"{plan.Replace(':', '-')}.jsonl");
++        var log = Path.Combine(outDir, $"{plan.Replace(':', '-')}.log");
++        using var logWriter = new StreamWriter(log, append: true) { AutoFlush = true };
++        void Log(string line) { Console.WriteLine(line); logWriter.WriteLine(line); }
++        Log($"# plan {plan} x{repeat} started {DateTime.UtcNow:O}, {Environment.ProcessorCount} logical CPUs, exe {Environment.ProcessPath}; {TopProcesses()}");
++        var prefillRoot = Environment.GetEnvironmentVariable("SI_DR_PREFILL_CACHE") ?? Path.Combine(outDir, "prefill-cache");
++        foreach (var run in runs)
++        {
++            Log($"=== {run.Label}");
++            string? libraryCopy = null;
++            if (!run.InProcessPrefill && run.Prefill > 0)
++            {
++                libraryCopy = EnsurePrefill(prefillRoot, run, Log);
++                if (libraryCopy is null) return 1;
++            }
++            var args = new List<string> { "--benchmark", "dr", "child", "--label", run.Label, "--family", run.Family, "--target", run.Target.ToString(CultureInfo.InvariantCulture),
++                "--prefill", run.Prefill.ToString(CultureInfo.InvariantCulture), "--target-source", run.TargetSource, "--churn", run.Churn.ToString(CultureInfo.InvariantCulture),
++                "--mode", run.Mode, "--analyse", run.Analyse ? "1" : "0", "--analysis-dir", Path.Combine(outDir, "analysis") };
++            if (libraryCopy is not null) { args.Add("--prefill-from"); args.Add(libraryCopy); }
++            var report = Path.Combine(outDir, "probe-report.txt");
++            if (File.Exists(report)) File.Delete(report);
++            var env = new Dictionary<string, string>(run.Env ?? new Dictionary<string, string>()) { ["SI_DR_PROBE_REPORT"] = report };
++            var (code, json, lines) = RunChild(args, env);
++            foreach (var l in lines) Log("  " + l);
++            if ((code != 0 && run.Mode != "crash") || json is null)
++            {
++                Log($"FAILED ({code})");
++                File.AppendAllText(jsonl, JsonSerializer.Serialize(new { run.Label, failed = code }) + Environment.NewLine);
++                continue;
++            }
++            if (run.Mode == "crash")
++            {
++                using var doc = JsonDocument.Parse(json);
++                var dir = doc.RootElement.GetProperty("LibraryDirectory").GetString()!;
++                var appData = doc.RootElement.GetProperty("AppData").GetString()!;
++                var (rc, rjson, rlines) = RunChild(["--benchmark", "dr", "recover", dir, appData], run.Env);   // the same schema variant as the killed run
++                foreach (var l in rlines) Log("  " + l);
++                json = "{\"crash\":" + json + ",\"recover\":" + (rjson ?? "null") + "}";
++                try { Directory.Delete(Path.GetDirectoryName(appData)!, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
++                if (rc != 0) Log($"RECOVER FAILED ({rc})");
++            }
++            File.AppendAllText(jsonl, json + Environment.NewLine);
++            Log("  " + Summary(json));
++        }
++        Log($"# plan {plan} finished {DateTime.UtcNow:O}; {TopProcesses()}");
++        return 0;
++    }
++
++    /// <summary>The other processes' CPU use over three seconds (recorded with every plan: the machine is not assumed quiet).</summary>
++    internal static string TopProcesses()
++    {
++        static Dictionary<int, (string Name, TimeSpan Cpu)> Take()
++        {
++            var d = new Dictionary<int, (string, TimeSpan)>();
++            foreach (var p in Process.GetProcesses())
++            {
++                try { d[p.Id] = (p.ProcessName, p.TotalProcessorTime); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
++                finally { p.Dispose(); }
++            }
++            return d;
++        }
++        var a = Take();
++        Thread.Sleep(3000);
++        var b = Take();
++        var busy = b.Where(kv => a.ContainsKey(kv.Key)).Select(kv => (kv.Value.Name, Cores: (kv.Value.Cpu - a[kv.Key].Cpu).TotalSeconds / 3.0)).Where(x => x.Cores > 0.05)
++            .GroupBy(x => x.Name).Select(g => (Name: g.Key, Cores: g.Sum(x => x.Cores))).OrderByDescending(x => x.Cores).Take(8).ToList();
++        return "busy elsewhere (cores): " + string.Join(", ", busy.Select(x => $"{x.Name} {x.Cores:0.00}")) + $"; total {busy.Sum(x => x.Cores):0.00} of {Environment.ProcessorCount}";
++    }
++
++    private static string Summary(string json)
++    {
++        try
++        {
++            using var doc = JsonDocument.Parse(json);
++            var e = doc.RootElement;
++            if (e.TryGetProperty("crash", out var crash))
++            {
++                var rec = e.GetProperty("recover");
++                return $"crash: journal at kill {crash.GetProperty("JournalAtStopBytes").GetInt64() / 1048576.0:0.0} MB; next open {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("OpenSeconds").GetDouble().ToString("0.00", CultureInfo.InvariantCulture))} s, state {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("State").GetString())}";
++            }
++            return $"files/s {e.GetProperty("FilesPerSecond").GetDouble():N0}; insertion files/s {e.GetProperty("InsertionFilesPerSecond").GetDouble():N0}; peak journal {e.GetProperty("PeakJournalHandleBytes").GetInt64() / 1048576.0:0.0} MB (FileInfo {e.GetProperty("PeakJournalFileInfoBytes").GetInt64() / 1048576.0:0.0} MB); growth {e.GetProperty("GrowthBytes").GetInt64() / 1048576.0:0.0} MB; library before {e.GetProperty("LibraryBeforeBytes").GetInt64() / 1048576.0:0.0} MB; new names {e.GetProperty("NewNames").GetInt64():N0}; other load mean {e.GetProperty("OtherLoadMeanPercent").GetDouble():0.0}%";
++        }
++        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
++        {
++            return "(no summary: " + ex.Message + ")";
++        }
++    }
++
++    private static (int Code, string? Json, List<string> Lines) RunChild(IEnumerable<string> args, Dictionary<string, string>? env)
++    {
++        var info = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
++        foreach (var a in args) info.ArgumentList.Add(a);
++        if (env is not null) foreach (var (k, v) in env) info.Environment[k] = v;
++        using var process = Process.Start(info)!;
++        var stderr = process.StandardError.ReadToEndAsync();
++        string? json = null;
++        var lines = new List<string>();
++        while (process.StandardOutput.ReadLine() is { } line)
++        {
++            if (line.StartsWith('{')) json = line;
++            else lines.Add(line);
++        }
++        process.WaitForExit();
++        var err = stderr.Result;
++        if (!string.IsNullOrWhiteSpace(err)) lines.Add("stderr: " + err.Trim());
++        return (process.ExitCode, json, lines);
++    }
++
++    /// <summary>Builds (once) and returns a cached prefilled Library main file for this family and prefill size.</summary>
++    private static string? EnsurePrefill(string prefillRoot, RunSpec run, Action<string> log)
++    {
++        var persource = run.Env is not null && run.Env.ContainsKey("SI_DR_PERSOURCE") ? "-persource" : "";
++        var key = $"{PrefillFamily(run.Family)}-{run.Prefill}{persource}";
++        var dir = Path.Combine(prefillRoot, key);
++        var main = Path.Combine(dir, LibraryNames.MainFile);
++        if (File.Exists(main) && File.Exists(main + ".ok")) return main;
++        Directory.CreateDirectory(dir);
++        log($"  building prefill {key}");
++        var (code, json, lines) = RunChild(["--benchmark", "dr", "prefill", "--family", PrefillFamily(run.Family), "--prefill", run.Prefill.ToString(CultureInfo.InvariantCulture), "--out", main], run.Env);
++        foreach (var l in lines) log("    " + l);
++        if (code != 0) { log($"  prefill FAILED ({code})"); return null; }
++        File.WriteAllText(main + ".ok", json ?? "");
++        return main;
++    }
++
++    /// <summary>The prefill's own name family: a rescan target re-uses the hash family's prefill.</summary>
++    private static string PrefillFamily(string family) => family == "rescan" ? "hash" : family == "rescanreal" ? "real" : family;
++
++    // ================================================================================================================ the child
++
++    private sealed record Options(string Label, string Family, long Target, long Prefill, string TargetSource, double Churn, string Mode, bool Analyse, string AnalysisDir, string? PrefillFrom);
++
++    private static Options ParseOptions(string[] args)
++    {
++        string Opt(string name, string fallback) { var i = Array.IndexOf(args, "--" + name); return i >= 0 ? args[i + 1] : fallback; }
++        return new Options(Opt("label", "run"), Opt("family", "append"), long.Parse(Opt("target", "1000000"), CultureInfo.InvariantCulture),
++            long.Parse(Opt("prefill", "250000"), CultureInfo.InvariantCulture), Opt("target-source", "existing"), double.Parse(Opt("churn", "0"), CultureInfo.InvariantCulture),
++            Opt("mode", "normal"), Opt("analyse", "0") == "1", Opt("analysis-dir", Path.GetTempPath()), args.Contains("--prefill-from") ? Opt("prefill-from", "") : null);
++    }
++
++    private static long Folders(long files) => Math.Max(10, files / 4);
++
++    private static int Prefill(string[] args)
++    {
++        string Opt(string name) { var i = Array.IndexOf(args, "--" + name); return args[i + 1]; }
++        var family = Opt("family");
++        var prefill = long.Parse(Opt("prefill"), CultureInfo.InvariantCulture);
++        var outMain = Opt("out");
++        var root = Path.Combine(BenchRoot(), "SI-DR-Prefill", Guid.NewGuid().ToString("N")[..10]);
++        var appData = Path.Combine(root, "AppData");
++        var directory = Path.Combine(appData, "Library");
++        Directory.CreateDirectory(appData);
++        try
++        {
++            var watch = Stopwatch.StartNew();
++            var session = new LibrarySession(directory, appData);
++            session.RunStartupOpen();
++            using (var create = Lease(session, MutationKind.Create)) session.CreateLibrary(create);
++            DoPrefill(session, family, prefill);
++            session.TestOnlyShutdown();
++            var main = Path.Combine(directory, LibraryNames.MainFile);
++            File.Copy(main, outMain, overwrite: true);
++            using (var fs = new FileStream(outMain, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) fs.Flush(flushToDisk: true);
++            Console.WriteLine($"prefill {family} 3x{prefill:N0} built in {watch.Elapsed.TotalSeconds:0.0} s, {new FileInfo(outMain).Length / 1048576.0:0.0} MB");
++            Console.WriteLine(JsonSerializer.Serialize(new { family, prefill, bytes = new FileInfo(outMain).Length, seconds = watch.Elapsed.TotalSeconds }));
++            return 0;
++        }
++        finally
++        {
++            TryDelete(root);
++        }
++    }
++
++    private static void DoPrefill(LibrarySession session, string family, long prefill)
++    {
++        // the Library already holds other snapshots AND another source (G0-O03): source A twice (p1, p3), source B once (p2)
++        ImportSourceSpec? sourceA = null;
++        for (var i = 1; i <= 3; i++)
++        {
++            var other = i == 2;
++            var snapshot = new DrSnapshot((int)Folders(prefill), seed: i, label: "p" + i, family, realList: other ? 1 : 0);
++            var spec = other ? SyntheticSnapshot.NewSource(@"\Other", serial: 0x7777ABCD) : sourceA ?? SyntheticSnapshot.NewSource();
++            var result = Import(session, snapshot, "prefill-" + i, spec, null, CancellationToken.None, out _);
++            if (i == 1) sourceA = new ImportSourceSpec.Existing(result.SourceId);
++        }
++    }
++
++    private static string BenchRoot() => Environment.GetEnvironmentVariable("SI_BENCH_ROOT") ?? Path.GetTempPath();
++
++    internal sealed record Result(string Label, string Family, long TargetFiles, long PrefillFilesPerSnapshot, string TargetSource, double Churn, string Mode,
++        long Files, long Folders, long NewNames, double ImportSeconds, double FilesPerSecond, double InsertionSeconds, double InsertionFilesPerSecond,
++        double PhaseFoldersMs, double PhaseFilesMs, double PhaseErrorsMs, double PhaseVerificationMs, double PhaseCommitMs,
++        long LibraryBeforeBytes, long LibraryAfterBytes, long GrowthBytes, long PageSize, long PageCountBefore, long FreelistBefore, long NamesBefore, long NameBytesBefore, long FolderPathsBefore,
++        long PeakJournalHandleBytes, long PeakJournalFileInfoBytes, long PeakJournalImporterBytes, long JournalSamples,
++        double JournalOverGrowth, double JournalOverLibraryBefore,
++        long WorkingSetBeforeBytes, long PeakWorkingSetBytes, double GcPauseMs, int Gen2,
++        double OtherLoadMeanPercent, double OtherLoadP95Percent, double OtherLoadMaxPercent, double OwnCpuSeconds, long AvailableMemoryBeforeMb,
++        string? Outcome, double CancelToReturnSeconds, long JournalAtStopBytes, long LibraryAfterStopBytes,
++        string StartedUtc, string? Analysis, string? Probe);
++
++    private static int Child(string[] args)
++    {
++        var o = ParseOptions(args);
++        Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;   // as the C4 benchmark: no elevation needed
++        var root = Path.Combine(BenchRoot(), "SI-DR-Bench", Guid.NewGuid().ToString("N")[..10]);
++        var appData = Path.Combine(root, "AppData");
++        var directory = Path.Combine(appData, "Library");
++        Directory.CreateDirectory(appData);
++        var main = Path.Combine(directory, LibraryNames.MainFile);
++        var journal = Path.Combine(directory, LibraryNames.JournalFile);
++        var keep = false;
++        try
++        {
++            LibrarySession session;
++            if (o.PrefillFrom is not null)
++            {
++                Directory.CreateDirectory(directory);
++                File.Copy(o.PrefillFrom, main);
++                using (var fs = new FileStream(main, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) fs.Flush(flushToDisk: true);
++                session = new LibrarySession(directory, appData);
++                var status = session.RunStartupOpen();
++                if (status.State != LibraryState.Available) throw new InvalidOperationException("prefill copy not available: " + status.State + " " + status.Message);
++            }
++            else
++            {
++                session = new LibrarySession(directory, appData);
++                session.RunStartupOpen();
++                using (var create = Lease(session, MutationKind.Create)) session.CreateLibrary(create);
++                if (o.Prefill > 0) DoPrefill(session, PrefillFamily(o.Family), o.Prefill);
++            }
++
++            // ---- the state before the measured import ----
++            var pageSize = session.Read(r => r.Long("PRAGMA page_size"));
++            var pageCount = session.Read(r => r.Long("PRAGMA page_count"));
++            var freelist = session.Read(r => r.Long("PRAGMA freelist_count"));
++            var namesBefore = session.Read(r => r.Long("SELECT count(*) FROM name"));
++            var nameBytes = session.Read(r => r.Long("SELECT coalesce(sum(length(utf16)), 0) FROM name"));
++            var pathsBefore = session.Read(r => r.Long("SELECT count(*) FROM folder_path"));
++            var dbBefore = HandleLength(main);
++            string? ownershipCopy = null;
++            if (o.Analyse)
++            {
++                Directory.CreateDirectory(o.AnalysisDir);
++                ownershipCopy = Path.Combine(o.AnalysisDir, Slug(o.Label) + ".before.sqlite3");
++                File.Copy(main, ownershipCopy, overwrite: true);
++            }
++
++            DrSnapshot target;
++            ImportSourceSpec spec;
++            if (o.Family is "rescan" or "rescanreal")
++            {
++                target = new DrSnapshot((int)Folders(o.Prefill), seed: 1, label: "target", o.Family, realList: 0, churn: o.Churn, churnSeed: 4);   // p1's own tree and names, with churn
++                spec = new ImportSourceSpec.Existing(1);
++            }
++            else
++            {
++                target = new DrSnapshot((int)Folders(o.Target), seed: 4, label: "target", o.Family, realList: 2);
++                spec = o.TargetSource == "new" || o.Prefill == 0 ? SyntheticSnapshot.NewSource(@"\Third", serial: 0x3333ABCD) : new ImportSourceSpec.Existing(1);
++            }
++            Console.WriteLine($"target: {target.Files:N0} files in {target.FolderCount:N0} folders; library before {dbBefore / 1048576.0:0.0} MB ({pageCount:N0} pages, {freelist:N0} free), {namesBefore:N0} names ({nameBytes / 1048576.0:0.0} MB of UTF-16), {pathsBefore:N0} folder paths");
++            GC.Collect();
++            GC.WaitForPendingFinalizers();
++            GC.Collect();
++            long availableMb = 0;
++            try { availableMb = (long)(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1048576); } catch (InvalidOperationException) { }
++            var wsBefore = Process.GetCurrentProcess().WorkingSet64;
++
++            // ---- samplers: the journal through a live handle every 1 ms, through FileInfo every 5 ms, and the machine's load ----
++            long peakHandle = 0, peakInfo = 0, samples = 0;
++            using var stop = new CancellationTokenSource();
++            var handleSampler = new Thread(() =>
++            {
++                while (!stop.IsCancellationRequested)
++                {
++                    var length = HandleLengthOrZero(journal);
++                    if (length > peakHandle) peakHandle = length;
++                    samples++;
++                    Thread.Sleep(1);
++                }
++            }) { IsBackground = true, Priority = ThreadPriority.AboveNormal };
++            var infoSampler = new Thread(() =>
++            {
++                while (!stop.IsCancellationRequested)
++                {
++                    var info = new FileInfo(journal);
++                    if (info.Exists && info.Length > peakInfo) peakInfo = info.Length;
++                    Thread.Sleep(5);
++                }
++            }) { IsBackground = true };
++            var load = new LoadSampler();
++            handleSampler.Start();
++            infoSampler.Start();
++            load.Start();
++
++            using var cancel = new CancellationTokenSource();
++            var cancelWatch = new Stopwatch();
++            long journalAtStop = 0;
++            string? journalCopy = null;
++            var options = new ImportOptions
++            {
++                AfterRows = () =>
++                {
++                    journalAtStop = HandleLengthOrZero(journal);
++                    if (o.Analyse)
++                    {
++                        journalCopy = Path.Combine(o.AnalysisDir, Slug(o.Label) + ".journal");
++                        using var src = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
++                        using var dst = new FileStream(journalCopy, FileMode.Create, FileAccess.Write);
++                        src.CopyTo(dst);
++                    }
++                    if (o.Mode == "cancel")
++                    {
++                        cancelWatch.Start();
++                        cancel.Cancel();
++                    }
++                    else if (o.Mode == "crash")
++                    {
++                        keep = true;
++                        Console.WriteLine(JsonSerializer.Serialize(new { LibraryDirectory = directory, AppData = appData, JournalAtStopBytes = journalAtStop, LibraryBeforeBytes = dbBefore, MainAtKillBytes = HandleLengthOrZero(main), o.Label }));
++                        Console.Out.Flush();
++                        Process.GetCurrentProcess().Kill();
++                    }
++                },
++            };
++
++            string? outcome = "Published";
++            ImportResult? imported = null;
++            double seconds = 0, cancelToReturn = 0;
++            var gcPause = GC.GetTotalPauseDuration();
++            var gen2 = GC.CollectionCount(2);
++            var cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
++            var started = DateTime.UtcNow;
++            try
++            {
++                imported = Import(session, target, "target", spec, options, cancel.Token, out seconds);
++            }
++            catch (OperationCanceledException)
++            {
++                cancelToReturn = cancelWatch.Elapsed.TotalSeconds;
++                outcome = "Cancelled (rolled back)";
++            }
++            catch (ImportException ex)
++            {
++                outcome = $"{ex.Kind}: {ex.Message}";
++            }
++            var cpu = (Process.GetCurrentProcess().TotalProcessorTime - cpuBefore).TotalSeconds;
++            var peakWs = Process.GetCurrentProcess().PeakWorkingSet64;
++            Thread.Sleep(30);
++            stop.Cancel();
++            handleSampler.Join();
++            infoSampler.Join();
++            var loadStats = load.Stop();
++            var dbAfter = HandleLength(main);
++            var journalAfter = HandleLengthOrZero(journal);
++            if (o.Mode == "normal" && imported is null)
++            {
++                // what a failed import leaves: the size of the main file, and the state the next open derives
++                session.TestOnlyShutdown();
++                var reopened = new LibrarySession(directory, appData);
++                var st = reopened.RunStartupOpen();
++                outcome += $" | after the failure: main {dbAfter / 1048576.0:0.0} MB (before {dbBefore / 1048576.0:0.0} MB), journal {journalAfter} B, next open derives {st.State} ({st.Reason})";
++                session = reopened;
++            }
++            if (o.Mode == "cancel") Console.WriteLine($"cancelled at the journal's peak ({journalAtStop / 1048576.0:0.0} MB): returned rolled back after {cancelToReturn:0.000} s; main {dbAfter / 1048576.0:0.0} MB (before {dbBefore / 1048576.0:0.0} MB), journal now {journalAfter} bytes");
++
++            string? analysis = null;
++            if (o.Analyse && journalCopy is not null && ownershipCopy is not null)
++            {
++                analysis = JournalAnalysis.Analyse(journalCopy, ownershipCopy);
++                Console.WriteLine("analysis: " + analysis);
++                TryDeleteFile(journalCopy);
++                TryDeleteFile(ownershipCopy);
++            }
++
++            var phases = imported?.Phases;
++            var insertion = phases is null ? 0 : phases.Insertion.TotalSeconds;
++            var growth = dbAfter - dbBefore;
++            var files = imported?.Files ?? target.Files;
++            var result = new Result(o.Label, o.Family, o.Target, o.Prefill, o.TargetSource, o.Churn, o.Mode,
++                files, imported?.Folders ?? target.FolderCount, imported?.NewNames ?? 0, seconds, imported is null ? 0 : files / seconds,
++                insertion, insertion > 0 ? files / insertion : 0,
++                phases?.Folders.TotalMilliseconds ?? 0, phases?.Files.TotalMilliseconds ?? 0, phases?.Errors.TotalMilliseconds ?? 0, phases?.Verification.TotalMilliseconds ?? 0, phases?.Commit.TotalMilliseconds ?? 0,
++                dbBefore, dbAfter, growth, pageSize, pageCount, freelist, namesBefore, nameBytes, pathsBefore,
++                peakHandle, peakInfo, imported?.PeakJournalBytes ?? 0, samples,
++                growth > 0 ? (double)peakHandle / growth : 0, dbBefore > 0 ? (double)peakHandle / dbBefore : 0,
++                wsBefore, peakWs, (GC.GetTotalPauseDuration() - gcPause).TotalMilliseconds, GC.CollectionCount(2) - gen2,
++                loadStats.Mean, loadStats.P95, loadStats.Max, cpu, availableMb,
++                outcome, cancelToReturn, journalAtStop, o.Mode == "cancel" ? dbAfter : 0,
++                started.ToString("O", CultureInfo.InvariantCulture), analysis, ProbeDescription());
++            session.TestOnlyShutdown();
++            Console.WriteLine(JsonSerializer.Serialize(result));
++            return 0;
++        }
++        finally
++        {
++            if (!keep) TryDelete(root);
++        }
++    }
++
++    private static string? ProbeDescription()
++    {
++        var parts = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("SI_DR_", StringComparison.Ordinal) && k != "SI_DR_PREFILL_CACHE")
++            .OrderBy(k => k, StringComparer.Ordinal).Select(k => k + "=" + Environment.GetEnvironmentVariable(k)).ToList();
++        if (Environment.GetEnvironmentVariable("SI_DR_PROBE_REPORT") is { } rep && File.Exists(rep)) parts.Add(File.ReadAllText(rep).Trim());
++        return parts.Count == 0 ? null : string.Join("; ", parts);
++    }
++
++    /// <summary>Times a start-up open of a Library left with a hot journal by a killed child (crash recovery cost).</summary>
++    private static int Recover(string directory, string appData)
++    {
++        var main = Path.Combine(directory, LibraryNames.MainFile);
++        var journal = Path.Combine(directory, LibraryNames.JournalFile);
++        var journalBefore = HandleLengthOrZero(journal);
++        var mainBefore = HandleLengthOrZero(main);
++        var watch = Stopwatch.StartNew();
++        var session = new LibrarySession(directory, appData);
++        var status = session.RunStartupOpen();
++        var openSeconds = watch.Elapsed.TotalSeconds;
++        var snapshots = status.State == LibraryState.Available ? session.Read(r => r.Long("SELECT count(*) FROM snapshot")) : -1;
++        string? verify = null;
++        if (status.State == LibraryState.Available)
++        {
++            for (var id = 1; id <= 3 && verify is null; id++) verify = session.Read(r => SnapshotVerifier.VerifyPublished(r, id));
++        }
++        session.TestOnlyShutdown();
++        var mainAfter = HandleLengthOrZero(main);
++        Console.WriteLine($"recovery open: {openSeconds:0.000} s, hot journal {journalBefore / 1048576.0:0.0} MB, main {mainBefore / 1048576.0:0.0} -> {mainAfter / 1048576.0:0.0} MB, state {status.State}, snapshots {snapshots}, older snapshots {(verify is null ? "verify" : "FAIL " + verify)}");
++        Console.WriteLine(JsonSerializer.Serialize(new { OpenSeconds = openSeconds, HotJournalBytes = journalBefore, MainBeforeBytes = mainBefore, MainAfterBytes = mainAfter, State = status.State.ToString(), Snapshots = snapshots, OlderSnapshotsVerify = verify is null }));
++        return 0;
++    }
++
++    // ================================================================================================================ helpers
++
++    internal static MutationLease Lease(LibrarySession session, MutationKind kind)
++    {
++        if (!session.Interlock.TryBeginMutation(kind, 0, out var lease, out var refusal)) throw new InvalidOperationException("lease refused: " + refusal);
++        return lease;
++    }
++
++    private static ImportResult Import(LibrarySession session, ISnapshotRowSource snapshot, string runId, ImportSourceSpec source, ImportOptions? options, CancellationToken cancellation, out double seconds)
++    {
++        var header = snapshot switch { DrSnapshot d => d.Header(runId), SyntheticSnapshot s => s.Header(runId), _ => throw new ArgumentException("row source") };
++        using var prepare = Lease(session, MutationKind.Prepare);
++        var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes(@"D:\Media"), null, runId, DateTime.UtcNow.Ticks)).GetAwaiter().GetResult();
++        using var save = prepare.HandOffToObservation().HandOffToSave(out _);
++        var watch = Stopwatch.StartNew();
++        try
++        {
++            return session.ImportSnapshotAsync(save, attempt, source, header, snapshot, options, cancellation).GetAwaiter().GetResult();
++        }
++        finally
++        {
++            seconds = watch.Elapsed.TotalSeconds;
++        }
++    }
++
++    internal static long HandleLength(string path)
++    {
++        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
++        return fs.Length;
++    }
++
++    internal static long HandleLengthOrZero(string path)
++    {
++        try { return HandleLength(path); }
++        catch (FileNotFoundException) { return 0; }
++        catch (IOException) { return 0; }
++        catch (UnauthorizedAccessException) { return 0; }
++    }
++
++    private static string Slug(string label) => new(label.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
++
++    private static void TryDelete(string dir)
++    {
++        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
++        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
++    }
++
++    private static void TryDeleteFile(string file)
++    {
++        try { File.Delete(file); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
++    }
++
++    // ================================================================================================================ real names
++
++    /// <summary>Harvests file NAMES (never paths) from three system trees into a scratch file: list 0 C:\Program Files, list 1
++    /// C:\Program Files (x86), list 2 C:\Windows. Only aggregates are ever reported.</summary>
++    private static int Harvest(string outFile)
++    {
++        var roots = new[] { @"C:\Program Files", @"C:\Program Files (x86)", @"C:\Windows" };
++        using var writer = new BinaryWriter(File.Create(outFile), Encoding.Unicode);
++        writer.Write(roots.Length);
++        foreach (var root in roots)
++        {
++            var names = new List<string>();
++            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0, ReturnSpecialDirectories = false };
++            try
++            {
++                foreach (var file in Directory.EnumerateFiles(root, "*", options)) names.Add(Path.GetFileName(file));
++            }
++            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
++            writer.Write(names.Count);
++            foreach (var n in names) writer.Write(n);
++            var distinct = names.Distinct(StringComparer.Ordinal).Count();
++            Console.WriteLine($"list {Array.IndexOf(roots, root)}: {names.Count:N0} names, {distinct:N0} distinct, mean {names.Average(n => n.Length):0.0} UTF-16 code units");
++        }
++        return 0;
++    }
++
++    internal static class RealNames
++    {
++        private static string[][]? _lists;
++
++        internal static string[] List(int index)
++        {
++            if (_lists is null)
++            {
++                var path = Environment.GetEnvironmentVariable("SI_DR_REAL_NAMES") ?? throw new InvalidOperationException("SI_DR_REAL_NAMES is not set");
++                using var reader = new BinaryReader(File.OpenRead(path), Encoding.Unicode);
++                var count = reader.ReadInt32();
++                var lists = new string[count][];
++                for (var i = 0; i < count; i++)
++                {
++                    var n = reader.ReadInt32();
++                    lists[i] = new string[n];
++                    for (var k = 0; k < n; k++) lists[i][k] = reader.ReadString();
++                }
++                _lists = lists;
++            }
++            return _lists[index];
++        }
++    }
++
++    // ================================================================================================================ load
++
++    /// <summary>System-wide CPU load other than this process, from GetSystemTimes and the process's own CPU time, every 250 ms.</summary>
++    private sealed class LoadSampler
++    {
++        [StructLayout(LayoutKind.Sequential)]
++        private struct FileTime { public uint Low; public uint High; public readonly long Value => ((long)High << 32) | Low; }
++
++        [DllImport("kernel32.dll", SetLastError = true)]
++        private static extern bool GetSystemTimes(out FileTime idle, out FileTime kernel, out FileTime user);
++
++        private readonly List<double> _other = [];
++        private Thread? _thread;
++        private volatile bool _stop;
++
++        internal void Start()
++        {
++            _thread = new Thread(() =>
++            {
++                GetSystemTimes(out var i0, out var k0, out var u0);
++                var p0 = Process.GetCurrentProcess().TotalProcessorTime.Ticks;
++                while (!_stop)
++                {
++                    Thread.Sleep(250);
++                    GetSystemTimes(out var i1, out var k1, out var u1);
++                    var p1 = Process.GetCurrentProcess().TotalProcessorTime.Ticks;
++                    var total = (k1.Value - k0.Value) + (u1.Value - u0.Value);   // kernel includes idle
++                    var busy = total - (i1.Value - i0.Value);
++                    var own = p1 - p0;
++                    if (total > 0) lock (_other) _other.Add(Math.Max(0, 100.0 * (busy - own) / total));
++                    i0 = i1; k0 = k1; u0 = u1; p0 = p1;
++                }
++            }) { IsBackground = true };
++            _thread.Start();
++        }
++
++        internal (double Mean, double P95, double Max) Stop()
++        {
++            _stop = true;
++            _thread?.Join();
++            lock (_other)
++            {
++                if (_other.Count == 0) return (0, 0, 0);
++                var sorted = _other.OrderBy(x => x).ToArray();
++                return (sorted.Average(), sorted[(int)Math.Min(sorted.Length - 1, Math.Ceiling(0.95 * sorted.Length) - 1)], sorted[^1]);
++            }
++        }
++    }
++}
++
++/// <summary>The synthetic tree of <see cref="SyntheticSnapshot"/> (identical folders, sizes, times and totals) with a choice of file-name
++/// distribution. Folder names stay "dir&lt;i % 997&gt;" in every family, so only the file-name dictionary differs between families.</summary>
++internal sealed class DrSnapshot : ISnapshotRowSource
++{
++    private readonly int _folders;
++    private readonly int _seed;
++    private readonly int _churnSeed;
++    private readonly string _family;
++    private readonly int _realList;
++    private readonly double _churn;
++    private readonly int[] _directFiles;
++    private readonly long[] _directBytes;
++    private readonly long[] _totalFiles;
++    private readonly long[] _totalBytes;
++    private readonly long[] _directSubfolders;
++    private readonly long[] _totalSubfolders;
++    private readonly long[] _seqStart;
++    private readonly string _label;
++    private const int Branching = 6;
++
++    internal DrSnapshot(int folders, int seed, string label, string family, int realList = 0, double churn = 0, int churnSeed = 4)
++    {
++        _folders = folders;
++        _seed = seed;
++        _label = label;
++        _family = family;
++        _realList = realList;
++        _churn = churn;
++        _churnSeed = churnSeed;
++        _directFiles = new int[folders];
++        _directBytes = new long[folders];
++        _totalFiles = new long[folders];
++        _totalBytes = new long[folders];
++        _directSubfolders = new long[folders];
++        _totalSubfolders = new long[folders];
++        _seqStart = new long[folders];
++        long seq = 0;
++        for (var i = 0; i < folders; i++)
++        {
++            var count = (int)((uint)Hash(i, 17, _seed) % 9u);
++            _directFiles[i] = count;
++            _seqStart[i] = seq;
++            seq += count;
++            long bytes = 0;
++            for (var k = 0; k < count; k++) bytes += SizeOf(i, k);
++            _directBytes[i] = bytes;
++            _totalFiles[i] = count;
++            _totalBytes[i] = bytes;
++            if (i > 0) _directSubfolders[ParentOf(i)]++;
++        }
++        for (var i = folders - 1; i >= 1; i--)
++        {
++            var parent = ParentOf(i);
++            _totalFiles[parent] += _totalFiles[i];
++            _totalBytes[parent] += _totalBytes[i];
++            _totalSubfolders[parent] += 1 + _totalSubfolders[i];
++        }
++        Files = seq;
++        Bytes = _totalBytes[0];
++    }
++
++    internal long Files { get; }
++
++    internal long Bytes { get; }
++
++    public int FolderCount => _folders;
++
++    private static int ParentOf(int index) => (index - 1) / Branching;
++
++    private static int Hash(int a, int b, int seed) => unchecked((a * 73856093) ^ (b * 19349663) ^ (seed * 83492791));
++
++    private long SizeOf(int folder, int k) => 1 + (uint)Hash(folder, k + 1000, _seed) % 100_000u;
++
++    internal ImportSnapshotHeader Header(string runId) => new()
++    {
++        Completion = ScanCompletionState.Complete,
++        RunId = runId,
++        StartedUtcTicks = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).Ticks,
++        FinishedUtcTicks = new DateTime(2026, 1, 1, 0, 1, 0, DateTimeKind.Utc).Ticks,
++        RootPathAsEntered = Utf16.ToBytes(@"D:\Media"),
++        CanonicalRoot = Utf16.ToBytes(@"D:\Media"),
++        MountPoint = Utf16.ToBytes(@"D:\"),
++        VolumeLabel = Utf16.ToBytes("Data"),
++        CapacityBytes = 1_000_000_000,
++        FreeBytes = 500_000_000,
++        Confidence = IdentityConfidence.Strong,
++        Basis = IdentityBasis.Evidence,
++        CaptureKind = SourceKind.LocalVolume,
++        FsName = "NTFS",
++        Files = Files,
++        Folders = _folders,
++        Bytes = Bytes,
++    };
++
++    public IEnumerable<ImportFolder> Folders()
++    {
++        for (var i = 0; i < _folders; i++)
++        {
++            yield return new ImportFolder(i, i == 0 ? -1 : ParentOf(i), i == 0 ? [] : Utf16.ToBytes("dir" + (i % 997)), FolderScanStatus.Ok, null, true, 0x10,
++                CreatedTicks: 637_000_000_000_000_000L + i, ModifiedTicks: 637_100_000_000_000_000L + i,
++                _directBytes[i], _totalBytes[i], _directFiles[i], _totalFiles[i], _directSubfolders[i], _totalSubfolders[i],
++                LargestFileBytes: _totalFiles[i] == 0 ? null : 100_000);
++        }
++    }
++
++    public IReadOnlyList<ImportFile> FilesOfFolder(int folderIndex)
++    {
++        var count = _directFiles[folderIndex];
++        if (count == 0) return [];
++        var files = new ImportFile[count];
++        var seen = count > 1 ? new HashSet<string>(StringComparer.Ordinal) : null;
++        for (var k = 0; k < count; k++)
++        {
++            var name = FileName(folderIndex, k);
++            // names are unique within a folder (the file_obs key); a rare in-folder collision gets a deterministic suffix
++            if (seen is not null) { var n = name; var t = 1; while (!seen.Add(n)) n = name + " (" + t++ + ")"; name = n; }
++            files[k] = new ImportFile(Utf16.ToBytes(name), _seqStart[folderIndex] + k, SizeOf(folderIndex, k), 637_100_000_000_000_000L + k, 637_000_000_000_000_000L, 637_200_000_000_000_000L, 0x20);
++        }
++        return files;
++    }
++
++    public IEnumerable<ImportError> Errors() => [];
++
++    // ------------------------------------------------------------------------------------------------------------ name families
++
++    private string FileName(int folder, int k) => _family switch
++    {
++        "append" => AppendName(folder, k, _label, _seed),
++        "hash" => HashName(folder, k, _seed),
++        "rescan" => Churned(folder, k) ? ChurnName(folder, k, _churnSeed) : HashName(folder, k, _seed),
++        "rescanreal" => Churned(folder, k) ? RealChurnName(folder, k) : RealName(folder, k),
++        "mixed" => MixedName(folder, k, _seed),
++        "real" => RealName(folder, k),
++        _ => throw new ArgumentException("family " + _family),
++    };
++
++    /// <summary>The C4 benchmark's names exactly (SyntheticSnapshot.FileName): unique names sort after every existing name.</summary>
++    private static string AppendName(int folder, int k, string label, int seed)
++    {
++        var unique = (uint)Hash(folder, k, seed) % 2u == 0;
++        var stem = unique ? $"file_{label}_{folder}_{k}" : $"common_{(uint)Hash(folder, k, seed) % 5000u}";
++        return stem + ".ext" + (k % 7);
++    }
++
++    /// <summary>The reviewer's replay names exactly (C4 review §23): the unique half is hash-distributed over the key space.</summary>
++    private static string HashName(int folder, int k, int seed)
++    {
++        var unique = (uint)Hash(folder, k, seed) % 2u == 0;
++        var stem = unique
++            ? "img" + unchecked((uint)(Hash(folder, k, seed) * 2654435761u) ^ (uint)(folder * 40503 + k * 9973 + seed * 7919)).ToString("x8", CultureInfo.InvariantCulture) + "_" + (folder * 31 + k + seed * 1000003).ToString("x", CultureInfo.InvariantCulture)
++            : $"common_{(uint)Hash(folder, k, seed) % 5000u}";
++        return stem + ".ext" + (k % 7);
++    }
++
++    /// <summary>A file renamed since the earlier snapshot: always a new name, spread over the existing "img" names.</summary>
++    private static string ChurnName(int folder, int k, int seed) =>
++        "img" + (Mix((ulong)folder, (ulong)k, (ulong)seed * 977) & 0xFFFFFFFFUL).ToString("x8", CultureInfo.InvariantCulture) + "_c" + folder.ToString("x", CultureInfo.InvariantCulture) + "_" + k.ToString(CultureInfo.InvariantCulture) + ".ext" + (k % 7);
++
++    private bool Churned(int folder, int k) => Mix((ulong)folder, (ulong)k, 0xC4u) % 1_000_000UL < (ulong)(_churn * 1_000_000);
++
++    private static ulong Mix(ulong a, ulong b, ulong c)
++    {
++        var x = a * 0x9E3779B97F4A7C15UL ^ (b + 0x632BE59BD9B4E019UL) * 0xBF58476D1CE4E5B9UL ^ (c + 0x94D049BB133111EBUL);
++        x ^= x >> 31; x *= 0xD6E8FEB86659FD93UL; x ^= x >> 29; x *= 0x94D049BB133111EBUL; x ^= x >> 32;
++        return x;
++    }
++
++    private static readonly string[] Syllables = ["ka", "lo", "mi", "ne", "ru", "sa", "to", "vi", "be", "da", "fo", "gu", "ha", "ji", "pe", "qu", "ri", "su", "te", "wa", "xe", "yo", "zu", "an", "el", "in", "or", "um"];
++    private static readonly string[] Extensions = [".jpg", ".png", ".txt", ".dll", ".html", ".xml", ".json", ".mp3", ".pdf", ".docx", ".js", ".css", ".ini", ".log", ".mui", ".cs", ".py", ".zip"];
++    private static readonly string[] Cameras = ["IMG_", "DSC_", "DSCN", "PXL_2024", "Screenshot 2025-", "VID_"];
++
++    private static string Word(ulong h)
++    {
++        var sb = new StringBuilder();
++        var n = 2 + (int)(h % 3);
++        for (var i = 0; i < n; i++) { sb.Append(Syllables[(int)(h % (ulong)Syllables.Length)]); h /= (ulong)Syllables.Length; }
++        sb[0] = char.ToUpperInvariant(sb[0]);
++        return sb.ToString();
++    }
++
++    /// <summary>A synthetic "realistic" mixture: 40% from a shared Zipf-like vocabulary of 50,000 names (mostly present after any
++    /// prefill), 25% camera/sequence names from a finite shared set (IMG_0423.JPG), 35% names unique to this snapshot that start with
++    /// a word, so they spread over the key space (about a third of the files bring a new name).</summary>
++    private static string MixedName(int folder, int k, int seed)
++    {
++        var h = Mix((ulong)folder, (ulong)k, (ulong)seed);
++        var u = h % 1000;
++        if (u < 400)
++        {
++            var r = (h >> 10) % 1_000_000 / 1_000_000.0;
++            var idx = (ulong)(50_000 * r * r * r);   // skewed towards small indexes
++            var v = Mix(idx, 7, 7);
++            return Word(v) + (v % 5 == 0 ? "_" + Word(v >> 20) : "") + Extensions[(int)(v % (ulong)Extensions.Length)];
++        }
++        if (u < 650)
++        {
++            var camera = Cameras[(int)((ulong)folder % (ulong)Cameras.Length)];
++            var counter = ((ulong)folder * 7 + (ulong)k) % 10_000;
++            return camera + counter.ToString("D4", CultureInfo.InvariantCulture) + (camera == "VID_" ? ".MP4" : ".JPG");
++        }
++        return Word(h >> 8) + " " + Word(h >> 24) + " " + (Mix((ulong)folder, (ulong)k, (ulong)seed * 31 + 1) % 100_000).ToString(CultureInfo.InvariantCulture) + Extensions[(int)((h >> 40) % (ulong)Extensions.Length)];
++    }
++
++    /// <summary>A new file in a real-vocabulary source: a real name from another tree with a distinguishing suffix, so the new
++    /// names spread over the key space as real new names do (not clustered under one prefix).</summary>
++    private string RealChurnName(int folder, int k)
++    {
++        var other = DesignReviewBench.RealNames.List(2);
++        var slot = _seqStart[folder] + k;
++        var name = other[(int)((ulong)slot * 7919UL % (ulong)other.Length)];
++        var dot = name.LastIndexOf('.');
++        var tag = " (" + (Mix((ulong)folder, (ulong)k, 0xC4) & 0xFFFFFF).ToString("x6", CultureInfo.InvariantCulture) + ")";
++        return dot > 0 ? name[..dot] + tag + name[dot..] : name + tag;
++    }
++
++    private string RealName(int folder, int k)
++    {
++        var list = DesignReviewBench.RealNames.List(_realList);
++        var slot = _seqStart[folder] + k;
++        return list[(int)(slot % list.Length)];
++    }
++}
++
++/// <summary>Parses a rollback journal (sqlite.org/fileformat2.html §4) and attributes each journalled page to the B-tree that owned it
++/// in a copy of the database taken before the transaction began.</summary>
++internal static class JournalAnalysis
++{
++    private static readonly byte[] Magic = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
++
++    internal static string Analyse(string journalPath, string dbBeforePath)
++    {
++        var owners = PageOwnership.Map(dbBeforePath, out var pageSize, out var pageCount);
++        var bytes = File.ReadAllBytes(journalPath);
++        var pages = new HashSet<uint>();
++        long records = 0, segments = 0, synced = 0, sector = 0, dupes = 0;
++        long offset = 0;
++        // A segment's magic and record count are written only when the journal is synced (pager.c syncJournal, synchronous=FULL);
++        // the last, not yet synced segment has an all-zero magic and its records run to the end of the file.
++        while (offset + 28 <= bytes.Length)
++        {
++            var hasMagic = bytes.AsSpan((int)offset, 8).SequenceEqual(Magic);
++            if (!hasMagic && bytes.AsSpan((int)offset, 12).IndexOfAnyExcept((byte)0) >= 0) break;
++            segments++;
++            if (hasMagic) synced++;
++            var nRec = hasMagic ? BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan((int)offset + 8)) : 0;
++            sector = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan((int)offset + 20));
++            var ps = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan((int)offset + 24));
++            var recordSize = ps + 8;
++            if (sector == 0) break;
++            var start = offset + sector;
++            var count = nRec == 0 || nRec == 0xFFFFFFFF ? (bytes.Length - start) / recordSize : nRec;
++            for (long r = 0; r < count; r++)
++            {
++                var at = start + r * recordSize;
++                if (at + recordSize > bytes.Length) break;
++                var pgno = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan((int)at));
++                if (!pages.Add(pgno)) dupes++;
++                records++;
++            }
++            var end = start + count * recordSize;
++            offset = (end + sector - 1) / sector * sector;
++            if (nRec == 0) break;
++        }
++        var byOwner = new Dictionary<string, (long Journalled, long Total)>();
++        foreach (var (pg, owner) in owners)
++        {
++            byOwner.TryGetValue(owner, out var v);
++            byOwner[owner] = (v.Journalled, v.Total + 1);
++        }
++        foreach (var pg in pages)
++        {
++            var owner = owners.TryGetValue(pg, out var o) ? o : pg > pageCount ? "(beyond original end)" : "(unknown)";
++            byOwner.TryGetValue(owner, out var v);
++            byOwner[owner] = (v.Journalled + 1, v.Total);
++        }
++        var sb = new StringBuilder();
++        sb.Append(CultureInfo.InvariantCulture, $"journal {bytes.Length} B, {segments} segment(s) ({synced} synced), sector {sector}, page {pageSize}, {records} records, {pages.Count} distinct pages ({dupes} repeats), {(double)bytes.Length / Math.Max(1, pages.Count):0} B per distinct page, original {pageCount} pages; journalled/total by B-tree: ");
++        sb.Append(string.Join(", ", byOwner.Where(kv => kv.Value.Journalled > 0 || kv.Value.Total > 200).OrderByDescending(kv => kv.Value.Journalled).ThenByDescending(kv => kv.Value.Total)
++            .Select(kv => $"{kv.Key} {kv.Value.Journalled}/{kv.Value.Total}")));
++        return sb.ToString();
++    }
++}
++
++/// <summary>A read-only walk of a SQLite database file's B-trees (sqlite.org/fileformat2.html): page number to owning object
++/// (table or index name from sqlite_schema, "freelist" or "sqlite_schema").</summary>
++internal static class PageOwnership
++{
++    internal static Dictionary<uint, string> Map(string path, out int pageSize, out long pageCount)
++    {
++        var file = File.ReadAllBytes(path);
++        var rawSize = BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(16));
++        pageSize = rawSize == 1 ? 65536 : rawSize;
++        var reserved = file[20];
++        var usable = pageSize - reserved;
++        pageCount = BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(28));
++        var owners = new Dictionary<uint, string>();
++        var ps = pageSize;
++        ReadOnlySpan<byte> Page(uint n) => file.AsSpan((int)((n - 1) * (long)ps), ps);
++
++        // freelist
++        var trunk = BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(32));
++        while (trunk != 0)
++        {
++            owners[trunk] = "freelist (trunk)";
++            var p = Page(trunk);
++            var leaves = BinaryPrimitives.ReadUInt32BigEndian(p[4..]);
++            for (var i = 0; i < leaves; i++) owners[BinaryPrimitives.ReadUInt32BigEndian(p[(8 + 4 * i)..])] = "freelist (leaf)";
++            trunk = BinaryPrimitives.ReadUInt32BigEndian(p);
++        }
++
++        // sqlite_schema rows: (type, name, tbl_name, rootpage, sql)
++        var roots = new List<(string Name, uint Root)> { ("sqlite_schema", 1) };
++        Walk(1, "sqlite_schema", collectSchema: true);
++        foreach (var (name, root) in roots.Skip(1).ToList()) Walk(root, name, collectSchema: false);
++        return owners;
++
++        void Walk(uint root, string name, bool collectSchema)
++        {
++            var stack = new Stack<uint>();
++            stack.Push(root);
++            while (stack.Count > 0)
++            {
++                var n = stack.Pop();
++                owners[n] = name;
++                var page = Page(n);
++                var h = n == 1 ? 100 : 0;
++                var type = page[h];
++                var cells = BinaryPrimitives.ReadUInt16BigEndian(page[(h + 3)..]);
++                var interior = type is 0x02 or 0x05;
++                var headerSize = interior ? 12 : 8;
++                if (interior) stack.Push(BinaryPrimitives.ReadUInt32BigEndian(page[(h + 8)..]));
++                for (var c = 0; c < cells; c++)
++                {
++                    var cellOffset = BinaryPrimitives.ReadUInt16BigEndian(page[(h + headerSize + 2 * c)..]);
++                    var cell = page[cellOffset..];
++                    var pos = 0;
++                    if (interior) { stack.Push(BinaryPrimitives.ReadUInt32BigEndian(cell)); pos = 4; }
++                    if (type == 0x05) continue;   // table interior: child + rowid, no payload
++                    var payload = (long)Varint(cell, ref pos);
++                    if (type == 0x0D) Varint(cell, ref pos);   // rowid
++                    var isTable = type == 0x0D;
++                    var x = isTable ? usable - 35 : (usable - 12) * 64 / 255 - 23;
++                    var m = (usable - 12) * 32 / 255 - 23;
++                    long local;
++                    if (payload <= x) local = payload;
++                    else { var kk = m + (payload - m) % (usable - 4); local = kk <= x ? kk : m; }
++                    if (collectSchema && type == 0x0D)
++                    {
++                        var rec = ReadPayload(cell[pos..], payload, local);
++                        var cols = Record(rec);
++                        if (cols.Count >= 4 && cols[3] is long rp && rp > 0 && cols[1] is string nm) roots.Add((nm, (uint)rp));
++                    }
++                    if (payload > local)
++                    {
++                        var ov = BinaryPrimitives.ReadUInt32BigEndian(cell[(int)(pos + local)..]);
++                        while (ov != 0) { owners[ov] = name + " (overflow)"; ov = BinaryPrimitives.ReadUInt32BigEndian(Page(ov)); }
++                    }
++                }
++            }
++
++            byte[] ReadPayload(ReadOnlySpan<byte> start, long payload, long local)
++            {
++                var result = new byte[payload];
++                start[..(int)local].CopyTo(result);
++                var have = (int)local;
++                if (payload > local)
++                {
++                    var ov = BinaryPrimitives.ReadUInt32BigEndian(start[(int)local..]);
++                    while (ov != 0 && have < payload)
++                    {
++                        var p = Page(ov);
++                        var take = (int)Math.Min(usable - 4, payload - have);
++                        p.Slice(4, take).CopyTo(result.AsSpan(have));
++                        have += take;
++                        ov = BinaryPrimitives.ReadUInt32BigEndian(p);
++                    }
++                }
++                return result;
++            }
++        }
++    }
++
++    private static ulong Varint(ReadOnlySpan<byte> s, ref int pos)
++    {
++        ulong v = 0;
++        for (var i = 0; i < 8; i++)
++        {
++            var b = s[pos++];
++            v = (v << 7) | (uint)(b & 0x7f);
++            if ((b & 0x80) == 0) return v;
++        }
++        return (v << 8) | s[pos++];
++    }
++
++    private static List<object?> Record(byte[] rec)
++    {
++        var pos = 0;
++        var headerLen = (int)Varint(rec, ref pos);
++        var types = new List<ulong>();
++        while (pos < headerLen) types.Add(Varint(rec, ref pos));
++        var cols = new List<object?>();
++        var at = headerLen;
++        foreach (var t in types)
++        {
++            switch (t)
++            {
++                case 0: cols.Add(null); break;
++                case 1: cols.Add((long)(sbyte)rec[at]); at += 1; break;
++                case 2: cols.Add((long)BinaryPrimitives.ReadInt16BigEndian(rec.AsSpan(at))); at += 2; break;
++                case 3: cols.Add((long)((rec[at] << 16 | rec[at + 1] << 8 | rec[at + 2]) << 8 >> 8)); at += 3; break;
++                case 4: cols.Add((long)BinaryPrimitives.ReadInt32BigEndian(rec.AsSpan(at))); at += 4; break;
++                case 5: { long v = 0; for (var i = 0; i < 6; i++) v = (v << 8) | rec[at + i]; cols.Add(v << 16 >> 16); at += 6; break; }
++                case 6: cols.Add(BinaryPrimitives.ReadInt64BigEndian(rec.AsSpan(at))); at += 8; break;
++                case 7: cols.Add(BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(rec.AsSpan(at)))); at += 8; break;
++                case 8: cols.Add(0L); break;
++                case 9: cols.Add(1L); break;
++                default:
++                    if (t >= 12 && t % 2 == 0) { var len = (int)(t - 12) / 2; cols.Add(rec.AsSpan(at, len).ToArray()); at += len; }
++                    else if (t >= 13) { var len = (int)(t - 13) / 2; cols.Add(Encoding.UTF8.GetString(rec, at, len)); at += len; }
++                    else cols.Add(null);
++                    break;
++            }
++        }
++        return cols;
++    }
++}
+diff --git a/tests/StorageInventory.Library.Tests/LibraryBenchmark.cs b/tests/StorageInventory.Library.Tests/LibraryBenchmark.cs
+index 86f365b..2c67403 100644
+--- a/tests/StorageInventory.Library.Tests/LibraryBenchmark.cs
++++ b/tests/StorageInventory.Library.Tests/LibraryBenchmark.cs
+@@ -29,6 +29,7 @@ internal static class LibraryBenchmark
+         if (args is ["child", ..]) return Child(args[1..]);
+         var which = args.Length > 0 ? args[0] : "quick";
+         if (which == "micro") return EngineMicroBenchmark.Run();
++        if (which == "dr") return DesignReviewBench.Run(args[1..]);
+         var output = args.Length > 1 ? args[1] : null;
+         return Orchestrate(which, output);
+     }
