@@ -59,6 +59,9 @@ internal static class LibraryBenchmark
             case "full":
                 runs.Add(("2M, SQLITE_FULL at 80 MiB", Common(2_000_000, false, 100_000, "full", false)));
                 break;
+            case "volume":   // the real thing: SI_BENCH_ROOT names a small, nearly full volume (a VHD made by the evidence workflow)
+                runs.Add(("2M, the volume fills up", Common(2_000_000, false, 100_000, "none", false)));
+                break;
             case "all":
                 for (var round = 1; round <= 3; round++) runs.Add(($"import 1M (run {round})", Common(1_000_000, false, 250_000, "none", false)));
                 for (var round = 1; round <= 3; round++) runs.Add(($"import 2M (run {round})", Common(2_000_000, false, 250_000, "none", true)));
@@ -71,7 +74,7 @@ internal static class LibraryBenchmark
                 runs.Add(("2M, SQLITE_FULL at 80 MiB", Common(2_000_000, false, 100_000, "full", false)));
                 break;
             default:
-                Console.Error.WriteLine("usage: --benchmark quick|p1|q07|full|all [output.md]");
+                Console.Error.WriteLine("usage: --benchmark quick|p1|q07|full|volume|all [output.md]");
                 return 2;
         }
 
@@ -148,7 +151,7 @@ internal static class LibraryBenchmark
         var limit = Option("limit", "none");
         var delete = Option("delete", "0") == "1";
 
-        var root = Path.Combine(Path.GetTempPath(), "SI-Library-Bench", Guid.NewGuid().ToString("N")[..10]);
+        var root = Path.Combine(Environment.GetEnvironmentVariable("SI_BENCH_ROOT") ?? Path.GetTempPath(), "SI-Library-Bench", Guid.NewGuid().ToString("N")[..10]);
         var appData = Path.Combine(root, "AppData");
         var directory = Path.Combine(appData, "Library");
         Directory.CreateDirectory(appData);
