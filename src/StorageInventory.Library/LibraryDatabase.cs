@@ -213,9 +213,16 @@ internal sealed class WriterConnection : IDisposable
         _operation = operation;
         _allowed = allowed;
         _faults = faults;
+        Interlocked.Increment(ref _openWriters);
     }
 
     internal bool InTransaction => _inTransaction;
+
+    private static int _openWriters;
+
+    /// <summary>How many writer connections are open in this process right now. The writer exists only inside a mutation lease
+    /// (OBS-12), so this is 0 during every observation window: TEST-W1 asserts it.</summary>
+    internal static int OpenWriterCount => Volatile.Read(ref _openWriters);
 
     /// <summary>Sets every §5.8 pragma from its constant and asserts it by reading it back (A-22). The first statement that
     /// touches the database file is <c>journal_mode</c>: if a hot journal exists, SQLite rolls it back there, in its default DELETE
@@ -302,6 +309,7 @@ internal sealed class WriterConnection : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Interlocked.Decrement(ref _openWriters);
         try
         {
             _connection.Dispose();
