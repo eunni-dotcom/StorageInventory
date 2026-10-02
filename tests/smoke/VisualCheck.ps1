@@ -178,6 +178,18 @@ function Convert-UiaRectangle($UiaRect, $UiaWindowRect, [IntPtr] $Hwnd, [System.
     New-Object System.Drawing.Rectangle ([int][Math]::Round($x)), ([int][Math]::Round($y)), ([int][Math]::Round($UiaRect.Width * $sx)), ([int][Math]::Round($UiaRect.Height * $sy))
 }
 
+# The landmarks sit at the top of the page. Driving the window through UI Automation (Invoke on a button at the bottom)
+# can leave the page scrolled down, so scroll it back to the top first, the way a user would.
+function Reset-PageScroll($Root) {
+    $A = [Windows.Automation.AutomationElement]
+    $page = $Root.FindFirst([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition($A::IsScrollPatternAvailableProperty, $true)))
+    if (-not $page) { return }
+    $scroll = $page.GetCurrentPattern([Windows.Automation.ScrollPattern]::Pattern)
+    if ($scroll.Current.VerticallyScrollable -and $scroll.Current.VerticalScrollPercent -gt 0) {
+        $scroll.SetScrollPercent([Windows.Automation.ScrollPattern]::NoScroll, 0)
+    }
+}
+
 function Find-Landmark($Root, [string] $Name, $Type) {
     $A = [Windows.Automation.AutomationElement]
     $c = New-Object Windows.Automation.AndCondition(
@@ -208,6 +220,8 @@ function Assert-WindowPainted {
 
     Show-WindowForCapture $Hwnd
     try {
+        $root = [Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+        Reset-PageScroll $root
         $client = Get-ClientScreenRectangle $Hwnd
         $bmp = Get-SettledClientCapture $Hwnd
         if ($SavePng) { $bmp.Save($SavePng, [System.Drawing.Imaging.ImageFormat]::Png) }
@@ -215,7 +229,6 @@ function Assert-WindowPainted {
         $bmp.Dispose()
 
         # Where UI Automation says each landmark is, in client pixels.
-        $root = [Windows.Automation.AutomationElement]::FromHandle($Hwnd)
         $uiaWindow = $root.Current.BoundingRectangle
         $marks = foreach ($l in $Landmarks) {
             $e = Find-Landmark $root $l.Name $l.Type
