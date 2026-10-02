@@ -52,6 +52,17 @@ public static class LibraryStateTests
         return session.ImportSnapshotAsync(save, attempt, source ?? SyntheticSnapshot.NewSource(), snapshot.Header(runId), snapshot).GetAwaiter().GetResult();
     }
 
+    /// <summary>The same capture sequence for any row source and header.</summary>
+    internal static ImportResult ImportRows(LibrarySession session, ISnapshotRowSource rows, ImportSnapshotHeader header, string runId = "run-1", ImportSourceSpec? source = null)
+    {
+        var captureId = session.NewCaptureId();
+        using var prepare = World.Lease(session, MutationKind.Prepare, captureId);
+        var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes(@"D:\Media"), null, runId, DateTime.UtcNow.Ticks)).GetAwaiter().GetResult();
+        var observation = prepare.HandOffToObservation();
+        using var save = observation.HandOffToSave(out _);
+        return session.ImportSnapshotAsync(save, attempt, source ?? SyntheticSnapshot.NewSource(), header, rows).GetAwaiter().GetResult();
+    }
+
     private static void AssertState(LibraryState expected, LibraryStatus actual, string? context = null) =>
         Assert.Equal(expected, actual.State, $"{context}: {actual.Reason}: {actual.Message}");
 

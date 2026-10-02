@@ -395,14 +395,14 @@ public static class LibrarySecurityAuditTests
                     if (!ids.Contains(dependency.Name)) violations.Add($"{project}: lock file names {dependency.Name}, not in the approved set");
                     if (type == "Direct" && project != "StorageInventory.Library") violations.Add($"{project}: a Direct package ({dependency.Name}) outside the Library");
                     var approved = Approved.FirstOrDefault(a => string.Equals(a.Id, dependency.Name, StringComparison.OrdinalIgnoreCase));
-                    if (approved.Id is not null && target.Name == "net10.0-windows7.0")
+                    if (approved.Id is not null && !target.Name.Contains('/', StringComparison.Ordinal))
                     {
                         if (dependency.Value.GetProperty("resolved").GetString() != approved.Version) violations.Add($"{project}: {dependency.Name} resolved to {dependency.Value.GetProperty("resolved").GetString()}");
                         if (dependency.Value.GetProperty("contentHash").GetString() != approved.ContentHash) violations.Add($"{project}: {dependency.Name} has content hash {dependency.Value.GetProperty("contentHash").GetString()}, pinned {approved.ContentHash}");
                     }
                 }
             }
-            var main = document.RootElement.GetProperty("dependencies").GetProperty("net10.0-windows7.0");
+            var main = document.RootElement.GetProperty("dependencies").EnumerateObject().First(t => !t.Name.Contains('/', StringComparison.Ordinal)).Value;
             var packages = main.EnumerateObject().Where(d => d.Value.GetProperty("type").GetString() != "Project").Select(d => d.Name).Order(StringComparer.Ordinal).ToList();
             if (project == "StorageInventory.Library" && !packages.SequenceEqual(ids.Order(StringComparer.Ordinal))) violations.Add($"{project}: lock file packages are [{string.Join(", ", packages)}], expected exactly the four");
             if (packages.Count != 0 && packages.Count != 4) violations.Add($"{project}: lock file holds {packages.Count} packages (the four, or none)");
@@ -548,6 +548,49 @@ public static class LibrarySecurityAuditTests
         Assert.Equal(5, bad.Count, string.Join("; ", bad));
         Assert.Equal(2, LibraryReferenceViolations("App", ["Microsoft.Data.Sqlite", "SQLitePCLRaw.provider.e_sqlite3", "System.Runtime", "PresentationFramework"], allowSqlite: false, checkUiProcessNetwork: false).Count, "the App may not compile against SQLite (it references WPF, which is its job)");
         Assert.Equal(1, LibraryReferenceViolations("Core", ["SQLitePCLRaw.core"], allowSqlite: false).Count);
+    }
+
+    // ================================================================ SEC-15: data read from the Library is never a path
+
+    private static readonly string[] DatabaseReadingFiles = ["LibraryCatalog.cs", "RowReader.cs", "SnapshotVerifier.cs", "ImportModel.cs"];
+
+    /// <summary>The SEC-15 text rules: the files that decode what the Library holds touch no file-system, process or path API, and
+    /// the file that touches the file system (<c>LibraryStore.cs</c>) refers to no type that carries database rows.</summary>
+    internal static List<string> UntrustedDataViolations(IReadOnlyDictionary<string, string> sources)
+    {
+        var violations = new List<string>();
+        foreach (var (file, raw) in sources)
+        {
+            var code = Code(raw);
+            var name = Path.GetFileName(file);
+            if (DatabaseReadingFiles.Contains(name) && Regex.IsMatch(code, @"\b(File|Directory|Path|Process|FileInfo|DirectoryInfo|FileStream|Environment)\s*\.|new\s+(FileInfo|DirectoryInfo|FileStream)\b|ProcessStartInfo"))
+            {
+                violations.Add($"{file}: a file-system, path or process API in code that handles database contents");
+            }
+            if (name == "LibraryStore.cs" && Regex.IsMatch(code, @"\b(IRowReader|SqliteDataReader|ReaderConnection|SnapshotSummary|LibraryCatalog)\b"))
+            {
+                violations.Add($"{file}: the file-system layer refers to a type that carries database contents");
+            }
+        }
+        return violations;
+    }
+
+    [Test]
+    public static void SEC_15_data_read_from_the_Library_is_never_used_as_a_path()
+    {
+        var violations = UntrustedDataViolations(Library);
+        Assert.Equal(0, violations.Count, string.Join(Environment.NewLine, violations));
+        foreach (var file in DatabaseReadingFiles) Assert.True(Library.Keys.Any(k => k.EndsWith(file, StringComparison.Ordinal)), file + " was found");
+
+        var rogue = new Dictionary<string, string>
+        {
+            ["src/StorageInventory.Library/LibraryCatalog.cs"] = "var p = Path.Combine(root, name); File.Delete(p);",
+            ["src/StorageInventory.Library/RowReader.cs"] = "Process.Start(new ProcessStartInfo(text));",
+            ["src/StorageInventory.Library/LibraryStore.cs"] = "var rows = reader.Query(sql); IRowReader r = null;",
+        };
+        var found = UntrustedDataViolations(rogue);
+        Assert.Equal(3, found.Count, string.Join(" | ", found));
+        Assert.Equal(0, UntrustedDataViolations(new Dictionary<string, string> { ["src/StorageInventory.Library/LibraryCatalog.cs"] = "// Path.Combine in a comment\nvar n = 1;" }).Count);
     }
 
     // ================================================================ A-14, A-15
@@ -778,6 +821,7 @@ public static class LibrarySecurityAuditTests
             ("A-14", nameof(A_14_the_Library_location_is_resolved_only_in_the_App_location_file), nameof(A_14_the_Library_location_is_resolved_only_in_the_App_location_file)),
             ("A-15", nameof(A_15_the_writer_lock_is_a_file_open_in_LibraryStore_and_there_is_no_named_kernel_object), nameof(A_15_the_writer_lock_is_a_file_open_in_LibraryStore_and_there_is_no_named_kernel_object)),
             ("A-22", nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back), nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back)),
+            ("SEC-15", nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path), nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path)),
             ("A-25 (a)", nameof(A_25_every_mutation_of_the_Library_needs_a_lease_part_a), nameof(A_25_part_a_rejects_the_violating_fixtures_and_accepts_the_compliant_ones)),
             ("A-25 (c)", nameof(A_25_part_c_leases_are_constructed_only_by_the_interlock_and_no_public_member_exposes_one), nameof(A_25_part_c_rejects_forged_leases_and_public_exposure)),
         };

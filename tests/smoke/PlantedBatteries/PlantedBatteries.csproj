@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Q-22's decoy: a managed assembly NAMED SQLitePCLRaw.batteries_v2 with the type Microsoft.Data.Sqlite looks up by name
+       (SQLitePCL.Batteries_V2). If anything ever loads it and calls Init, it writes the file named by SI_PLANT_MARKER, so the smoke
+       experiment can tell "loaded" from "ignored". It is never part of the product or the solution and is built only by
+       tests\smoke\Invoke-NativeLoadExperiments.ps1. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SQLitePCLRaw.batteries_v2</AssemblyName>
+    <RootNamespace>SQLitePCL</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

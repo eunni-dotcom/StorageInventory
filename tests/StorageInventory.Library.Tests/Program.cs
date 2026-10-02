@@ -9,6 +9,11 @@ if (args is ["--child", var scenario, ..])
     return ChildScenarios.Run(scenario, args[2..]);
 }
 
+if (args is ["--native-probe", var scratch])
+{
+    return NativeProbe.Run(scratch);   // Q-11 / Q-22: see tests\smoke\Invoke-NativeLoadExperiments.ps1
+}
+
 if (args is ["--benchmark", ..])
 {
     return LibraryBenchmark.Run(args[1..]);

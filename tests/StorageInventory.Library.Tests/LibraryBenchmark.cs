@@ -179,13 +179,16 @@ internal static class LibraryBenchmark
             GC.Collect();
             var dbBefore = new FileInfo(main).Length;
             var wsBefore = Process.GetCurrentProcess().WorkingSet64;
-            session.TestOnlyShutdown();
-
-            // a session for the measured import, with the engine's own size limit for the SQLITE_FULL run
-            var faults = limit == "full" ? new LibraryFaultInjection { LimitDatabaseToTwentyThousandPages = true } : null;
-            var measured = new LibrarySession(directory, appData, new LibrarySessionOptions { Faults = faults });
-            var status = measured.RunStartupOpen();
-            if (status.State != LibraryState.Available) throw new InvalidOperationException("not available: " + status.Message);
+            // the measured import runs in the session that did the prefill, except for the SQLITE_FULL run, which needs the engine's own
+            // size limit and so opens a session with it. (The foreign-key variant edits the schema, so a re-open would refuse it.)
+            var measured = session;
+            if (limit == "full")
+            {
+                session.TestOnlyShutdown();
+                measured = new LibrarySession(directory, appData, new LibrarySessionOptions { Faults = new LibraryFaultInjection { LimitDatabaseToTwentyThousandPages = true } });
+                var status = measured.RunStartupOpen();
+                if (status.State != LibraryState.Available) throw new InvalidOperationException("not available: " + status.Message);
+            }
             var peakJournal = 0L;
             using var stopSampling = new CancellationTokenSource();
             var sampler = Task.Run(() =>

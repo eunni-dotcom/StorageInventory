@@ -12,7 +12,7 @@
     Build    - build the whole solution
     Test     - build, then the unit tests (Core, History) and the integration tests (including PowerShell parity)
     Bench    - Release build, then the C# benchmarks
-    Publish  - clean, then a self-contained single-file win-x64 Release build into dist\ (prints its SHA-256)
+    Publish  - clean, then a self-contained single-file win-x64 Release build into dist\ (prints its SHA-256); restores in locked mode
     Dotnet   - run any dotnet command in the repo-local environment, e.g. -Target Dotnet -DotnetArgs sln,list
 .PARAMETER Configuration
     Debug (default) or Release, for Build and Test.
@@ -82,11 +82,13 @@ try {
             # Clean first: a publish from clean intermediate output is byte-for-byte reproducible, whereas reusing a
             # library compiled by an earlier solution build gives a different (equally valid) binary.
             # (clean needs restored assets, also in a fresh clone; publish then restores with its own runtime settings)
-            Invoke-Dotnet restore $sln '-nodeReuse:false'
+            # BLD-02: a publish restores in LOCKED mode: the packages.lock.json files are the only package graph that is accepted (NU1004
+            # if the graph drifts), for the plain restore and for the win-x64 restore of the publish itself (Q-12).
+            Invoke-Dotnet restore $sln '-p:RestoreLockedMode=true' '-nodeReuse:false'
             Invoke-Dotnet clean $sln -c Release '-nodeReuse:false'
             Invoke-Dotnet publish $app -c Release -r win-x64 `
                 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=none' `
-                '-p:EnableSingleFileAnalyzer=false' -o $dist '-nodeReuse:false'   # analyzer would need the extra Microsoft.NET.ILLink.Tasks package
+                '-p:EnableSingleFileAnalyzer=false' '-p:RestoreLockedMode=true' -o $dist '-nodeReuse:false'   # analyzer would need the extra Microsoft.NET.ILLink.Tasks package
             Get-ChildItem -LiteralPath $dist | Select-Object Name, Length | Format-Table -AutoSize
             'SHA-256 ' + (Get-FileHash -LiteralPath (Join-Path $dist 'StorageInventory.exe') -Algorithm SHA256).Hash
         }

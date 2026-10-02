@@ -30,8 +30,9 @@ Consumers:         "What are those files, and what should be done with them?"
 +-------------------------------------------------------------------+
             | IStorageInventoryScanner, records, results
 +-------------------------------------------------------------------+
-|  (future, 1.1)  Persistent inventory / index                      |
-|  snapshots, history, change detection (the Library, gate C4+)     |
+|  StorageInventory.Library  (v1.1 C4; internal, the only package   |
+|  user: SQLite). The store, the interlock and its leases, schema 1 |
+|  (C5: capture; C6+: history, comparison and the UI)               |
 +-------------------------------------------------------------------+
             | consumes scan observations, never re-scans itself
 +-------------------------------------------------------------------+
@@ -202,6 +203,30 @@ What each reading can and cannot tell:
 - **Network sources** are recognised by their canonical location only. A Windows SMB server returns the underlying volume's
   filesystem name and serials, so a share can look Strong on evidence alone; it never is, because confidence also needs a
   local source. Different spellings of a server (`\\nas`, `\\nas.local`, an address) are different sources: no name is resolved.
+
+## The Inventory Library (v1.1 gate C4: the persistent store, no capture yet)
+
+C4 builds the database the history will live in, and nothing that feeds it: the scanner is not wired to it (that is C5), there is
+no spool file, no comparison and no UI. The new project `src/StorageInventory.Library` is the SQLite adapter, and the only
+first-party project that references a package (four, pinned: `docs/release.md`). Everything in it is `internal`; the App
+references it for its runtime assets (`e_sqlite3.dll` among them) but cannot compile against SQLite
+(`PrivateAssets="compile"`, audit A-12).
+
+| Part | What it is |
+|---|---|
+| **`LibraryStore`** | Every file-system operation that creates or renames something: the writer lock (`library.lock`, opened with `FileShare.None` and held until the process exits), `FileMode.CreateNew` for the 0-byte `library.sqlite3` (SQLite never opens a file in a create mode), the 100-byte header pre-check and commit-generation read (no SQLite), and the one rename, set-aside (`File.Move(overwrite: false)`, main file first). Nothing in the product deletes a Library file |
+| **`LibraryDatabase`** | The only place a `SqliteConnection` is built: the provider is set explicitly, once, before the first connection; every connection has an explicit `Mode` (`ReadWrite` for the one writer, `ReadOnly` for readers) and `Pooling=False`; every open asserts `sqlite_version() = 3.53.3` and the exact `sqlite_source_id()`; every pragma is a constant that is read back. The writer exists only inside a mutation lease and runs its statements through SQLitePCLRaw's own API on the connection's handle (measured: the ADO.NET layer was the import's bottleneck) |
+| **`LibraryInterlock`** and the leases | The state machine of D-51: exactly one of **Idle**, **Mutating(kind)**, **Observing** or **Faulted**, in one field behind a private monitor that is never held across I/O. It is constructed already in `Mutating(Open)` holding the start-up lease, and first reaches Idle when that lease ends cleanly. A lease is a value with a never-reused id; it authorises work only while it is the interlock's current lease (same interlock, not disposed, not handed off, right kind), and every file or SQL operation checks that before it does anything, at `BEGIN IMMEDIATE`, every 16,384 rows and immediately before `COMMIT`. A non-current lease is a lifecycle defect: the operation is refused before any I/O and the interlock enters **Faulted**, which is terminal |
+| **`LibrarySession`** | One process's view of the Library: the writer lock, the interlock, the in-process reader/writer gate (readers coexist; a writer cancels them and waits), the derived state (nine: Not created, Available, Missing, Leftover files, Unavailable, In use, Incompatible, Not a Library, Damaged), and the leased operations: open and recovery (T-RECOVER), lock-first creation (T-CREATE), set-aside, the attempt rows, the one-transaction import and snapshot deletion |
+| **Schema 1** | The tables of §9.2, `STRICT`, names and paths as exact UTF-16 `BLOB`s, explicit stable integer codes (never enum ordinals), a frozen fingerprint of `sqlite_schema` checked at every open |
+| **Library path rules** | `History/Library/LibraryPathRules`, package-free: network, reparse point, sync root, the app-data root and every overlap of Library, source and report folder, literally and by canonical location (§6.4) |
+
+The engine runs a rollback journal (`journal_mode = TRUNCATE`, `synchronous = FULL`), never WAL: a read then writes no file
+(shown on Windows by TEST-W1), so the history pages may read while a scan observes a source that contains the Library. The
+journal is 0 bytes at rest; a non-empty journal after a crash is essential recovery material that only SQLite's own recovery,
+inside the Open lease, ever deletes. The Library holds private data (file names, paths, sizes, times) and lives only at
+`%LOCALAPPDATA%\StorageInventory\Library\`, resolved in one App file (`App/Services/LibraryLocation.cs`) and handed to the
+Library as an explicit directory.
 
 ## File identity
 

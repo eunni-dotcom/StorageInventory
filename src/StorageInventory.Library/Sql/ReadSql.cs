@@ -4,8 +4,12 @@ namespace StorageInventory.Library;
 /// top). Every query is bounded or an aggregate over one snapshot's primary-key range (A-24).</summary>
 internal static class ReadSql
 {
-    /// <summary>The published snapshots, oldest first (capture order is the snapshot id, SCH-11). Bounded by LIMIT.</summary>
-    internal const string ListSnapshots = "SELECT snapshot_id, source_id, state, files, folders, bytes FROM snapshot ORDER BY snapshot_id LIMIT $limit";
+    /// <summary>The snapshots, oldest first (capture order is the snapshot id, SCH-11), with the codes and counts the catalogue decodes
+    /// and range-checks (<c>LibraryCatalog.ListSnapshots</c>). Bounded by LIMIT; the primary key gives the order, so no sort is needed.</summary>
+    internal const string ListSnapshotSummaries = """
+        SELECT snapshot_id, source_id, state, completeness, files, folders, bytes, identity_confidence, identity_basis, library_inside_source, schema_version
+        FROM snapshot ORDER BY snapshot_id LIMIT $limit
+        """;
 
     internal const string CountFileRows = "SELECT count(*) FROM file_obs WHERE snapshot_id = $snapshot_id";
 

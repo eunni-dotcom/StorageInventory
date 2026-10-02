@@ -9,7 +9,9 @@ judged first on whether they keep it.
   scanned folder, change attributes or timestamps, or follow a junction or symbolic link. All file creation stays in
   `ReportRun` (Core); the only process launch stays in `ReportOpener` (App).
 - **No telemetry, network calls, auto-update, registry writes, services or elevation.**
-- **No third-party packages** without a strong reason discussed first in an issue.
+- **No third-party packages** without a strong reason discussed first in an issue. The only ones are the four SQLite packages of
+  the v1.1 persistence decision, referenced by `src/StorageInventory.Library` alone and pinned by the committed lock files
+  (audit rule A-11); `StorageInventory.Core` and `StorageInventory.History` stay package-free.
 - **Honest outcomes.** A cancelled, failed or partially readable scan must never look complete.
 - `tests/StorageInventory.IntegrationTests/SecurityAuditTests.cs` enforces much of this mechanically. If it fails,
   treat that as a design discussion, not a test to adjust.

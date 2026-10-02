@@ -127,10 +127,16 @@ installed machine-wide, and CLI telemetry is switched off.
 .\build.ps1 -Target Publish                       # dist\StorageInventory.exe (self-contained, single file) and its SHA-256
 ```
 
-`build.ps1` keeps all .NET and NuGet state inside the repository and restores your environment afterwards. The code
-references no packages. The only packages ever downloaded are Microsoft's two official .NET runtime packs, which the
-self-contained publish needs; [`nuget.config`](nuget.config) refuses anything else. A publish from a clean checkout is
-reproducible byte for byte. See [docs/release.md](docs/release.md).
+`build.ps1` keeps all .NET and NuGet state inside the repository and restores your environment afterwards. Exactly
+four packages are referenced, all by the one project that talks to the History database (`src/StorageInventory.Library`):
+`Microsoft.Data.Sqlite.Core` 10.0.12, `SQLitePCLRaw.core`, `SQLitePCLRaw.provider.e_sqlite3` and
+`SQLitePCLRaw.lib.e_sqlite3` 2.1.12, which carries `e_sqlite3.dll` (SQLite 3.53.3, win-x64). Their versions and content
+hashes are pinned by the committed `packages.lock.json` files, which a CI or publish restore must match exactly, and
+the other projects (the scanner, the app) reference no package. The only other packages ever downloaded are Microsoft's
+two official .NET runtime packs, which the self-contained publish needs; [`nuget.config`](nuget.config) names every
+allowed package by its exact ID and refuses anything else. The single-file executable bundles `e_sqlite3.dll`, which the
+.NET host extracts next to the other native files (see [docs/release.md](docs/release.md)); licences are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). A publish from a clean checkout is reproducible byte for byte.
 
 ## Testing
 
