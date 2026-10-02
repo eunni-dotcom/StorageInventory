@@ -36,7 +36,7 @@ $results = New-Object System.Collections.Generic.List[string]
 function Check([string] $name, [bool] $ok, [string] $detail = '') {
     $line = "$(if ($ok) { 'PASS' } else { 'FAIL' })  $name$(if ($detail) { ' -- ' + $detail })"
     $results.Add($line)
-    $line
+    Write-Host $line
 }
 function Run-Probe([string] $exe, [hashtable] $environment = @{}) {
     $saved = @{}
@@ -113,13 +113,25 @@ try {
     Check 'the planted managed assembly is not loaded (no assembly of that name, no module, no marker)' (-not (Test-Path -LiteralPath $marker) -and @($fifth.Lines | Where-Object { $_ -like 'assembly=SQLitePCLRaw.batteries_v2*' -or $_ -like 'module=*batteries_v2*' }).Count -eq 0) | Out-Null
     Remove-Item -LiteralPath (Join-Path $runDir 'SQLitePCLRaw.batteries_v2.dll') -Force
 
-    # ---- the control: a normal, non-single-file build probes its own folder
+    # ---- the controls. The product never asks for the decoy (A-25). These ask on the experiment's behalf so that "ignored" can be
+    #      told from "nothing asked" and from "the decoy is a dud": (a) a by-name request, which the runtime answers from the
+    #      application's dependency list only (so an undeclared assembly beside a NORMAL build is not found either), and (b) the same
+    #      decoy loaded by explicit path and initialised, which must write the marker.
+    Copy-Item -LiteralPath $decoy -Destination (Join-Path $runDir 'SQLitePCLRaw.batteries_v2.dll')
+    $single = Run-Probe $exe @{ SI_PROBE_RESOLVE_DECOY = '1' }
+    $singleResolve = [string]((Field $single 'decoy-resolve=') | Select-Object -First 1)
+    Check 'a by-name request for the planted assembly from the single-file exe is not satisfied' ($single.ExitCode -eq 0 -and $singleResolve -like 'notfound*') $singleResolve | Out-Null
+    Remove-Item -LiteralPath (Join-Path $runDir 'SQLitePCLRaw.batteries_v2.dll') -Force
     $control = Join-Path $Work 'control'
     Copy-Item -LiteralPath (Join-Path $repo 'tests\StorageInventory.Library.Tests\bin\Release\net10.0-windows') -Destination $control -Recurse
     Copy-Item -LiteralPath $decoy -Destination (Join-Path $control 'SQLitePCLRaw.batteries_v2.dll')
-    $controlRun = Run-Probe (Join-Path $control 'StorageInventory.Library.Tests.exe') @{ SI_PLANT_MARKER = $marker }
-    $controlRun.Lines | ForEach-Object { "  | control: $_" }
-    Check 'CONTROL: beside a non-single-file build the same decoy IS found by name (the experiment can tell loaded from ignored)' ((Test-Path -LiteralPath $marker) -or @($controlRun.Lines | Where-Object { $_ -like 'assembly=SQLitePCLRaw.batteries_v2*' }).Count -gt 0) | Out-Null
+    $controlEnv = @{ DOTNET_ROOT = (Join-Path $repo 'tools\dotnet') }
+    $byName = Run-Probe (Join-Path $control 'StorageInventory.Library.Tests.exe') ($controlEnv + @{ SI_PROBE_RESOLVE_DECOY = '1' })
+    $byNameResolve = [string]((Field $byName 'decoy-resolve=') | Select-Object -First 1)
+    Check 'a normal (non-single-file) build does not resolve an undeclared assembly beside it by name either' ($byNameResolve -like 'notfound*') $byNameResolve | Out-Null
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force }
+    $loaded = Run-Probe (Join-Path $control 'StorageInventory.Library.Tests.exe') ($controlEnv + @{ SI_PROBE_LOAD_DECOY = (Join-Path $control 'SQLitePCLRaw.batteries_v2.dll'); SI_PLANT_MARKER = $marker })
+    Check 'CONTROL: the decoy, loaded by explicit path and initialised, writes its marker (it is a working decoy)' ((Test-Path -LiteralPath $marker) -and @(Field $loaded 'marker-after=') -contains 'PLANTED-ASSEMBLY-WAS-INITIALISED') | Out-Null
 }
 finally {
     if (Test-Path -LiteralPath (Join-Path $env:TEMP ".net\$name")) { Remove-Item -LiteralPath (Join-Path $env:TEMP ".net\$name") -Recurse -Force -ErrorAction SilentlyContinue }

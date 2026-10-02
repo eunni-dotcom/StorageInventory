@@ -44,6 +44,29 @@ internal static class NativeProbe
         }
         Console.WriteLine("exe=" + Environment.ProcessPath);
         Console.WriteLine("marker=" + (File.Exists(Environment.GetEnvironmentVariable("SI_PLANT_MARKER") ?? "") ? "PLANTED-ASSEMBLY-WAS-LOADED" : "absent"));
+        // The experiment's own question to the runtime (set by the script, never by the product): "can a plain by-name load find the
+        // planted assembly?" It tells "ignored because nothing asked" from "ignored because the runtime would not find it".
+        if (Environment.GetEnvironmentVariable("SI_PROBE_RESOLVE_DECOY") == "1")
+        {
+            try
+            {
+                var found = System.Reflection.Assembly.Load(new System.Reflection.AssemblyName("SQLitePCLRaw.batteries_v2"));
+                Console.WriteLine("decoy-resolve=found " + (found.Location.Length == 0 ? "<bundle>" : found.Location));
+            }
+            catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                Console.WriteLine("decoy-resolve=notfound " + e.GetType().Name);
+            }
+        }
+        // The control: the decoy is a working assembly. Loaded by explicit path (which the product never does) and initialised, it
+        // writes the marker, so "the marker is absent" in the other runs means something.
+        if (Environment.GetEnvironmentVariable("SI_PROBE_LOAD_DECOY") is { Length: > 0 } decoyPath)
+        {
+            var decoy = System.Reflection.Assembly.LoadFrom(decoyPath);
+            decoy.GetType("SQLitePCL.Batteries_V2", throwOnError: true)!.GetMethod("Init", Type.EmptyTypes)!.Invoke(null, null);
+            Console.WriteLine("decoy-loaded=" + decoy.Location);
+            Console.WriteLine("marker-after=" + (File.Exists(Environment.GetEnvironmentVariable("SI_PLANT_MARKER") ?? "") ? "PLANTED-ASSEMBLY-WAS-INITIALISED" : "absent"));
+        }
         return status.State == LibraryState.Available ? 0 : 1;
     }
 }

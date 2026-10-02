@@ -60,7 +60,9 @@ internal static class LibraryBenchmark
                 runs.Add(("2M, SQLITE_FULL at 80 MiB", Common(2_000_000, false, 100_000, "full", false)));
                 break;
             case "all":
-                foreach (var files in new long[] { 1_000_000, 2_000_000, 10_000_000 }) runs.Add(($"import {files / 1_000_000}M", Common(files, false, 250_000, "none", files == 2_000_000)));
+                for (var round = 1; round <= 3; round++) runs.Add(($"import 1M (run {round})", Common(1_000_000, false, 250_000, "none", false)));
+                for (var round = 1; round <= 3; round++) runs.Add(($"import 2M (run {round})", Common(2_000_000, false, 250_000, "none", true)));
+                runs.Add(("import 10M", Common(10_000_000, false, 250_000, "none", false)));
                 for (var round = 0; round < 3; round++)
                 {
                     runs.Add(($"2M, no foreign keys (round {round + 1})", Common(2_000_000, false, 250_000, "none", false)));
