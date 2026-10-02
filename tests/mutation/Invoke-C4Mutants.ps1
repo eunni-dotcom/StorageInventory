@@ -53,7 +53,7 @@ $mutants = @(
     @{ Id = 'C4-03'; Suite = 'Library'; What = 'an observation window may open while a mutation is running'
        Edits = @(@{ File = $I; Find = "refusal = FaultedReason; }`n            else if (_kind != InterlockStateKind.Idle) { refusal = RefusalLocked(); }`n            else`n            {`n                var id = _nextLeaseId++;`n                _kind = InterlockStateKind.Observing;"; Replace = "refusal = FaultedReason; }`n            else if (_kind == InterlockStateKind.Observing) { refusal = RefusalLocked(); }`n            else`n            {`n                var id = _nextLeaseId++;`n                _kind = InterlockStateKind.Observing;" }) },
     @{ Id = 'C4-04'; Suite = 'Library'; What = 'the mutation epoch does not advance when a mutation begins (OBS-04a)'
-       Edits = @(@{ File = $I; Find = "_leaseId = id;`n                _epoch++;"; Replace = "_leaseId = id;" }) },
+       Edits = @(@{ File = $I; Find = "_owner = owner;`n                _leaseId = id;`n                _epoch++;"; Replace = "_owner = owner;`n                _leaseId = id;" }) },
     @{ Id = 'C4-05'; Suite = 'Library'; What = 'a mutation lease id is reused'
        Edits = @(@{ File = $I; Find = "var id = _nextLeaseId++;`n                _kind = InterlockStateKind.Mutating;`n                _mutation = kind;"; Replace = "var id = 1 + 0 * _nextLeaseId++;`n                _kind = InterlockStateKind.Mutating;`n                _mutation = kind;" }) },
     @{ Id = 'C4-06'; Suite = 'Library'; What = 'ending a lease with a resource still open does not fault'
