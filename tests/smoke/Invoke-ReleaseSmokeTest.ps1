@@ -5,6 +5,10 @@
     Copies dist\StorageInventory.exe to a folder OUTSIDE the repository, starts it WITHOUT any DOTNET_ROOT (so it
     must use its own bundled runtime), and drives it through UI Automation: browse, pre-flight, a complete scan,
     new scan, a cancelled scan, opening the report folder, and a clean exit. Prints PASS/FAIL lines.
+
+    UI Automation finds controls whether or not they reach the screen (v1.0.0 passed every check here while users saw
+    a blank window), so the setup and results screens are also checked on screen with VisualCheck.ps1. Needs an
+    interactive, unlocked desktop session.
 .PARAMETER Source
     A folder to scan successfully. .PARAMETER LargeSource: a folder large enough to cancel mid-scan.
 #>
@@ -16,6 +20,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\..\dist\StorageInventory.exe' }   # 5.1: $PSScriptRoot is empty in param defaults
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+. (Join-Path $PSScriptRoot 'VisualCheck.ps1')
 $A = [Windows.Automation.AutomationElement]
 $failures = 0
 function Check([bool]$ok, [string]$what, [string]$detail = '') {
@@ -67,6 +72,18 @@ Check ($fromSdk.Count -eq 0) 'Uses its bundled runtime (no module from an instal
 $coreclr = @($modules | Where-Object { $_ -like '*coreclr*' -or $_ -like '*hostfxr*' })
 Write-Host "      runtime modules: $(if ($coreclr) { $coreclr -join '; ' } else { 'embedded in the single-file host' })"
 
+# The setup screen is visible on screen, not only to UI Automation.
+Check (Wait-Until { Has $win 'NOT READY' } 30) 'Setup screen ready'
+$setupLandmarks = @(
+    @{ Name = 'Storage Inventory'; Type = [Windows.Automation.ControlType]::Text },
+    @{ Name = 'Folder to save the reports in'; Type = [Windows.Automation.ControlType]::Edit },
+    @{ Name = 'Browse for the folder or drive to scan'; Type = [Windows.Automation.ControlType]::Button },
+    @{ Name = 'Browse for the folder to save the reports in'; Type = [Windows.Automation.ControlType]::Button },
+    @{ Name = 'Sort individual files largest-first'; Type = [Windows.Automation.ControlType]::CheckBox },
+    @{ Name = 'Also create an Excel workbook (.xlsx)'; Type = [Windows.Automation.ControlType]::CheckBox }
+)
+foreach ($r in (Assert-WindowPainted -Hwnd $proc.MainWindowHandle -Landmarks $setupLandmarks -Label 'Setup screen' -SavePng (Join-Path $work 'setup.png'))) { Check $r.Ok $r.Name $r.Detail }
+
 # 2. Browse opens the folder dialog (cancelled again).
 Invoke-Button $win 'Browse for the folder or drive to scan'
 $dialogOpen = Wait-Until { $null -ne (Find-Window 'Choose a folder or drive to scan' $win) } 15
@@ -86,6 +103,12 @@ Invoke-Button $win 'Start scan'
 Check (Wait-Until { (Has $win 'SCAN COMPLETE') -or (Has $win 'SCAN FINISHED, BUT INCOMPLETE') } 300) 'Scan finishes and shows its outcome'
 $csvs = @(Get-ChildItem -LiteralPath $reports -Filter '*.csv')
 Check ($csvs.Count -eq 3) 'Three CSV reports written' "($($csvs.Name -join ', '))"
+$outcome = @('SCAN COMPLETE', 'SCAN FINISHED, BUT INCOMPLETE') | Where-Object { Has $win $_ } | Select-Object -First 1
+$resultsLandmarks = @(
+    @{ Name = 'Storage Inventory'; Type = [Windows.Automation.ControlType]::Text },
+    @{ Name = $outcome; Type = [Windows.Automation.ControlType]::Text }
+)
+foreach ($r in (Assert-WindowPainted -Hwnd $proc.MainWindowHandle -Landmarks $resultsLandmarks -Label 'Results screen' -SavePng (Join-Path $work 'results.png'))) { Check $r.Ok $r.Name $r.Detail }
 
 # 5. Open the report folder (explicit click): an Explorer window for that folder appears; close it again.
 $before = @(Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object Id)

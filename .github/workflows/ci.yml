@@ -49,6 +49,22 @@ jobs:
         shell: powershell
         run: .\build.ps1 -Target Publish
 
+      # UI Automation finds controls whether or not they reach the screen: v1.0.0 passed every UI Automation check while
+      # users saw a blank window. This gate starts the published exe from outside the repository, after clearing its
+      # single-file extraction folder, in the light and the dark app theme, and checks the pixels on screen.
+      - name: Visual startup gate (published exe)
+        shell: powershell
+        run: .\tests\smoke\Test-VisibleStartup.ps1 -Exe dist\StorageInventory.exe -Cold -OutDir "$env:RUNNER_TEMP\visual-startup"
+
+      - name: Upload visual startup screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-startup
+          path: ${{ runner.temp }}/visual-startup/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
