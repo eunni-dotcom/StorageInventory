@@ -1,0 +1,20 @@
+# plan rescan x2 started 2026-10-02T16:05:19.8602392Z, 16 logical CPUs, exe <scratch>\bin-pristine\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 4.36 of 16
+=== rescan 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 72,502; insertion files/s 91,705; peak journal 39.0 MB (FileInfo 39.0 MB); growth 70.1 MB; library before 392.5 MB; new names 10,187; other load mean 66.6%
+=== rescan 5% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 63,802; insertion files/s 91,867; peak journal 82.3 MB (FileInfo 82.3 MB); growth 74.9 MB; library before 392.5 MB; new names 50,275; other load mean 57.5%
+=== rescan 1% 250k/750k r1
+  target: 250,939 files in 62,500 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 70,613; insertion files/s 98,094; peak journal 9.6 MB (FileInfo 9.6 MB); growth 17.4 MB; library before 98.9 MB; new names 2,536; other load mean 67.6%
+=== rescan 1% 1M/3000k r2
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 54,825; insertion files/s 67,216; peak journal 39.0 MB (FileInfo 39.0 MB); growth 70.1 MB; library before 392.5 MB; new names 10,187; other load mean 59.2%
+=== rescan 5% 1M/3000k r2
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 52,389; insertion files/s 72,909; peak journal 82.3 MB (FileInfo 82.3 MB); growth 74.9 MB; library before 392.5 MB; new names 50,275; other load mean 55.1%
+=== rescan 1% 250k/750k r2
+  target: 250,939 files in 62,500 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 98,313; insertion files/s 129,697; peak journal 9.6 MB (FileInfo 9.6 MB); growth 17.4 MB; library before 98.9 MB; new names 2,536; other load mean 61.5%
+# plan rescan finished 2026-10-02T16:06:44.5491941Z; busy elsewhere (cores): total 4.86 of 16

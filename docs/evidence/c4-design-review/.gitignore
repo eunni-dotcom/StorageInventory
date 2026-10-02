@@ -1,0 +1,4 @@
+# The repository ignores *.log; the plan logs here are evidence (the C4 design review README listed them, C4DR-O02).
+!*.log
+!results/*.log
+!repair-results/*.log

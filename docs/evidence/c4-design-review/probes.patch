@@ -1,10 +1,10 @@
 diff --git a/src/StorageInventory.Library/DrProbe.cs b/src/StorageInventory.Library/DrProbe.cs
 new file mode 100644
-index 0000000..0640f9f
+index 0000000..396c164
 --- /dev/null
 +++ b/src/StorageInventory.Library/DrProbe.cs
-@@ -0,0 +1,57 @@
-+﻿using System.Globalization;
+@@ -0,0 +1,96 @@
++using System.Globalization;
 +
 +namespace StorageInventory.Library;
 +
@@ -53,6 +53,45 @@ index 0000000..0640f9f
 +        writer.Begin(lease);
 +    }
 +
++    // ---- C4 design repair instruments (IMP-11 pending growth, PERF-15 (a) journal copy) ----
++    internal static readonly string? GuardLog = Environment.GetEnvironmentVariable("SI_DR_GUARD_LOG");
++    internal static readonly string? JournalCopy = Environment.GetEnvironmentVariable("SI_DR_JOURNAL_COPY");
++    private static readonly long Started = System.Diagnostics.Stopwatch.GetTimestamp();
++
++    private static long Length(string path)
++    {
++        try
++        {
++            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
++            return fs.Length;
++        }
++        catch (IOException) { return -1; }
++    }
++
++    /// <summary>One IMP-11 observation: the transaction's page count and page size (on the writer, inside T-IMPORT), the main file's and
++    /// the journal's lengths through handles. Pending main-file growth = page_count x page_size - main length.</summary>
++    internal static void GuardSample(WriterConnection writer, MutationLease lease, string kind, long rows)
++    {
++        if (GuardLog is null || JournalPath is null) return;
++        long pageCount = -1, pageSize = -1;
++        if (kind != "postcommit")
++        {
++            pageCount = Convert.ToInt64(writer.Scalar(lease, "PRAGMA page_count"), CultureInfo.InvariantCulture);
++            pageSize = Convert.ToInt64(writer.Scalar(lease, "PRAGMA page_size"), CultureInfo.InvariantCulture);
++        }
++        var main = Length(JournalPath[..^"-journal".Length]);
++        var journal = Length(JournalPath);
++        var ms = System.Diagnostics.Stopwatch.GetElapsedTime(Started).TotalMilliseconds;
++        File.AppendAllText(GuardLog, string.Create(CultureInfo.InvariantCulture,
++            $"{{\"k\":\"{kind}\",\"rows\":{rows},\"pc\":{pageCount},\"ps\":{pageSize},\"main\":{main},\"journal\":{journal},\"ms\":{ms:0.0}}}") + Environment.NewLine);
++        if (kind == "precommit" && JournalCopy is not null)
++        {
++            using var src = new FileStream(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
++            using var dst = new FileStream(JournalCopy, FileMode.Create, FileAccess.Write);
++            src.CopyTo(dst);
++        }
++    }
++
 +    internal static void Report()
 +    {
 +        var path = Environment.GetEnvironmentVariable("SI_DR_PROBE_REPORT");
@@ -62,10 +101,10 @@ index 0000000..0640f9f
 +    }
 +}
 diff --git a/src/StorageInventory.Library/Import/SnapshotImporter.cs b/src/StorageInventory.Library/Import/SnapshotImporter.cs
-index 492b460..4fc3343 100644
+index 492b460..13a822d 100644
 --- a/src/StorageInventory.Library/Import/SnapshotImporter.cs
 +++ b/src/StorageInventory.Library/Import/SnapshotImporter.cs
-@@ -35,12 +35,15 @@ internal static class SnapshotImporter
+@@ -35,12 +35,18 @@ internal static class SnapshotImporter
              if (info.Exists && info.Length > peakJournal) peakJournal = info.Length;
          }
  
@@ -73,15 +112,18 @@ index 492b460..4fc3343 100644
          try
          {
              writer.Begin(lease);
++            DrProbe.GuardSample(writer, lease, "begin", 0);
              var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, SampleJournal, cancellation, stopwatch);
              var commitStart = Stopwatch.GetTimestamp();
 +            DrProbe.SampleBeforeCommit();
++            DrProbe.GuardSample(writer, lease, "precommit", result.Files);
              writer.Commit(lease);
++            DrProbe.GuardSample(writer, lease, "postcommit", result.Files);
 +            DrProbe.Report();
              var commit = Stopwatch.GetElapsedTime(commitStart);
              SampleJournal();
              return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = peakJournal, Phases = result.Phases! with { Commit = commit } };
-@@ -48,6 +51,7 @@ internal static class SnapshotImporter
+@@ -48,6 +54,7 @@ internal static class SnapshotImporter
          catch (Exception ex)
          {
              RollBackQuietly(writer, lease);
@@ -89,7 +131,7 @@ index 492b460..4fc3343 100644
              throw Translate(ex, lease);
          }
      }
-@@ -105,7 +109,7 @@ internal static class SnapshotImporter
+@@ -105,7 +112,7 @@ internal static class SnapshotImporter
          }
          InsertSnapshotRow(writer, lease, snapshotId, sourceId, attempt, header);
  
@@ -98,7 +140,7 @@ index 492b460..4fc3343 100644
          var counts = new Counters();
  
          // IMP-03 step 3: folders in ascending discovery index, parents first, interning folder paths.
-@@ -119,7 +123,21 @@ internal static class SnapshotImporter
+@@ -119,7 +126,21 @@ internal static class SnapshotImporter
          // IMP-03 step 4: files, visiting folders in path-id order and inserting each run in name-id order.
          phase = Stopwatch.GetTimestamp();
          var extensions = new ExtensionTotals();
@@ -121,7 +163,30 @@ index 492b460..4fc3343 100644
          var filesTime = Stopwatch.GetElapsedTime(phase);
  
          // IMP-03 step 5: error records. Step 6: the extension totals.
-@@ -261,7 +279,7 @@ internal static class SnapshotImporter
+@@ -128,6 +149,7 @@ internal static class SnapshotImporter
+         InsertExtensionTotals(writer, lease, snapshotId, extensions);
+         var errorsTime = Stopwatch.GetElapsedTime(phase);
+         options?.AfterRows?.Invoke();
++        DrProbe.GuardSample(writer, lease, "endrows", counts.Files);
+ 
+         // IMP-05: verification inside the transaction, before the final statements. Cancelling here rolls everything back (CAN-01d).
+         cancellation.ThrowIfCancellationRequested();
+@@ -138,6 +160,7 @@ internal static class SnapshotImporter
+         var verificationTime = Stopwatch.GetElapsedTime(phase);
+         if (failure is not null) throw new ImportException(CaptureFailureKind.InvariantViolation, "The snapshot failed its in-transaction verification: " + failure);
+         writer.CheckCurrent(lease);
++        DrProbe.GuardSample(writer, lease, "verified", counts.Files);
+ 
+         // IMP-06: the final statements, each required to change exactly one row.
+         var published = DateTime.UtcNow.Ticks;
+@@ -255,13 +278,14 @@ internal static class SnapshotImporter
+             {
+                 writer.CheckCurrent(lease);
+                 cancellation.ThrowIfCancellationRequested();
++                DrProbe.GuardSample(writer, lease, "folders", expected);
+             }
+         }
+         if (expected != pathIds.Length) throw new ImportException(CaptureFailureKind.InvariantViolation, "The folder section ended early.");
      }
  
      private static void InsertFiles(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, NameCache names, long[] pathIds,
@@ -130,7 +195,7 @@ index 492b460..4fc3343 100644
      {
          var order = new int[pathIds.Length];
          for (var i = 0; i < order.Length; i++) order[i] = i;
-@@ -300,6 +318,69 @@ internal static class SnapshotImporter
+@@ -300,6 +324,70 @@ internal static class SnapshotImporter
              pendingCount = 0;
          }
  
@@ -193,6 +258,7 @@ index 492b460..4fc3343 100644
 +                    cancellation.ThrowIfCancellationRequested();
 +                    sampleJournal();
 +                    options?.OnFileRows?.Invoke(counts.Files);
++                    DrProbe.GuardSample(writer, lease, "rows", counts.Files);
 +                }
 +            }
 +        }
@@ -200,7 +266,7 @@ index 492b460..4fc3343 100644
          foreach (var folderIndex in order)
          {
              var files = rows.FilesOfFolder(folderIndex);
-@@ -309,7 +390,7 @@ internal static class SnapshotImporter
+@@ -309,7 +397,7 @@ internal static class SnapshotImporter
              var sorted = new int[files.Count];
              for (var i = 0; i < files.Count; i++)
              {
@@ -209,7 +275,7 @@ index 492b460..4fc3343 100644
                  sorted[i] = i;
              }
              Array.Sort(ids, sorted);
-@@ -320,6 +401,11 @@ internal static class SnapshotImporter
+@@ -320,6 +408,11 @@ internal static class SnapshotImporter
                  extensions.Add(file.Name, file.Size);
                  counts.Files++;
                  if (pendingCount == BatchRows) Flush();
@@ -221,7 +287,15 @@ index 492b460..4fc3343 100644
                  if (counts.Files >= nextCheck)
                  {
                      nextCheck += CheckInterval;
-@@ -426,14 +512,28 @@ internal static class SnapshotImporter
+@@ -327,6 +420,7 @@ internal static class SnapshotImporter
+                     cancellation.ThrowIfCancellationRequested();
+                     sampleJournal();
+                     options?.OnFileRows?.Invoke(counts.Files);
++                    DrProbe.GuardSample(writer, lease, "rows", counts.Files);
+                 }
+             }
+         }
+@@ -426,14 +520,28 @@ internal static class SnapshotImporter
          private Dictionary<byte[], long> _young = new(ByteArrayComparer.Instance);
          private Dictionary<byte[], long> _old = new(ByteArrayComparer.Instance);
  
@@ -254,7 +328,7 @@ index 492b460..4fc3343 100644
          internal long NewNames { get; private set; }
  
          internal long Intern(byte[] name)
-@@ -450,14 +550,14 @@ internal static class SnapshotImporter
+@@ -450,14 +558,14 @@ internal static class SnapshotImporter
              bool isNew;
              if (_newRate > 0.5)
              {
@@ -272,7 +346,7 @@ index 492b460..4fc3343 100644
              }
              if (isNew) NewNames++;
              _newRate = _newRate * 0.995 + (isNew ? 0.005 : 0);
-@@ -466,7 +566,7 @@ internal static class SnapshotImporter
+@@ -466,7 +574,7 @@ internal static class SnapshotImporter
          }
  
          private long LookUp(byte[] name) =>

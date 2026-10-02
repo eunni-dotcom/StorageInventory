@@ -1,0 +1,92 @@
+# Evidence inventory
+
+Every file of `docs/evidence/c4-design-review/`, written by `manifest.py` (sizes in bytes; SHA-256 of the
+committed bytes, LF line endings). Regenerate after any change; `git diff` on this file shows what changed.
+
+| File | Bytes | SHA-256 |
+|---|---:|---|
+| `.gitignore` | 161 | `175a06e580d86e0f5f698be6fb673b48a72c6cea62193fd361d4dae326f1f0bd` |
+| `ERRATUM.md` | 10,637 | `20452772172c18cbd867cf9c869d282083b2ee0c4bdfb6cfc5f31d1354f69738` |
+| `README.md` | 7,288 | `b1f809690500e2e09313f921b3711da7d2b4793f0d46d5346579bb9fac69abf9` |
+| `b1_table.py` | 4,171 | `62c1a817d4f6777e9f7002dad952536dcb77bba92bbf8474436a24e7800c083e` |
+| `calibrate.py` | 3,565 | `b9f629ab5d013b7af2b150fc1c40c240fd5a1eaf0f5278bf2409673257571688` |
+| `harness.patch` | 111,833 | `19c53a365737ee86d76cc3637b36904333e9a1c027c50a949c4f4b9a2a255e7a` |
+| `journal_ranges.py` | 17,977 | `add19420651c25b3077c480f6be9305e2f83b3ffd99b86cd33344d302271ba5a` |
+| `load_probe.py` | 7,806 | `cf590d618d71ac6b7f405092a0bb22a8faa700ca126656523d68a29dcf19bd5f` |
+| `manifest.py` | 2,459 | `9c87b3c309e5deea73360bc1e8389c5627f6a0fbe8e72d6787506a1cc227ab7c` |
+| `name_census.py` | 8,118 | `8f0e74a06d3a80fe36734a609915dd3cbccf9a92f2689ca8d3dd9f74066fb15a` |
+| `overlap.py` | 2,333 | `6eb739e6ed4048329baa2fec3ec2c71e3c563632c3c233be5c1463031485554c` |
+| `prefill_provenance.py` | 4,377 | `ada601e94eb841e1729a93335570f28159f84f7453022ad48392ff5698d9a6be` |
+| `privacy_scan.py` | 6,575 | `79922e42158bc81283f28e6d39bc39d24a1f6db6fd686a6cbc74da7b17edefc4` |
+| `probes.patch` | 23,368 | `10719b9296db85b6402041c76ed4fa90073e65092feb3cfd11c212f5712f2901` |
+| `repair_tables.py` | 7,563 | `43fc6fcda4e9cae89c4c36026639091e4ad6dd0d2a3821e499522e647f70fff0` |
+| `sanitize.py` | 2,201 | `43708524335a8fbfda31b7d3d8885b4a9df6b5b094e7c5b5c9fab09f9cc0c2d2` |
+| `spec_check.py` | 13,629 | `07108456da40e5b9bf1a70bbeb76b707de727f1fde6507f5dcaf244c1ca450da` |
+| `tables.py` | 8,122 | `f066dfa1b34961c86779111c86c4a7ea2132200609f90e330fc4aba00559f185` |
+| `census/calibration.json` | 2,399 | `fffd3e9e146cdcdf759554abaaea57f5aa89beb2590ee4a87bf646e9b9f1c243` |
+| `census/data.json` | 4,158 | `72d72ccba5272c574d146ec9fade374bf8b57a34b000181ce87ab1aba916cf5a` |
+| `census/system.json` | 4,584 | `e9b9d2529dd089bf5901c332e1383bca360ba975863d6a7ef7b81ddf23e8cbbb` |
+| `repair-results/repair-dryrun-timing.jsonl` | 8,948 | `231d893db5287da5c9751d995d1f410cab5a305140bfef7ad53ec08f51bad868` |
+| `repair-results/repair-dryrun-timing.log` | 4,648 | `2d06fae3bf0ab0150643c4b2641faa895cd6aae22ef26fede0c54bfb5ce62242` |
+| `repair-results/repair-extra.jsonl` | 6,944 | `165b3167d91d991c0e4491e353bb1303a9d2667815f657f2c90f66d5349df69e` |
+| `repair-results/repair-extra.log` | 4,236 | `c32ff95c108427f8dc37e48fc4f4a8283b0838d4e362c50b1ad870a06cae1f70` |
+| `repair-results/repair-rollback.jsonl` | 4,662 | `704cf8ffd36fe4574a27bedd52f2888f9f4740386486defb739910e26c98706e` |
+| `repair-results/repair-rollback.log` | 3,326 | `2f0fc0053f219a5b537b659b95399c0ec684a9244a2687a708f6b80d77549360` |
+| `repair-results/repair-smoke.log` | 7,827 | `4a8f5901a4fd6a13000b8952dc0c571c8ea4cacb74c980c3c992c38d72889817` |
+| `repair-results/repair-structure.jsonl` | 16,603 | `8c7a26937316eea810268e64e93d099b45994000ba0586064c0750107e5f02b7` |
+| `repair-results/repair-structure.log` | 10,758 | `024f9f17bb92c8404469712c65a23bc7e2e24a861ce2f3958fb4c5f1b9cefac6` |
+| `repair-results/repair-timing.jsonl` | 26,904 | `2741f7bb75f4cd731163ec1798e9af238638fa48bc2901e8d03885b94a919467` |
+| `repair-results/repair-timing.log` | 13,265 | `ae97f2986dea5619d45c9737161f37aec27718a5f3d965ee3efe1755b6e2f49d` |
+| `repair-results/load/during-runs.json` | 724 | `ee652737834f85d903f568132f8ef32e2bbb198bb573611987575d2e602c8e6b` |
+| `repair-results/load/handle-count.json` | 49 | `84280fd3da2ff6c4012205e306e82187409b620805a398d669ffba210f3df485` |
+| `repair-results/load/quiet-check.json` | 719 | `9c2af33044586cd02fee06a3c8633dbedc2c96fd9bc9849f8fa89c5d086640f5` |
+| `repair-results/ranges/global-hash-existing-1M-750k.json` | 3,008 | `e0df221ca398aa9fd166113258b73642f8fc9a69fb775a92852c4a6cb8a7a5a1` |
+| `repair-results/ranges/global-hash-new-source-1M-750k.json` | 3,703 | `d4dd17ac89a7ec8f94f85486e2251e1f57f1cc44a42d09ef9608d2c25da0b42a` |
+| `repair-results/ranges/persource-hash-existing-1M-3000k.json` | 2,549 | `c16ca5bd73fea2f8d686ad31fd0d0014028ed005fc45bd2b289924f461ff8011` |
+| `repair-results/ranges/persource-hash-new-source-1M-3000k.json` | 3,352 | `73d02a9f39b0f8dbad35b5c72a005181b2448976e37d10f0331733b9534b3c26` |
+| `repair-results/ranges/persource-obj-first-2M-6000k-d25.json` | 3,355 | `451da080f0579a71c83f053796d087a945ca048cc0bab8dcdff0d62df5c87d5e` |
+| `repair-results/ranges/persource-objrescan-2M-6000k-n1.json` | 2,567 | `5b7a98095317bcf0a6caeb0b7a53c9d4a2f58c8d1716b862761144ca4b15a6c5` |
+| `results/analyse.jsonl` | 14,807 | `c444fe8818f5298b0f94b4e6778227eb45d23d740b979a4b3ea63cd97926d993` |
+| `results/analyse.log` | 6,950 | `bb924cff2f2e12765edb56658358315a12023382f3fe8b10e8ff16bc8b5c66bb` |
+| `results/big.jsonl` | 2,803 | `ca9fe1539c107b47bb83fcce8e85e6eb89935bfbce5125685002c17f2fc5bb78` |
+| `results/big.log` | 943 | `4cdff40083518e05df2b94f0790d270f5a057cb32846cc34678e53b8c23bbf7c` |
+| `results/extra.jsonl` | 3,399 | `6d1e4b1c62c5b9100389959dc664029a3286fa80131244ced59c1f14a85ac5e1` |
+| `results/extra.log` | 1,428 | `19476f6dd30890985b2cfa14f883ad6626ba1e27f311fd08fb702afc6fb15784` |
+| `results/mixed.jsonl` | 16,627 | `920909222654e38454d50670b9b64ddf8edd53ad884bcd9d870092128e230a68` |
+| `results/mixed.log` | 4,464 | `5a5115b93da34fe2f854245b12f8d26c2a2edb6909db52cc7df6eedc976e2fdb` |
+| `results/newsource.jsonl` | 8,369 | `7cf3c8e815fb0c5e288ca71be02f861a30597ff30299f3c2fcc027ab6fac2016` |
+| `results/newsource.log` | 2,366 | `bd935baf5357ca703ee1c6d36ef513ac05a1794f6976460b3c8772f3330c799b` |
+| `results/prefillcheck.jsonl` | 5,556 | `48774bfc6e929ab97107d7a3a2deee7fd5b97c54cd5e005da73bbf1029f639c9` |
+| `results/prefillcheck.log` | 1,656 | `3461fe26b9d9063f400820ee792edcd729c8cd29fb21a7ec338ea5fd43183683` |
+| `results/probe-batch.jsonl` | 4,964 | `7f21c92b35059545ed5dcc2aa2cddd4dc9cf0c6141057f5f836c948e4765c0dd` |
+| `results/probe-batch.log` | 1,349 | `96cadd25879100d3a43ce227d14bf4573b24204876bb0bc32cb7fe9b110c8386` |
+| `results/probe-cache-analyse.jsonl` | 4,137 | `b7fb6c0df3c56347820daba2d8c0f91ce74a3928b21d22d855658bb9c1fe4a0c` |
+| `results/probe-cache-analyse.log` | 1,934 | `2ca5d1c318d8de71c45458e599391eac89181dcf9a6d2b1ed0bd67bf962329c5` |
+| `results/probe-cache.jsonl` | 3,227 | `d6c45a0e5b6f2540f57d82cb7bb7d60849d62faf09ad2097b4564ffb8dacfd68` |
+| `results/probe-cache.log` | 984 | `e98e9c35dc0b76e753beb1b86266417408bdbfe16b4956efc8367fa0066ae2a9` |
+| `results/probe-chunked.jsonl` | 12,885 | `5584209582d24e9126a2fbcf126fbcc2f16ed4b41cbca9648a2f6959fd59d4fa` |
+| `results/probe-chunked.log` | 3,076 | `c831c4f96b146937cf3888f0063170dd98f936274444af1b09ab49255d990afb` |
+| `results/probe-combined-analyse.jsonl` | 8,451 | `8523612bb14c50f8ac662ed7d6015a9efd613fb1001f8dc489919bb61e358e0d` |
+| `results/probe-combined-analyse.log` | 3,776 | `1b5ef808242f05943f8e7253666e65067f8940ccdd9f3aadab3b971ad78dbc8f` |
+| `results/probe-combined.jsonl` | 23,089 | `db48ebf41f78e88ce50e635a2908cbf0e4639943d07f36bdda6eba9dd7f87122` |
+| `results/probe-combined.log` | 5,828 | `01c8b8c5f90128850f3e0286af541ca5f0ca26f04382210fcc806c686a53f267` |
+| `results/probe-persource-analyse.jsonl` | 9,790 | `672dfc67cf329125b67295878b79115685fff4f902a447e873754fd5577619a9` |
+| `results/probe-persource-analyse.log` | 4,203 | `5b504fbc1d65bdb0f97c493ad38cafee36c002bc7c7ca905c39ce1ca8130c18f` |
+| `results/probe-persource-real.jsonl` | 11,280 | `3d5974f020a141764cefe48c0103859ab5d5adba337e2a20a619fce0ecaf4c81` |
+| `results/probe-persource-real.log` | 3,023 | `25cd9d187f7b4fc9dc8a4773fc2096f93c06deec06a223887d841f469b9b2021` |
+| `results/probe-persource.jsonl` | 8,000 | `0e4f62a52c6115f6e086bd27bf5aba6623994917577af8e1b37ec6be204d9587` |
+| `results/probe-persource.log` | 2,159 | `acafbe0258c22b49a5099893d867f353464d1095bdeb9aa9af0e2fea9df9b3a0` |
+| `results/probe-presort.jsonl` | 4,792 | `658ea87ba75db29d10734fda55a59aee5b467d34fa027047d0f7c4876cf07c7a` |
+| `results/probe-presort.log` | 1,323 | `462d42dcf74aa6653ec63ec60a8201c50afa4a5c6a65307b907f130d3beeef6f` |
+| `results/realrescan.jsonl` | 4,384 | `3454f2d7e10478ce465abdf3786675c7af2848af48182ac2d5a43d5c9b0489bb` |
+| `results/realrescan.log` | 1,409 | `51a827b194bfa1ae3d0b096495d0948d27862388c2cb4409aee0f028a7f6699e` |
+| `results/repro.jsonl` | 25,004 | `7b14fb16fc43b5e0bab5df30cc5061cb204924ac33f06ef01a8a9bd67c6dc1a0` |
+| `results/repro.log` | 6,692 | `72abfd3d83fd8d730b741ed848b56c6aa387e1a9405d6433d4ca10b2f59a7d09` |
+| `results/rescan.jsonl` | 8,368 | `15889eed571668a656f1f4e4294ed99464edda547d2ab41fa4133e94a64ae88d` |
+| `results/rescan.log` | 2,321 | `0776aec8a9e10cf83c7f445f26c58537fe7bcae4cebf5791c65b7db94a31948d` |
+| `results/rollback.jsonl` | 12,428 | `35e583edb12c021bf2f8ff2fd4459f75280f66ad1023066556c6e1e5b58239b0` |
+| `results/rollback.log` | 5,539 | `f679b7c77097db4ff3e9f53a782dc3bb1981b1c926ff742dee58690c448087fb` |
+| `results/size.jsonl` | 11,044 | `9b2ee86d41e3dcf482c635cec2ab3d9db0ffe49f6648d9be35428013071af2b3` |
+| `results/size.log` | 3,210 | `7b184249355b3c4cac0cabdb08015e806be5a96e61595be1ed85311871e13f1c` |
+
+83 files.

@@ -1,0 +1,26 @@
+# plan probe:chunked x2 started 2026-10-02T16:25:11.5762502Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 2.04 of 16
+=== chunked hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 48,566; insertion files/s 81,797; peak journal 88.6 MB (FileInfo 88.6 MB); growth 123.4 MB; library before 392.5 MB; new names 499,571; other load mean 51.9%
+=== chunked rescan 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 61,359; insertion files/s 84,298; peak journal 38.9 MB (FileInfo 38.9 MB); growth 70.0 MB; library before 392.5 MB; new names 10,187; other load mean 53.5%
+=== chunked mixed 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 348.1 MB (89,120 pages, 0 free), 1,148,325 names (48.4 MB of UTF-16), 500,000 folder paths
+  files/s 38,573; insertion files/s 61,305; peak journal 63.5 MB (FileInfo 63.5 MB); growth 107.1 MB; library before 348.1 MB; new names 349,617; other load mean 63.3%
+=== chunked append 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  files/s 78,584; insertion files/s 104,182; peak journal 0.2 MB (FileInfo 0.2 MB); growth 127.5 MB; library before 375.9 MB; new names 499,571; other load mean 56.9%
+=== chunked hash 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 39,686; insertion files/s 60,248; peak journal 88.6 MB (FileInfo 88.6 MB); growth 123.4 MB; library before 392.5 MB; new names 499,571; other load mean 47.5%
+=== chunked rescan 1% 1M/3000k r2
+  target: 1,000,846 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 76,234; insertion files/s 99,257; peak journal 38.9 MB (FileInfo 38.9 MB); growth 70.0 MB; library before 392.5 MB; new names 10,187; other load mean 41.8%
+=== chunked mixed 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 348.1 MB (89,120 pages, 0 free), 1,148,325 names (48.4 MB of UTF-16), 500,000 folder paths
+  files/s 52,441; insertion files/s 76,812; peak journal 63.5 MB (FileInfo 63.5 MB); growth 107.1 MB; library before 348.1 MB; new names 349,617; other load mean 38.4%
+=== chunked append 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  files/s 83,184; insertion files/s 120,333; peak journal 0.2 MB (FileInfo 0.2 MB); growth 127.5 MB; library before 375.9 MB; new names 499,571; other load mean 48.8%
+# plan probe:chunked finished 2026-10-02T16:27:56.4935361Z; busy elsewhere (cores): total 2.17 of 16

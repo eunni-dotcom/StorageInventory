@@ -1,0 +1,14 @@
+# plan extra x1 started 2026-10-02T16:56:14.3009611Z, 16 logical CPUs, exe <scratch>\bin-pristine3\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.14 of 16
+=== hash 2M/6000k r1
+  target: 1,997,023 files in 500,000 folders; library before 785.7 MB (201,139 pages, 0 free), 3,019,497 names (132.5 MB of UTF-16), 1,000,000 folder paths
+  files/s 39,499; insertion files/s 48,710; peak journal 177.2 MB (FileInfo 177.2 MB); growth 251.2 MB; library before 785.7 MB; new names 998,418; other load mean 46.0%
+=== mixed 2M/6000k r1
+  building prefill mixed-2000000
+    prefill mixed 3x2,000,000 built in 103.1 s, 689.6 MB
+  target: 1,997,023 files in 500,000 folders; library before 689.6 MB (176,536 pages, 0 free), 2,196,534 names (94.2 MB of UTF-16), 1,000,000 folder paths
+  files/s 43,985; insertion files/s 58,068; peak journal 124.9 MB (FileInfo 124.9 MB); growth 217.0 MB; library before 689.6 MB; new names 699,070; other load mean 49.3%
+=== crash hash 2M/6000k
+  target: 1,997,023 files in 500,000 folders; library before 785.7 MB (201,139 pages, 0 free), 3,019,497 names (132.5 MB of UTF-16), 1,000,000 folder paths
+  recovery open: 3.340 s, hot journal 177.2 MB, main 1036.1 -> 785.7 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 177.2 MB; next open 3.34 s, state Available
+# plan extra finished 2026-10-02T17:00:53.5369050Z; busy elsewhere (cores): total 3.25 of 16

@@ -1,0 +1,11 @@
+# plan probe:batch x1 started 2026-10-02T16:38:07.4457340Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 5.22 of 16
+=== batched 131072 hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 23,373; insertion files/s 26,243; peak journal 104.8 MB (FileInfo 104.8 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 55.5%
+=== batched 16384 hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 10,944; insertion files/s 11,392; peak journal 35.4 MB (FileInfo 35.4 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 54.6%
+=== batched 131072 fails after 4 batches hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 0; insertion files/s 0; peak journal 95.3 MB (FileInfo 95.3 MB); growth 72.3 MB; library before 392.5 MB; new names 0; other load mean 50.2%
+# plan probe:batch finished 2026-10-02T16:40:49.5799655Z; busy elsewhere (cores): total 3.05 of 16

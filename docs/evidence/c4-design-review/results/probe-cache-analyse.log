@@ -1,0 +1,10 @@
+# plan probe:cache-analyse x1 started 2026-10-02T16:32:58.7590793Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 2.33 of 16
+=== analyse cache 16MiB hash 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  analysis: journal 92924256 B, 8 segment(s) (7 synced), sector 512, page 4096, 22641 records, 22641 distinct pages (0 repeats), 4104 B per distinct page, original 100482 pages; journalled/total by B-tree: sqlite_autoindex_name_1 22611/22811, file_obs 10/41566, folder_obs 10/11153, name 5/20502, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, snapshot_extension_total 1/1, folder_path_child 0/2226, folder_path 0/2206
+  files/s 33,269; insertion files/s 40,775; peak journal 88.6 MB (FileInfo 88.6 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 51.8%
+=== analyse cache 256MiB hash 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  analysis: journal 92919176 B, 1 segment(s) (0 synced), sector 512, page 4096, 22641 records, 22641 distinct pages (0 repeats), 4104 B per distinct page, original 100482 pages; journalled/total by B-tree: sqlite_autoindex_name_1 22611/22811, file_obs 10/41566, folder_obs 10/11153, name 5/20502, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, snapshot_extension_total 1/1, folder_path_child 0/2226, folder_path 0/2206
+  files/s 72,954; insertion files/s 100,640; peak journal 88.6 MB (FileInfo 88.6 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 46.6%
+# plan probe:cache-analyse finished 2026-10-02T16:33:51.4573783Z; busy elsewhere (cores): total 2.43 of 16

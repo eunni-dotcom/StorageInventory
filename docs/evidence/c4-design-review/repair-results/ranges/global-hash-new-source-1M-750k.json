@@ -1,0 +1,295 @@
+{
+ "verdict": "FAIL",
+ "target_source": 3,
+ "new_source": true,
+ "dictionary_layout": "Library-wide (name only)",
+ "journal_bytes": 23423024,
+ "segments": 2,
+ "synced_segments": 1,
+ "integrity": {
+  "records": 5707,
+  "checksum_failures": 0,
+  "repeats": 0,
+  "beyond_end": 0,
+  "image_mismatch": 0
+ },
+ "database_pages": 25311,
+ "page_size": 4096,
+ "remote_pages": 5662,
+ "defect_pages": 0,
+ "levels_over_shared_cap": [
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   5569
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   2,
+   90
+  ]
+ ],
+ "in_runs": {
+  "folder_path_child level 0": [
+   0,
+   0,
+   1
+  ],
+  "folder_path_child level 1": [
+   2,
+   2,
+   3
+  ],
+  "folder_path_child level 2": [
+   542,
+   542,
+   543
+  ],
+  "folder_path_root level 0": [
+   0,
+   0,
+   1
+  ]
+ },
+ "by_tree": {
+  "file_obs": {
+   "0": {
+    "journalled": 1,
+    "IN": 1
+   },
+   "1": {
+    "journalled": 2,
+    "ADJACENT": 1,
+    "IN": 1
+   },
+   "2": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "IN": 1
+   },
+   "3": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "IN": 1
+   }
+  },
+  "folder_obs": {
+   "0": {
+    "journalled": 1,
+    "IN": 1
+   },
+   "1": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "IN": 1
+   },
+   "2": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "IN": 1
+   }
+  },
+  "folder_path": {
+   "0": {
+    "journalled": 1,
+    "IN": 1
+   },
+   "1": {
+    "journalled": 2,
+    "ADJACENT": 1,
+    "IN": 1
+   },
+   "2": {
+    "journalled": 1,
+    "IN": 1
+   }
+  },
+  "folder_path_child": {
+   "0": {
+    "journalled": 1,
+    "IN": 1,
+    "SHARED": 1
+   },
+   "1": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "SHARED": 3,
+    "IN": 1
+   },
+   "2": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "SHARED": 3,
+    "IN": 1
+   }
+  },
+  "folder_path_root": {
+   "0": {
+    "journalled": 1,
+    "IN": 1,
+    "SHARED": 1
+   }
+  },
+  "library_info": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "name": {
+   "0": {
+    "journalled": 1,
+    "IN": 1
+   },
+   "1": {
+    "journalled": 3,
+    "ADJACENT": 2,
+    "IN": 1
+   },
+   "2": {
+    "journalled": 1,
+    "IN": 1
+   }
+  },
+  "page 1": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "scan_attempt": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "scan_attempt_by_source": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "snapshot": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "snapshot_by_source": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "snapshot_extension_total": {
+   "0": {
+    "journalled": 1,
+    "IN": 1
+   }
+  },
+  "source": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "source_local_key": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "sqlite_autoindex_name_1": {
+   "0": {
+    "journalled": 1,
+    "REMOTE": 1,
+    "SHARED": 1
+   },
+   "1": {
+    "journalled": 2,
+    "REMOTE": 2,
+    "SHARED": 2
+   },
+   "2": {
+    "journalled": 90,
+    "REMOTE": 90,
+    "SHARED": 90
+   },
+   "3": {
+    "journalled": 5569,
+    "REMOTE": 5569,
+    "SHARED": 5569
+   }
+  },
+  "sqlite_autoindex_snapshot_1": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "volume": {
+   "-": {
+    "allowed": 1
+   }
+  },
+  "volume_by_serial": {
+   "-": {
+    "allowed": 1
+   }
+  }
+ },
+ "remote_examples": [
+  [
+   "sqlite_autoindex_name_1",
+   0,
+   0,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   197,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   198,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   199,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   200,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   201,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   202,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   203,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   205,
+   null
+  ],
+  [
+   "sqlite_autoindex_name_1",
+   3,
+   206,
+   null
+  ]
+ ],
+ "defects": []
+}

@@ -1,0 +1,11 @@
+# plan probe:presort x1 started 2026-10-02T16:31:35.0904030Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.80 of 16
+=== presort hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 42,663; insertion files/s 72,666; peak journal 88.6 MB (FileInfo 88.6 MB); growth 123.3 MB; library before 392.5 MB; new names 499,571; other load mean 62.2%
+=== presort hash 2M/750k r1
+  target: 1,997,023 files in 500,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 52,856; insertion files/s 100,355; peak journal 22.3 MB (FileInfo 22.3 MB); growth 262.8 MB; library before 98.9 MB; new names 998,419; other load mean 49.4%
+=== presort append 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  files/s 86,897; insertion files/s 114,061; peak journal 0.2 MB (FileInfo 0.2 MB); growth 128.5 MB; library before 375.9 MB; new names 499,571; other load mean 50.0%
+# plan probe:presort finished 2026-10-02T16:32:55.6098767Z; busy elsewhere (cores): total 3.23 of 16

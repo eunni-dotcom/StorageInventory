@@ -1,0 +1,27 @@
+# plan probe:persource-real x1 started 2026-10-02T16:48:53.6329819Z, 16 logical CPUs, exe <scratch>\bin-probes3\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.09 of 16
+=== persource rescanreal 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 231.1 MB (59,172 pages, 0 free), 72,657 names (2.9 MB of UTF-16), 500,000 folder paths
+  files/s 146,427; insertion files/s 237,954; peak journal 1.5 MB (FileInfo 1.5 MB); growth 71.3 MB; library before 231.1 MB; new names 10,187; other load mean 52.8%
+=== persource rescanreal 1% 2M/6000k r1
+  building prefill real-2000000-persource
+    prefill real 3x2,000,000 built in 38.1 s, 455.4 MB
+  target: 2,001,707 files in 500,000 folders; library before 455.4 MB (116,580 pages, 0 free), 72,678 names (2.9 MB of UTF-16), 1,000,000 folder paths
+  files/s 129,610; insertion files/s 201,295; peak journal 1.6 MB (FileInfo 1.6 MB); growth 142.8 MB; library before 455.4 MB; new names 20,121; other load mean 52.9%
+=== persource real new-source 2M/6000k r1
+  target: 1,997,023 files in 500,000 folders; library before 455.4 MB (116,580 pages, 0 free), 72,678 names (2.9 MB of UTF-16), 1,000,000 folder paths
+  files/s 128,350; insertion files/s 182,135; peak journal 0.2 MB (FileInfo 0.2 MB); growth 195.1 MB; library before 455.4 MB; new names 110,783; other load mean 51.1%
+=== persource mixed new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 359.1 MB (91,933 pages, 0 free), 1,245,498 names (50.9 MB of UTF-16), 500,000 folder paths
+  files/s 79,201; insertion files/s 113,890; peak journal 0.2 MB (FileInfo 0.2 MB); growth 127.5 MB; library before 359.1 MB; new names 446,786; other load mean 56.6%
+=== persource mixed existing 2M/6000k r1
+  building prefill mixed-2000000-persource
+    prefill mixed 3x2,000,000 built in 98.8 s, 706.0 MB
+  target: 1,997,023 files in 500,000 folders; library before 706.0 MB (180,737 pages, 0 free), 2,295,185 names (96.7 MB of UTF-16), 1,000,000 folder paths
+  files/s 37,441; insertion files/s 53,138; peak journal 85.6 MB (FileInfo 85.6 MB); growth 218.3 MB; library before 706.0 MB; new names 699,072; other load mean 57.3%
+=== persource hash existing 2M/6000k r1
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  files/s 39,410; insertion files/s 48,937; peak journal 120.2 MB (FileInfo 120.2 MB); growth 255.0 MB; library before 796.6 MB; new names 998,418; other load mean 54.0%
+=== persource hash new-source 2M/6000k r1
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  files/s 79,473; insertion files/s 111,749; peak journal 0.2 MB (FileInfo 0.2 MB); growth 278.1 MB; library before 796.6 MB; new names 1,016,916; other load mean 46.6%
+# plan probe:persource-real finished 2026-10-02T16:54:35.5771865Z; busy elsewhere (cores): total 4.23 of 16

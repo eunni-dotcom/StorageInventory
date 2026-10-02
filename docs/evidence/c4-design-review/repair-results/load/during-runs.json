@@ -1,0 +1,41 @@
+{
+ "seconds": 150.0,
+ "interval_s": 0.5,
+ "samples": 292,
+ "logical_processors": 16,
+ "processes_per_sample": {
+  "mean": 451.18,
+  "p95": 454,
+  "max": 456
+ },
+ "pids_seen": 636,
+ "renumbered_instance_samples_discarded": 12,
+ "new_process_samples_without_rate": 183,
+ "misaligned_collections_discarded": 0,
+ "defender_engine_visible": true,
+ "external_percent": {
+  "mean": 31.38,
+  "p95": 61.78,
+  "max": 71.87
+ },
+ "induced_percent": {
+  "mean": 2.64,
+  "p95": 7.97,
+  "max": 12.01
+ },
+ "own_percent": {
+  "mean": 3.05,
+  "p95": 7.46,
+  "max": 8.98
+ },
+ "external_plus_induced_percent": {
+  "mean": 34.03,
+  "p95": 66.15,
+  "max": 72.68
+ },
+ "whole_machine_percent": {
+  "mean": 45.0,
+  "p95": 71.91,
+  "max": 82.55
+ }
+}

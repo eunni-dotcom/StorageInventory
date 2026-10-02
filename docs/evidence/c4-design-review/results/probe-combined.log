@@ -1,0 +1,52 @@
+# plan probe:combined x2 started 2026-10-02T16:15:25.6941403Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 4.95 of 16
+=== persource+chunked hash existing 1M/3000k r1
+  building prefill hash-1000000-persource
+    prefill hash 3x1,000,000 built in 42.7 s, 397.6 MB
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 75,119; insertion files/s 113,633; peak journal 59.4 MB (FileInfo 59.4 MB); growth 124.8 MB; library before 397.6 MB; new names 499,571; other load mean 53.6%
+=== persource+chunked hash new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 79,111; insertion files/s 115,484; peak journal 0.2 MB (FileInfo 0.2 MB); growth 138.6 MB; library before 397.6 MB; new names 518,069; other load mean 55.5%
+=== persource+chunked rescan 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 76,167; insertion files/s 124,841; peak journal 37.0 MB (FileInfo 37.0 MB); growth 70.4 MB; library before 397.6 MB; new names 10,187; other load mean 59.2%
+=== persource+chunked mixed existing 1M/3000k r1
+  building prefill mixed-1000000-persource
+    prefill mixed 3x1,000,000 built in 59.7 s, 359.1 MB
+  target: 999,111 files in 250,000 folders; library before 359.1 MB (91,933 pages, 0 free), 1,245,498 names (50.9 MB of UTF-16), 500,000 folder paths
+  files/s 52,239; insertion files/s 103,749; peak journal 43.0 MB (FileInfo 43.0 MB); growth 108.9 MB; library before 359.1 MB; new names 349,656; other load mean 58.0%
+=== persource+chunked mixed new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 359.1 MB (91,933 pages, 0 free), 1,245,498 names (50.9 MB of UTF-16), 500,000 folder paths
+  files/s 59,289; insertion files/s 95,536; peak journal 0.2 MB (FileInfo 0.2 MB); growth 127.0 MB; library before 359.1 MB; new names 446,786; other load mean 59.7%
+=== persource+chunked hash existing 2M/6000k r1
+  building prefill hash-2000000-persource
+    prefill hash 3x2,000,000 built in 125.6 s, 796.6 MB
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  files/s 49,375; insertion files/s 75,170; peak journal 120.2 MB (FileInfo 120.2 MB); growth 253.4 MB; library before 796.6 MB; new names 998,418; other load mean 61.2%
+=== persource+chunked append existing 1M/3000k r1
+  building prefill append-1000000-persource
+    prefill append 3x1,000,000 built in 47.1 s, 383.0 MB
+  target: 999,111 files in 250,000 folders; library before 383.0 MB (98,036 pages, 0 free), 1,537,047 names (59.9 MB of UTF-16), 500,000 folder paths
+  files/s 72,621; insertion files/s 103,983; peak journal 0.2 MB (FileInfo 0.2 MB); growth 128.4 MB; library before 383.0 MB; new names 499,571; other load mean 67.7%
+=== persource+chunked hash existing 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 57,590; insertion files/s 82,530; peak journal 59.4 MB (FileInfo 59.4 MB); growth 124.8 MB; library before 397.6 MB; new names 499,571; other load mean 58.2%
+=== persource+chunked hash new-source 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 72,742; insertion files/s 102,814; peak journal 0.2 MB (FileInfo 0.2 MB); growth 138.6 MB; library before 397.6 MB; new names 518,069; other load mean 51.7%
+=== persource+chunked rescan 1% 1M/3000k r2
+  target: 1,000,846 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 61,422; insertion files/s 96,932; peak journal 37.0 MB (FileInfo 37.0 MB); growth 70.4 MB; library before 397.6 MB; new names 10,187; other load mean 62.8%
+=== persource+chunked mixed existing 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 359.1 MB (91,933 pages, 0 free), 1,245,498 names (50.9 MB of UTF-16), 500,000 folder paths
+  files/s 47,910; insertion files/s 87,507; peak journal 43.0 MB (FileInfo 43.0 MB); growth 108.9 MB; library before 359.1 MB; new names 349,656; other load mean 56.6%
+=== persource+chunked mixed new-source 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 359.1 MB (91,933 pages, 0 free), 1,245,498 names (50.9 MB of UTF-16), 500,000 folder paths
+  files/s 55,039; insertion files/s 83,344; peak journal 0.2 MB (FileInfo 0.2 MB); growth 127.0 MB; library before 359.1 MB; new names 446,786; other load mean 60.3%
+=== persource+chunked hash existing 2M/6000k r2
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  files/s 49,161; insertion files/s 72,599; peak journal 120.2 MB (FileInfo 120.2 MB); growth 253.4 MB; library before 796.6 MB; new names 998,418; other load mean 47.0%
+=== persource+chunked append existing 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 383.0 MB (98,036 pages, 0 free), 1,537,047 names (59.9 MB of UTF-16), 500,000 folder paths
+  files/s 86,805; insertion files/s 113,191; peak journal 0.2 MB (FileInfo 0.2 MB); growth 128.4 MB; library before 383.0 MB; new names 499,571; other load mean 49.6%
+# plan probe:combined finished 2026-10-02T16:25:08.1470022Z; busy elsewhere (cores): total 2.39 of 16

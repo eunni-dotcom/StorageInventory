@@ -1,0 +1,20 @@
+# plan newsource x2 started 2026-10-02T16:06:47.7235733Z, 16 logical CPUs, exe <scratch>\bin-pristine\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 4.56 of 16
+=== hash new-source 1M/750k r1
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 88,318; insertion files/s 121,792; peak journal 22.3 MB (FileInfo 22.3 MB); growth 134.1 MB; library before 98.9 MB; new names 499,572; other load mean 53.4%
+=== hash new-source 2M/750k r1
+  target: 1,997,023 files in 500,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 78,811; insertion files/s 109,341; peak journal 22.3 MB (FileInfo 22.3 MB); growth 269.0 MB; library before 98.9 MB; new names 998,419; other load mean 51.7%
+=== hash new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 50,084; insertion files/s 60,636; peak journal 88.7 MB (FileInfo 88.7 MB); growth 134.1 MB; library before 392.5 MB; new names 499,571; other load mean 60.2%
+=== hash new-source 1M/750k r2
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 93,392; insertion files/s 129,346; peak journal 22.3 MB (FileInfo 22.3 MB); growth 134.1 MB; library before 98.9 MB; new names 499,572; other load mean 47.7%
+=== hash new-source 2M/750k r2
+  target: 1,997,023 files in 500,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 82,002; insertion files/s 109,141; peak journal 22.3 MB (FileInfo 22.3 MB); growth 269.0 MB; library before 98.9 MB; new names 998,419; other load mean 60.0%
+=== hash new-source 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 50,876; insertion files/s 62,428; peak journal 88.7 MB (FileInfo 88.7 MB); growth 134.1 MB; library before 392.5 MB; new names 499,571; other load mean 50.1%
+# plan newsource finished 2026-10-02T16:08:48.9040127Z; busy elsewhere (cores): total 5.49 of 16

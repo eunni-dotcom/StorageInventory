@@ -1,0 +1,14 @@
+# plan prefillcheck x2 started 2026-10-02T16:40:52.7940261Z, 16 logical CPUs, exe <scratch>\bin-pristine\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 2.45 of 16
+=== hash 1M/750k cached r1
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 88,712; insertion files/s 116,606; peak journal 22.3 MB (FileInfo 22.3 MB); growth 131.0 MB; library before 98.9 MB; new names 499,572; other load mean 39.4%
+=== hash 1M/750k in-process r1
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 75,750; insertion files/s 98,525; peak journal 22.3 MB (FileInfo 22.3 MB); growth 131.0 MB; library before 98.9 MB; new names 499,572; other load mean 43.8%
+=== hash 1M/750k cached r2
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 79,100; insertion files/s 112,608; peak journal 22.3 MB (FileInfo 22.3 MB); growth 131.0 MB; library before 98.9 MB; new names 499,572; other load mean 46.0%
+=== hash 1M/750k in-process r2
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  files/s 69,416; insertion files/s 94,453; peak journal 22.3 MB (FileInfo 22.3 MB); growth 131.0 MB; library before 98.9 MB; new names 499,572; other load mean 48.1%
+# plan prefillcheck finished 2026-10-02T16:42:06.2313831Z; busy elsewhere (cores): total 3.22 of 16

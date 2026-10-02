@@ -1,8 +1,17 @@
 """Assemble §10.2's B1 table: C4 mechanics (A) against the per-source dictionary (B1), same cells.
-Usage: python b1_table.py <results dir>"""
+Usage: python b1_table.py <results dir>
+
+C4 design repair: prints UTF-8 whatever the console code page (ERRATUM.md, E6); sizes are MiB (bytes / 2^20, E5); a B1 cell
+whose runs used a per-source prefill built with key-ordered interning is marked with a dagger (E1, prefill_provenance.py)."""
 import json, glob, os, re, sys, statistics as st
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from prefill_provenance import affected_labels
+
 rd = sys.argv[1]
+tainted = {re.sub(r' r\d+$', '', l).replace('analyse ', '') for l in affected_labels(rd)}
 runs = {}
 for f in glob.glob(os.path.join(rd, '*.jsonl')):
     for line in open(f, encoding='utf-8'):
@@ -28,9 +37,9 @@ def fmt(c):
     if c is None:
         return '–', '–'
     if not c['fr']:
-        return f"{c['j']:,.2f} MB", '(journal-analysis run only)'
+        return f"{c['j']:,.2f} MiB", '(journal-analysis run only)'
     fr = '; '.join(f'{x:,.0f}' for x in c['fr']) if len(c['fr']) <= 3 else f"{st.median(c['fr']):,.0f} (median of {len(c['fr'])}, {min(c['fr']):,.0f}–{max(c['fr']):,.0f})"
-    return f"{c['j']:,.2f} MB", f"{fr} ({c['dur']:.1f} s)"
+    return f"{c['j']:,.2f} MiB", f"{fr} ({c['dur']:.1f} s)"
 
 rows = [
     ('Interleaved, existing source, 1M / 3×1M', 'hash 1M/3000k', 'persource hash existing 1M/3000k', 'worst-case family'),
@@ -46,12 +55,15 @@ rows = [
     ('Interleaved, new source, 2M / 3×2M', None, 'persource hash new-source 2M/6000k', 'worst-case'),
     ('Mixed, existing source, 2M / 3×2M', 'mixed 2M/6000k', 'persource mixed existing 2M/6000k', 'worst-case'),
 ]
-print('| Cell | Kind (§15.4) | A: peak journal | A: rows/s (duration) | B1: peak journal | B1: rows/s (duration) |')
+print('| Cell | Kind (§15.4 of the design review) | A: peak journal | A: rows/s (duration) | B1: peak journal | B1: rows/s (duration) |')
 print('|---|---|---:|---|---:|---|')
 for title, a, b, kind in rows:
     ca, cb = (cell(a) if a else None), cell(b)
     ja, ra = fmt(ca)
     jb, rb = fmt(cb)
+    if b in tainted:
+        rb += ' †'
     print(f'| {title} | {kind} | {ja} | {ra} | {jb} | {rb} |')
+print('\n† B1 runs on a per-source prefill that a probe:combined run had built with key-ordered interning (SI_DR_PRESORT=chunk): not clean B1 measurements (ERRATUM.md, E1)')
 missing = [x for _, a, b, _ in rows for x in (a, b) if x and x not in runs]
 print('\nmissing:', missing)

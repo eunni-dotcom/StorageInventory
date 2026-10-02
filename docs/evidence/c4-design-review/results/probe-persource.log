@@ -1,0 +1,19 @@
+# plan probe:persource x1 started 2026-10-02T16:29:58.3147128Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 2.06 of 16
+=== persource hash existing 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 56,371; insertion files/s 72,438; peak journal 59.4 MB (FileInfo 59.4 MB); growth 126.1 MB; library before 397.6 MB; new names 499,571; other load mean 45.6%
+=== persource hash new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 75,971; insertion files/s 102,967; peak journal 0.2 MB (FileInfo 0.2 MB); growth 139.2 MB; library before 397.6 MB; new names 518,069; other load mean 48.1%
+=== persource rescan 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  files/s 69,228; insertion files/s 102,822; peak journal 37.1 MB (FileInfo 37.1 MB); growth 70.4 MB; library before 397.6 MB; new names 10,187; other load mean 41.8%
+=== persource real 1M/3000k r1
+  building prefill real-1000000-persource
+    prefill real 3x1,000,000 built in 20.3 s, 231.1 MB
+  target: 999,111 files in 250,000 folders; library before 231.1 MB (59,172 pages, 0 free), 72,657 names (2.9 MB of UTF-16), 500,000 folder paths
+  files/s 123,718; insertion files/s 184,762; peak journal 1.6 MB (FileInfo 1.6 MB); growth 105.3 MB; library before 231.1 MB; new names 108,259; other load mean 46.7%
+=== persource real new-source 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 231.1 MB (59,172 pages, 0 free), 72,657 names (2.9 MB of UTF-16), 500,000 folder paths
+  files/s 114,735; insertion files/s 160,934; peak journal 0.2 MB (FileInfo 0.2 MB); growth 115.7 MB; library before 231.1 MB; new names 110,561; other load mean 49.2%
+# plan probe:persource finished 2026-10-02T16:31:31.8188615Z; busy elsewhere (cores): total 3.33 of 16

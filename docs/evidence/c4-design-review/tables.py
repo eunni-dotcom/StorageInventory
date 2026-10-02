@@ -3,6 +3,11 @@ Usage: python tables.py <results dir> [plan ...]  -> prints markdown. Every figu
 import json, sys, os, re, statistics as st
 from collections import OrderedDict
 
+# C4 design repair: print UTF-8 whatever the console code page (the Windows default cp1252 cannot encode the tables' arrows
+# and dashes: ERRATUM.md, E6), and label sizes MiB, which they are (bytes / 2^20: E5)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 def load(path):
     rows = []
     for line in open(path, encoding='utf-8'):
@@ -33,7 +38,7 @@ def per_run_table(rows, title):
         if 'crash' in d:
             continue
         ws = (d['PeakWorkingSetBytes'] - d['WorkingSetBeforeBytes']) / MB
-        out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MB | {d['GrowthBytes']/MB:,.1f} MB | {d['PeakJournalHandleBytes']/MB:,.2f} MB | {100*d['JournalOverGrowth']:.1f}% | {100*d['JournalOverLibraryBefore']:.1f}% | {d['FilesPerSecond']:,.0f} | {d['InsertionFilesPerSecond']:,.0f} | {d['ImportSeconds']:.2f} s | {ws:,.0f} MB | {d['NewNames']:,} | {d['OtherLoadMeanPercent']:.0f}% / {d['OtherLoadP95Percent']:.0f}% |")
+        out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MiB | {d['GrowthBytes']/MB:,.1f} MiB | {d['PeakJournalHandleBytes']/MB:,.2f} MiB | {100*d['JournalOverGrowth']:.1f}% | {100*d['JournalOverLibraryBefore']:.1f}% | {d['FilesPerSecond']:,.0f} | {d['InsertionFilesPerSecond']:,.0f} | {d['ImportSeconds']:.2f} s | {ws:,.0f} MiB | {d['NewNames']:,} | {d['OtherLoadMeanPercent']:.0f}% / {d['OtherLoadP95Percent']:.0f}% |")
     return "\n".join(out)
 
 def cell_table(rows, title):
@@ -54,7 +59,7 @@ def cell_table(rows, title):
         ws = [(d['PeakWorkingSetBytes'] - d['WorkingSetBeforeBytes']) / MB for d in ds]
         ld = [d['OtherLoadMeanPercent'] for d in ds]
         jm = max(j)
-        out.append(f"| {k} | {len(ds)} | {st.median(L)/MB:,.1f} MB | {st.median(g)/MB:,.1f} MB | {jm/MB:,.2f} MB{'' if min(j)==max(j) else ' (min '+format(min(j)/MB,',.2f')+')'} | {100*jm/st.median(g):.1f}% | {100*jm/st.median(L):.1f}% | {st.median(fr):,.0f} ({min(fr):,.0f}–{max(fr):,.0f}) | {st.median(du):.2f} s | {max(ws):,.0f} MB | {st.median([d['NewNames'] for d in ds]):,.0f} | {st.median(ld):.0f}% ({min(ld):.0f}–{max(ld):.0f}%) |")
+        out.append(f"| {k} | {len(ds)} | {st.median(L)/MB:,.1f} MiB | {st.median(g)/MB:,.1f} MiB | {jm/MB:,.2f} MiB{'' if min(j)==max(j) else ' (min '+format(min(j)/MB,',.2f')+')'} | {100*jm/st.median(g):.1f}% | {100*jm/st.median(L):.1f}% | {st.median(fr):,.0f} ({min(fr):,.0f}–{max(fr):,.0f}) | {st.median(du):.2f} s | {max(ws):,.0f} MiB | {st.median([d['NewNames'] for d in ds]):,.0f} | {st.median(ld):.0f}% ({min(ld):.0f}–{max(ld):.0f}%) |")
     return "\n".join(out)
 
 def analysis_table(rows, title):
@@ -80,7 +85,7 @@ def analysis_table(rows, title):
             if int(mm.group(2)) > 0:
                 others.append(f"{mm.group(1)} {mm.group(2)}")
         ni = name_idx.split(' ')[-1] if name_idx else '–'
-        out.append(f"| {d['Label']} | {int(jb)/MB:,.2f} MB | {seg} ({syn}) | {int(dist):,} | {bpp} | {ni} | {', '.join(others)} |")
+        out.append(f"| {d['Label']} | {int(jb)/MB:,.2f} MiB | {seg} ({syn}) | {int(dist):,} | {bpp} | {ni} | {', '.join(others)} |")
     return "\n".join(out)
 
 def rollback_table(rows, title):
@@ -91,11 +96,11 @@ def rollback_table(rows, title):
         if 'crash' in d:
             c, r = d['crash'], d['recover']
             if r is None:
-                out.append(f"| {c['Label']} | {c['LibraryBeforeBytes']/MB:,.1f} MB | {c['JournalAtStopBytes']/MB:,.1f} MB | – | – | (recover failed) | | |")
+                out.append(f"| {c['Label']} | {c['LibraryBeforeBytes']/MB:,.1f} MiB | {c['JournalAtStopBytes']/MB:,.1f} MiB | – | – | (recover failed) | | |")
             else:
-                out.append(f"| {c['Label']} | {c['LibraryBeforeBytes']/MB:,.1f} MB | {c['JournalAtStopBytes']/MB:,.1f} MB | – | main {r['MainBeforeBytes']/MB:,.1f} → {r['MainAfterBytes']/MB:,.1f} MB | {r['OpenSeconds']:.2f} s | {r['State']} | {'yes' if r['OlderSnapshotsVerify'] else 'NO'} |")
+                out.append(f"| {c['Label']} | {c['LibraryBeforeBytes']/MB:,.1f} MiB | {c['JournalAtStopBytes']/MB:,.1f} MiB | – | main {r['MainBeforeBytes']/MB:,.1f} → {r['MainAfterBytes']/MB:,.1f} MiB | {r['OpenSeconds']:.2f} s | {r['State']} | {'yes' if r['OlderSnapshotsVerify'] else 'NO'} |")
         elif d.get('Mode') == 'cancel':
-            out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MB | {d['JournalAtStopBytes']/MB:,.1f} MB | {d['CancelToReturnSeconds']:.3f} s | {d['LibraryAfterStopBytes']/MB:,.1f} MB ({d['LibraryBeforeBytes']/MB:,.1f} MB) | – | {d.get('Outcome')} | – |")
+            out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MiB | {d['JournalAtStopBytes']/MB:,.1f} MiB | {d['CancelToReturnSeconds']:.3f} s | {d['LibraryAfterStopBytes']/MB:,.1f} MiB ({d['LibraryBeforeBytes']/MB:,.1f} MiB) | – | {d.get('Outcome')} | – |")
     return "\n".join(out)
 
 def probe_table(rows, title):
@@ -109,7 +114,7 @@ def probe_table(rows, title):
         probe = (d.get('Probe') or '').replace('SI_DR_PROBE_REPORT=', '')
         probe = re.sub(r'\S*probe-report\.txt;?\s*', '', probe)
         outc = d.get('Outcome') or ''
-        out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MB | {d['GrowthBytes']/MB:,.1f} MB | {d['PeakJournalHandleBytes']/MB:,.2f} MB | {100*d['JournalOverGrowth']:.1f}% | {d['FilesPerSecond']:,.0f} | {d['ImportSeconds']:.2f} s | {ws:,.0f} MB | {d['NewNames']:,} | {d['OtherLoadMeanPercent']:.0f}% | {probe} {'' if outc=='Published' else '· ' + outc} |")
+        out.append(f"| {d['Label']} | {d['LibraryBeforeBytes']/MB:,.1f} MiB | {d['GrowthBytes']/MB:,.1f} MiB | {d['PeakJournalHandleBytes']/MB:,.2f} MiB | {100*d['JournalOverGrowth']:.1f}% | {d['FilesPerSecond']:,.0f} | {d['ImportSeconds']:.2f} s | {ws:,.0f} MiB | {d['NewNames']:,} | {d['OtherLoadMeanPercent']:.0f}% | {probe} {'' if outc=='Published' else '· ' + outc} |")
     return "\n".join(out)
 
 if __name__ == '__main__':

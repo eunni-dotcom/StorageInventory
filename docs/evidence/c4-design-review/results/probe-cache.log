@@ -1,0 +1,8 @@
+# plan probe:cache x1 started 2026-10-02T16:42:09.3761406Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.40 of 16
+=== cache 256MiB hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 76,715; insertion files/s 110,208; peak journal 88.6 MB (FileInfo 88.6 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 51.7%
+=== cache 16MiB hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  files/s 36,407; insertion files/s 46,975; peak journal 88.6 MB (FileInfo 88.6 MB); growth 124.8 MB; library before 392.5 MB; new names 499,571; other load mean 51.0%
+# plan probe:cache finished 2026-10-02T16:42:56.4786337Z; busy elsewhere (cores): total 5.18 of 16

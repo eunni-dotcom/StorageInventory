@@ -1,9 +1,9 @@
 diff --git a/tests/StorageInventory.Library.Tests/DesignReviewBench.cs b/tests/StorageInventory.Library.Tests/DesignReviewBench.cs
 new file mode 100644
-index 0000000..bf45214
+index 0000000..ef37993
 --- /dev/null
 +++ b/tests/StorageInventory.Library.Tests/DesignReviewBench.cs
-@@ -0,0 +1,1248 @@
+@@ -0,0 +1,1800 @@
 +using System.Buffers.Binary;
 +using System.Diagnostics;
 +using System.Globalization;
@@ -49,7 +49,17 @@ index 0000000..bf45214
 +    // ================================================================================================================ the plans
 +
 +    internal sealed record RunSpec(string Label, string Family, long Target, long Prefill, string TargetSource = "existing", double Churn = 0,
-+        string Mode = "normal", bool Analyse = false, Dictionary<string, string>? Env = null, bool InProcessPrefill = false);
++        string Mode = "normal", bool Analyse = false, Dictionary<string, string>? Env = null, bool InProcessPrefill = false, string Params = "");
++
++    /// <summary>C4 design repair: bumped whenever a generator changes what a prefill contains, so a cached prefill of an older
++    /// generator can never be reused (the cache key carries it).</summary>
++    internal const int GeneratorVersion = 3;
++
++    /// <summary>The SI_DR_* variables that change what a PREFILL contains (its schema variant and its name source). Every other SI_DR_*
++    /// variable (key-ordered interning, cache size, batching, instruments) is removed from a prefill child's environment, so a prefill is
++    /// always built by the unmodified importer of its schema variant (C4DR-M06: the old cache key ignored SI_DR_PRESORT and the prefill
++    /// child inherited the triggering run's whole environment).</summary>
++    private static readonly string[] PrefillVariables = ["SI_DR_PERSOURCE", "SI_DR_REAL_NAMES"];
 +
 +    private static List<RunSpec> Plan(string name, int repeat)
 +    {
@@ -150,7 +160,61 @@ index 0000000..bf45214
 +                break;
 +            default:
 +                if (name.StartsWith("probe:", StringComparison.Ordinal)) return ProbePlan(name[6..], repeat);
++                if (name.StartsWith("repair:", StringComparison.Ordinal)) return RepairPlan(name[7..], repeat);
 +                throw new ArgumentException("unknown plan " + name);
++        }
++        return runs;
++    }
++
++    /// <summary>C4 design repair: the focused reruns (need the probe build; every run also records IMP-11's pending growth through
++    /// the SI_DR_GUARD_LOG instrument). "obj" and "objrescan" are the objective families of the repaired §15.4 (ObjSnapshot).</summary>
++    private static List<RunSpec> RepairPlan(string name, int repeat)
++    {
++        var runs = new List<RunSpec>();
++        const long K = 1000;
++        Dictionary<string, string> PerSource() => new() { ["SI_DR_PERSOURCE"] = "1" };
++        const string First25 = "d=0.25;model=system";
++        const string First60 = "d=0.60;model=data";
++        const string Rescan1 = "d=0.25;model=system;rho=0.01;delta=0.005;alpha=0.005";
++        const string Rescan10 = "d=0.25;model=system;rho=0.10;delta=0.05;alpha=0.05";
++        switch (name)
++        {
++            case "structure":   // PERF-15 (a) key-range attribution, positive cells and the global-dictionary negative control
++                runs.Add(new("analyse persource hash new-source 1M/3000k", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Analyse: true, Env: PerSource()));
++                runs.Add(new("analyse persource hash existing 1M/3000k", "hash", 1_000 * K, 1_000 * K, Analyse: true, Env: PerSource()));
++                runs.Add(new("analyse global hash new-source 1M/750k", "hash", 1_000 * K, 250 * K, TargetSource: "new", Analyse: true));
++                runs.Add(new("analyse global hash existing 1M/750k", "hash", 1_000 * K, 250 * K, Analyse: true));
++                runs.Add(new("analyse persource obj first 2M/6000k d25", "obj", 2_000 * K, 2_000 * K, TargetSource: "new", Analyse: true, Env: PerSource(), Params: First25));
++                runs.Add(new("analyse persource objrescan 2M/6000k n1", "objrescan", 2_000 * K, 2_000 * K, Analyse: true, Env: PerSource(), Params: Rescan1));
++                break;
++            case "timing":      // clean per-source cells and the two objective acceptance cells (informational on a loaded machine)
++                for (var r = 1; r <= repeat; r++)
++                {
++                    runs.Add(new($"persource hash existing 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, Env: PerSource()));
++                    runs.Add(new($"persource hash new-source 1M/3000k r{r}", "hash", 1_000 * K, 1_000 * K, TargetSource: "new", Env: PerSource()));
++                    runs.Add(new($"persource obj first 2M/6000k d25 r{r}", "obj", 2_000 * K, 2_000 * K, TargetSource: "new", Env: PerSource(), Params: First25));
++                    runs.Add(new($"persource objrescan 2M/6000k n1 r{r}", "objrescan", 2_000 * K, 2_000 * K, Env: PerSource(), Params: Rescan1));
++                }
++                break;
++            case "rollback":
++                runs.Add(new("cancel persource objrescan 2M/6000k n1", "objrescan", 2_000 * K, 2_000 * K, Mode: "cancel", Env: PerSource(), Params: Rescan1));
++                runs.Add(new("crash persource objrescan 2M/6000k n1", "objrescan", 2_000 * K, 2_000 * K, Mode: "crash", Env: PerSource(), Params: Rescan1));
++                runs.Add(new("cancel persource obj first 2M/6000k d25", "obj", 2_000 * K, 2_000 * K, TargetSource: "new", Mode: "cancel", Env: PerSource(), Params: First25));
++                break;
++            case "extra":       // single informational runs of a stress cell of each kind and the clean worst-case existing cell
++                runs.Add(new("persource obj first 2M/6000k d60 data", "obj", 2_000 * K, 2_000 * K, TargetSource: "new", Env: PerSource(), Params: First60));
++                runs.Add(new("persource objrescan 2M/6000k n10", "objrescan", 2_000 * K, 2_000 * K, Env: PerSource(), Params: Rescan10));
++                runs.Add(new("persource hash existing 2M/6000k", "hash", 2_000 * K, 2_000 * K, Env: PerSource()));
++                break;
++            case "smoke":
++                runs.Add(new("smoke persource obj first 100k/300k d25", "obj", 100 * K, 100 * K, TargetSource: "new", Analyse: true, Env: PerSource(), Params: First25));
++                runs.Add(new("smoke persource objrescan 100k/300k n1", "objrescan", 100 * K, 100 * K, Analyse: true, Env: PerSource(), Params: Rescan1));
++                runs.Add(new("smoke global hash existing 100k/300k", "hash", 100 * K, 100 * K, Analyse: true));
++                runs.Add(new("smoke cancel persource objrescan 100k/300k n1", "objrescan", 100 * K, 100 * K, Mode: "cancel", Env: PerSource(), Params: Rescan1));
++                runs.Add(new("smoke crash persource objrescan 100k/300k n1", "objrescan", 100 * K, 100 * K, Mode: "crash", Env: PerSource(), Params: Rescan1));
++                break;
++            default:
++                throw new ArgumentException("unknown repair plan " + name);
 +        }
 +        return runs;
 +    }
@@ -260,11 +324,19 @@ index 0000000..bf45214
 +            }
 +            var args = new List<string> { "--benchmark", "dr", "child", "--label", run.Label, "--family", run.Family, "--target", run.Target.ToString(CultureInfo.InvariantCulture),
 +                "--prefill", run.Prefill.ToString(CultureInfo.InvariantCulture), "--target-source", run.TargetSource, "--churn", run.Churn.ToString(CultureInfo.InvariantCulture),
-+                "--mode", run.Mode, "--analyse", run.Analyse ? "1" : "0", "--analysis-dir", Path.Combine(outDir, "analysis") };
++                "--mode", run.Mode, "--analyse", run.Analyse ? "1" : "0", "--analysis-dir", Path.Combine(outDir, "analysis"), "--params", run.Params };
 +            if (libraryCopy is not null) { args.Add("--prefill-from"); args.Add(libraryCopy); }
 +            var report = Path.Combine(outDir, "probe-report.txt");
 +            if (File.Exists(report)) File.Delete(report);
-+            var env = new Dictionary<string, string>(run.Env ?? new Dictionary<string, string>()) { ["SI_DR_PROBE_REPORT"] = report };
++            var guardLog = Path.Combine(outDir, "guard-log.jsonl");
++            if (File.Exists(guardLog)) File.Delete(guardLog);
++            // the run's environment is built explicitly (ChildEnvironment): its declared variables and the per-run instruments only
++            var env = new Dictionary<string, string>(run.Env ?? new Dictionary<string, string>()) { ["SI_DR_PROBE_REPORT"] = report, ["SI_DR_GUARD_LOG"] = guardLog };
++            if (run.Analyse)
++            {
++                Directory.CreateDirectory(Path.Combine(outDir, "analysis"));
++                env["SI_DR_JOURNAL_COPY"] = Path.Combine(outDir, "analysis", Slug(run.Label) + ".precommit.journal");
++            }
 +            var (code, json, lines) = RunChild(args, env);
 +            foreach (var l in lines) Log("  " + l);
 +            if ((code != 0 && run.Mode != "crash") || json is null)
@@ -278,9 +350,12 @@ index 0000000..bf45214
 +                using var doc = JsonDocument.Parse(json);
 +                var dir = doc.RootElement.GetProperty("LibraryDirectory").GetString()!;
 +                var appData = doc.RootElement.GetProperty("AppData").GetString()!;
-+                var (rc, rjson, rlines) = RunChild(["--benchmark", "dr", "recover", dir, appData], run.Env);   // the same schema variant as the killed run
++                // the same schema variant as the killed run, passed explicitly and recorded with the result (C4DR-O01: a recovery child
++                // of an early probe build lacked SI_DR_PERSOURCE and derived NotALibrary on a correctly recovered Library)
++                var recoverEnv = new Dictionary<string, string>(run.Env ?? new Dictionary<string, string>());
++                var (rc, rjson, rlines) = RunChild(["--benchmark", "dr", "recover", dir, appData], recoverEnv);
 +                foreach (var l in rlines) Log("  " + l);
-+                json = "{\"crash\":" + json + ",\"recover\":" + (rjson ?? "null") + "}";
++                json = "{\"crash\":" + json + ",\"recover\":" + (rjson ?? "null") + ",\"recoverEnv\":" + JsonSerializer.Serialize(recoverEnv) + "}";
 +                try { Directory.Delete(Path.GetDirectoryName(appData)!, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
 +                if (rc != 0) Log($"RECOVER FAILED ({rc})");
 +            }
@@ -321,9 +396,9 @@ index 0000000..bf45214
 +            if (e.TryGetProperty("crash", out var crash))
 +            {
 +                var rec = e.GetProperty("recover");
-+                return $"crash: journal at kill {crash.GetProperty("JournalAtStopBytes").GetInt64() / 1048576.0:0.0} MB; next open {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("OpenSeconds").GetDouble().ToString("0.00", CultureInfo.InvariantCulture))} s, state {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("State").GetString())}";
++                return $"crash: journal at kill {crash.GetProperty("JournalAtStopBytes").GetInt64() / 1048576.0:0.0} MiB; next open {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("OpenSeconds").GetDouble().ToString("0.00", CultureInfo.InvariantCulture))} s, state {(rec.ValueKind == JsonValueKind.Null ? "?" : rec.GetProperty("State").GetString())}";
 +            }
-+            return $"files/s {e.GetProperty("FilesPerSecond").GetDouble():N0}; insertion files/s {e.GetProperty("InsertionFilesPerSecond").GetDouble():N0}; peak journal {e.GetProperty("PeakJournalHandleBytes").GetInt64() / 1048576.0:0.0} MB (FileInfo {e.GetProperty("PeakJournalFileInfoBytes").GetInt64() / 1048576.0:0.0} MB); growth {e.GetProperty("GrowthBytes").GetInt64() / 1048576.0:0.0} MB; library before {e.GetProperty("LibraryBeforeBytes").GetInt64() / 1048576.0:0.0} MB; new names {e.GetProperty("NewNames").GetInt64():N0}; other load mean {e.GetProperty("OtherLoadMeanPercent").GetDouble():0.0}%";
++            return $"files/s {e.GetProperty("FilesPerSecond").GetDouble():N0}; insertion files/s {e.GetProperty("InsertionFilesPerSecond").GetDouble():N0}; peak journal {e.GetProperty("PeakJournalHandleBytes").GetInt64() / 1048576.0:0.0} MiB (FileInfo {e.GetProperty("PeakJournalFileInfoBytes").GetInt64() / 1048576.0:0.0} MiB); growth {e.GetProperty("GrowthBytes").GetInt64() / 1048576.0:0.0} MiB; library before {e.GetProperty("LibraryBeforeBytes").GetInt64() / 1048576.0:0.0} MiB; new names {e.GetProperty("NewNames").GetInt64():N0}; other load mean {e.GetProperty("OtherLoadMeanPercent").GetDouble():0.0}%";
 +        }
 +        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
 +        {
@@ -335,7 +410,7 @@ index 0000000..bf45214
 +    {
 +        var info = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
 +        foreach (var a in args) info.ArgumentList.Add(a);
-+        if (env is not null) foreach (var (k, v) in env) info.Environment[k] = v;
++        ChildEnvironment(info.Environment, env);
 +        using var process = Process.Start(info)!;
 +        var stderr = process.StandardError.ReadToEndAsync();
 +        string? json = null;
@@ -351,46 +426,71 @@ index 0000000..bf45214
 +        return (process.ExitCode, json, lines);
 +    }
 +
-+    /// <summary>Builds (once) and returns a cached prefilled Library main file for this family and prefill size.</summary>
++    /// <summary>A child's environment, built explicitly: the parent's environment without any SI_DR_* variable, then the pass-through
++    /// instruments that name files of this session (the real-names list, the prefill cache), then exactly the variables the caller
++    /// declares. A variable set in the shell that started the orchestrator can therefore never reach a child unannounced.</summary>
++    private static void ChildEnvironment(IDictionary<string, string?> target, IReadOnlyDictionary<string, string>? declared)
++    {
++        foreach (var k in target.Keys.Where(k => k.StartsWith("SI_DR_", StringComparison.OrdinalIgnoreCase)).ToList()) target.Remove(k);
++        foreach (var pass in new[] { "SI_DR_REAL_NAMES", "SI_DR_PREFILL_CACHE", "SI_DR_KEEP_ANALYSIS" })
++            if (Environment.GetEnvironmentVariable(pass) is { } value) target[pass] = value;
++        if (declared is not null) foreach (var (k, v) in declared) target[k] = v;
++    }
++
++    /// <summary>Builds (once) and returns a cached prefilled Library main file. The cache key names every input that changes the
++    /// prefill's content: the generator version, the name family and its parameters, the prefill size, the content-relevant SI_DR_*
++    /// variables (PrefillVariables) and, for the real-vocabulary family, the SHA-256 of the names file. The prefill child receives
++    /// those variables only (C4DR-M06).</summary>
 +    private static string? EnsurePrefill(string prefillRoot, RunSpec run, Action<string> log)
 +    {
-+        var persource = run.Env is not null && run.Env.ContainsKey("SI_DR_PERSOURCE") ? "-persource" : "";
-+        var key = $"{PrefillFamily(run.Family)}-{run.Prefill}{persource}";
++        var family = PrefillFamily(run.Family);
++        var prefillParams = ObjParams.PrefillPart(run.Params);
++        var env = new Dictionary<string, string>();
++        foreach (var k in PrefillVariables)
++            if (run.Env is not null && run.Env.TryGetValue(k, out var v)) env[k] = v;
++        var keyParts = new List<string> { $"g{GeneratorVersion}", family, run.Prefill.ToString(CultureInfo.InvariantCulture) };
++        if (prefillParams.Length > 0) keyParts.Add(prefillParams.Replace(';', '_').Replace('=', '-'));
++        keyParts.Add(env.ContainsKey("SI_DR_PERSOURCE") ? "persource" : "global");
++        if (family is "real" && Environment.GetEnvironmentVariable("SI_DR_REAL_NAMES") is { } names)
++            keyParts.Add("names-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(names)))[..12]);
++        var key = string.Join("-", keyParts);
 +        var dir = Path.Combine(prefillRoot, key);
 +        var main = Path.Combine(dir, LibraryNames.MainFile);
 +        if (File.Exists(main) && File.Exists(main + ".ok")) return main;
 +        Directory.CreateDirectory(dir);
-+        log($"  building prefill {key}");
-+        var (code, json, lines) = RunChild(["--benchmark", "dr", "prefill", "--family", PrefillFamily(run.Family), "--prefill", run.Prefill.ToString(CultureInfo.InvariantCulture), "--out", main], run.Env);
++        log($"  building prefill {key} (environment: {(env.Count == 0 ? "none" : string.Join(", ", env.Where(kv => kv.Key != "SI_DR_REAL_NAMES").Select(kv => kv.Key + "=" + kv.Value)))})");
++        var (code, json, lines) = RunChild(["--benchmark", "dr", "prefill", "--family", family, "--prefill", run.Prefill.ToString(CultureInfo.InvariantCulture), "--params", prefillParams, "--out", main], env);
 +        foreach (var l in lines) log("    " + l);
 +        if (code != 0) { log($"  prefill FAILED ({code})"); return null; }
-+        File.WriteAllText(main + ".ok", json ?? "");
++        File.WriteAllText(main + ".ok", JsonSerializer.Serialize(new { key, environment = env.Keys.Order(StringComparer.Ordinal).ToArray(), built = json }));
 +        return main;
 +    }
 +
 +    /// <summary>The prefill's own name family: a rescan target re-uses the hash family's prefill.</summary>
-+    private static string PrefillFamily(string family) => family == "rescan" ? "hash" : family == "rescanreal" ? "real" : family;
++    private static string PrefillFamily(string family) => family switch { "rescan" => "hash", "rescanreal" => "real", "objrescan" => "obj", _ => family };
 +
 +    // ================================================================================================================ the child
 +
-+    private sealed record Options(string Label, string Family, long Target, long Prefill, string TargetSource, double Churn, string Mode, bool Analyse, string AnalysisDir, string? PrefillFrom);
++    private sealed record Options(string Label, string Family, long Target, long Prefill, string TargetSource, double Churn, string Mode, bool Analyse, string AnalysisDir, string? PrefillFrom, string Params);
 +
 +    private static Options ParseOptions(string[] args)
 +    {
-+        string Opt(string name, string fallback) { var i = Array.IndexOf(args, "--" + name); return i >= 0 ? args[i + 1] : fallback; }
++        string Opt(string name, string fallback) { var i = Array.IndexOf(args, "--" + name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback; }
 +        return new Options(Opt("label", "run"), Opt("family", "append"), long.Parse(Opt("target", "1000000"), CultureInfo.InvariantCulture),
 +            long.Parse(Opt("prefill", "250000"), CultureInfo.InvariantCulture), Opt("target-source", "existing"), double.Parse(Opt("churn", "0"), CultureInfo.InvariantCulture),
-+            Opt("mode", "normal"), Opt("analyse", "0") == "1", Opt("analysis-dir", Path.GetTempPath()), args.Contains("--prefill-from") ? Opt("prefill-from", "") : null);
++            Opt("mode", "normal"), Opt("analyse", "0") == "1", Opt("analysis-dir", Path.GetTempPath()), args.Contains("--prefill-from") ? Opt("prefill-from", "") : null,
++            Opt("params", ""));
 +    }
 +
 +    private static long Folders(long files) => Math.Max(10, files / 4);
 +
 +    private static int Prefill(string[] args)
 +    {
-+        string Opt(string name) { var i = Array.IndexOf(args, "--" + name); return args[i + 1]; }
++        string Opt(string name) { var i = Array.IndexOf(args, "--" + name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : ""; }
 +        var family = Opt("family");
 +        var prefill = long.Parse(Opt("prefill"), CultureInfo.InvariantCulture);
 +        var outMain = Opt("out");
++        var prefillParams = Opt("params");
 +        var root = Path.Combine(BenchRoot(), "SI-DR-Prefill", Guid.NewGuid().ToString("N")[..10]);
 +        var appData = Path.Combine(root, "AppData");
 +        var directory = Path.Combine(appData, "Library");
@@ -401,13 +501,15 @@ index 0000000..bf45214
 +            var session = new LibrarySession(directory, appData);
 +            session.RunStartupOpen();
 +            using (var create = Lease(session, MutationKind.Create)) session.CreateLibrary(create);
-+            DoPrefill(session, family, prefill);
++            DoPrefill(session, family, prefill, prefillParams);
 +            session.TestOnlyShutdown();
 +            var main = Path.Combine(directory, LibraryNames.MainFile);
 +            File.Copy(main, outMain, overwrite: true);
 +            using (var fs = new FileStream(outMain, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) fs.Flush(flushToDisk: true);
-+            Console.WriteLine($"prefill {family} 3x{prefill:N0} built in {watch.Elapsed.TotalSeconds:0.0} s, {new FileInfo(outMain).Length / 1048576.0:0.0} MB");
-+            Console.WriteLine(JsonSerializer.Serialize(new { family, prefill, bytes = new FileInfo(outMain).Length, seconds = watch.Elapsed.TotalSeconds }));
++            var bytes = HandleLength(outMain);
++            var probe = string.Join(", ", Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("SI_DR_", StringComparison.Ordinal) && !IsPathVariable(k)).Order(StringComparer.Ordinal));
++            Console.WriteLine($"prefill {family} 3x{prefill:N0} {prefillParams} built in {watch.Elapsed.TotalSeconds:0.0} s, {bytes / 1048576.0:0.0} MiB ({bytes:N0} B); SI_DR_* seen by the prefill child: {(probe.Length == 0 ? "none" : probe)}");
++            Console.WriteLine(JsonSerializer.Serialize(new { family, prefill, prefillParams, generator = GeneratorVersion, bytes, seconds = watch.Elapsed.TotalSeconds, environment = probe }));
 +            return 0;
 +        }
 +        finally
@@ -416,13 +518,32 @@ index 0000000..bf45214
 +        }
 +    }
 +
-+    private static void DoPrefill(LibrarySession session, string family, long prefill)
++    /// <summary>The routine churn of the objective re-scan family: the prefill's second snapshot of source A (p3) is p1 re-scanned with it.</summary>
++    internal const string RoutineChurn = "rho=0.01;delta=0.005;alpha=0.005";
++
++    private static void DoPrefill(LibrarySession session, string family, long prefill, string prefillParams = "")
 +    {
 +        // the Library already holds other snapshots AND another source (G0-O03): source A twice (p1, p3), source B once (p2)
 +        ImportSourceSpec? sourceA = null;
 +        for (var i = 1; i <= 3; i++)
 +        {
 +            var other = i == 2;
++            if (family == "obj")
++            {
++                // objective families: p1 = source A's first save (vocabulary seed 1); p2 = source B (seed 2), sharing a fraction Omega of
++                // its entries with the target first save's vocabulary (seed 4); p3 = p1 re-scanned with the routine churn (layer 3)
++                var p = ObjParams.Parse(prefillParams);
++                ISnapshotRowSource obj = i switch
++                {
++                    1 => new ObjSnapshot((int)Folders(prefill), treeSeed: 1, p, vocabSeed: 1),
++                    2 => new ObjSnapshot((int)Folders(prefill), treeSeed: 2, p, vocabSeed: 2, sharedSeed: 4),
++                    _ => new ObjSnapshot((int)Folders(prefill), treeSeed: 1, ObjParams.Parse(prefillParams + ";" + RoutineChurn), vocabSeed: 1, layer: 3),
++                };
++                var objSpec = other ? SyntheticSnapshot.NewSource(@"\Other", serial: 0x7777ABCD) : sourceA ?? SyntheticSnapshot.NewSource();
++                var objResult = Import(session, obj, "prefill-" + i, objSpec, null, CancellationToken.None, out _);
++                if (i == 1) sourceA = new ImportSourceSpec.Existing(objResult.SourceId);
++                continue;
++            }
 +            var snapshot = new DrSnapshot((int)Folders(prefill), seed: i, label: "p" + i, family, realList: other ? 1 : 0);
 +            var spec = other ? SyntheticSnapshot.NewSource(@"\Other", serial: 0x7777ABCD) : sourceA ?? SyntheticSnapshot.NewSource();
 +            var result = Import(session, snapshot, "prefill-" + i, spec, null, CancellationToken.None, out _);
@@ -441,7 +562,7 @@ index 0000000..bf45214
 +        long WorkingSetBeforeBytes, long PeakWorkingSetBytes, double GcPauseMs, int Gen2,
 +        double OtherLoadMeanPercent, double OtherLoadP95Percent, double OtherLoadMaxPercent, double OwnCpuSeconds, long AvailableMemoryBeforeMb,
 +        string? Outcome, double CancelToReturnSeconds, long JournalAtStopBytes, long LibraryAfterStopBytes,
-+        string StartedUtc, string? Analysis, string? Probe);
++        string StartedUtc, string? Analysis, string? Probe, string? Params = null, string? Generated = null, string? Guard = null);
 +
 +    private static int Child(string[] args)
 +    {
@@ -471,7 +592,7 @@ index 0000000..bf45214
 +                session = new LibrarySession(directory, appData);
 +                session.RunStartupOpen();
 +                using (var create = Lease(session, MutationKind.Create)) session.CreateLibrary(create);
-+                if (o.Prefill > 0) DoPrefill(session, PrefillFamily(o.Family), o.Prefill);
++                if (o.Prefill > 0) DoPrefill(session, PrefillFamily(o.Family), o.Prefill, ObjParams.PrefillPart(o.Params));
 +            }
 +
 +            // ---- the state before the measured import ----
@@ -483,26 +604,56 @@ index 0000000..bf45214
 +            var pathsBefore = session.Read(r => r.Long("SELECT count(*) FROM folder_path"));
 +            var dbBefore = HandleLength(main);
 +            string? ownershipCopy = null;
++            // the pre-import copy is taken AFTER T0 commits and before T-IMPORT's BEGIN (C4DR-O12: a copy taken before T0 differs from the
++            // journal's original images on page 1), with the writer closed (OBS-12)
++            Action? afterT0 = null;
 +            if (o.Analyse)
 +            {
 +                Directory.CreateDirectory(o.AnalysisDir);
 +                ownershipCopy = Path.Combine(o.AnalysisDir, Slug(o.Label) + ".before.sqlite3");
-+                File.Copy(main, ownershipCopy, overwrite: true);
++                afterT0 = () =>
++                {
++                    File.Copy(main, ownershipCopy, overwrite: true);
++                    using var fs = new FileStream(ownershipCopy, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
++                    fs.Flush(flushToDisk: true);
++                };
 +            }
 +
-+            DrSnapshot target;
++            ISnapshotRowSource target;
++            long targetFiles;
 +            ImportSourceSpec spec;
++            string? generated = null;
 +            if (o.Family is "rescan" or "rescanreal")
 +            {
-+                target = new DrSnapshot((int)Folders(o.Prefill), seed: 1, label: "target", o.Family, realList: 0, churn: o.Churn, churnSeed: 4);   // p1's own tree and names, with churn
++                var d = new DrSnapshot((int)Folders(o.Prefill), seed: 1, label: "target", o.Family, realList: 0, churn: o.Churn, churnSeed: 4);   // p1's own tree and names, with churn
++                target = d;
++                targetFiles = d.Files;
 +                spec = new ImportSourceSpec.Existing(1);
++            }
++            else if (o.Family is "obj" or "objrescan")
++            {
++                // objective families: a first save is a new vocabulary (seed 4) in a new source; a re-scan is p1 of source A with the
++                // cell's churn (layer 4). The realised statistics are computed from the generator before the import and recorded.
++                var p = ObjParams.Parse(o.Params);
++                var obj = o.Family == "obj"
++                    ? new ObjSnapshot((int)Folders(o.Target), treeSeed: 4, p, vocabSeed: 4)
++                    : new ObjSnapshot((int)Folders(o.Prefill), treeSeed: 1, p, vocabSeed: 1, layer: 4);
++                var stats = obj.Describe();
++                generated = string.Create(CultureInfo.InvariantCulture,
++                    $"params {o.Params} (model {p.Model}, beta {p.Beta:0.###}, omega {p.Omega:0.##}); generated {stats.Files} files, {stats.Distinct} distinct names ({100.0 * stats.Distinct / Math.Max(1, stats.Files):0.00}%), mean length {stats.MeanLength:0.00} code units, names seen once {100.0 * stats.Once / Math.Max(1, stats.Distinct):0.0}% of distinct, files in the top 1% of names {100.0 * stats.Top1 / Math.Max(1, stats.Files):0.0}%; base vocabulary {obj.Vocabulary}; churn: renamed to new names {stats.Renamed}, deleted {stats.Deleted}, added with existing names {stats.Added}");
++                Console.WriteLine("generator: " + generated);
++                target = obj;
++                targetFiles = obj.Files;
++                spec = o.Family == "obj" && (o.TargetSource == "new" || o.Prefill == 0) ? SyntheticSnapshot.NewSource(@"\Third", serial: 0x3333ABCD) : new ImportSourceSpec.Existing(1);
 +            }
 +            else
 +            {
-+                target = new DrSnapshot((int)Folders(o.Target), seed: 4, label: "target", o.Family, realList: 2);
++                var d = new DrSnapshot((int)Folders(o.Target), seed: 4, label: "target", o.Family, realList: 2);
++                target = d;
++                targetFiles = d.Files;
 +                spec = o.TargetSource == "new" || o.Prefill == 0 ? SyntheticSnapshot.NewSource(@"\Third", serial: 0x3333ABCD) : new ImportSourceSpec.Existing(1);
 +            }
-+            Console.WriteLine($"target: {target.Files:N0} files in {target.FolderCount:N0} folders; library before {dbBefore / 1048576.0:0.0} MB ({pageCount:N0} pages, {freelist:N0} free), {namesBefore:N0} names ({nameBytes / 1048576.0:0.0} MB of UTF-16), {pathsBefore:N0} folder paths");
++            Console.WriteLine($"target: {targetFiles:N0} files in {target.FolderCount:N0} folders; library before {dbBefore / 1048576.0:0.0} MiB ({dbBefore:N0} B; {pageCount:N0} pages, {freelist:N0} free), {namesBefore:N0} names ({nameBytes / 1048576.0:0.0} MiB of UTF-16), {pathsBefore:N0} folder paths");
 +            GC.Collect();
 +            GC.WaitForPendingFinalizers();
 +            GC.Collect();
@@ -577,7 +728,7 @@ index 0000000..bf45214
 +            var started = DateTime.UtcNow;
 +            try
 +            {
-+                imported = Import(session, target, "target", spec, options, cancel.Token, out seconds);
++                imported = Import(session, target, "target", spec, options, cancel.Token, out seconds, afterT0);
 +            }
 +            catch (OperationCanceledException)
 +            {
@@ -603,24 +754,39 @@ index 0000000..bf45214
 +                session.TestOnlyShutdown();
 +                var reopened = new LibrarySession(directory, appData);
 +                var st = reopened.RunStartupOpen();
-+                outcome += $" | after the failure: main {dbAfter / 1048576.0:0.0} MB (before {dbBefore / 1048576.0:0.0} MB), journal {journalAfter} B, next open derives {st.State} ({st.Reason})";
++                outcome += $" | after the failure: main {dbAfter / 1048576.0:0.0} MiB (before {dbBefore / 1048576.0:0.0} MiB), journal {journalAfter} B, next open derives {st.State} ({st.Reason})";
 +                session = reopened;
 +            }
-+            if (o.Mode == "cancel") Console.WriteLine($"cancelled at the journal's peak ({journalAtStop / 1048576.0:0.0} MB): returned rolled back after {cancelToReturn:0.000} s; main {dbAfter / 1048576.0:0.0} MB (before {dbBefore / 1048576.0:0.0} MB), journal now {journalAfter} bytes");
++            if (o.Mode == "cancel") Console.WriteLine($"cancelled at the end of row insertion ({journalAtStop / 1048576.0:0.0} MiB of journal): returned rolled back after {cancelToReturn:0.000} s; main {dbAfter / 1048576.0:0.0} MiB (before {dbBefore / 1048576.0:0.0} MiB), journal now {journalAfter} bytes");
 +
 +            string? analysis = null;
 +            if (o.Analyse && journalCopy is not null && ownershipCopy is not null)
 +            {
-+                analysis = JournalAnalysis.Analyse(journalCopy, ownershipCopy);
++                // the probe build copies the journal immediately before COMMIT (SI_DR_JOURNAL_COPY, its true peak); the copy at the end of
++                // row insertion is the fallback of a build without that instrument
++                var precommit = Environment.GetEnvironmentVariable("SI_DR_JOURNAL_COPY");
++                var analysed = precommit is not null && File.Exists(precommit) ? precommit : journalCopy;
++                analysis = (analysed == precommit ? "[journal copied immediately before COMMIT] " : "[journal copied at the end of row insertion] ") + JournalAnalysis.Analyse(analysed, ownershipCopy);
 +                Console.WriteLine("analysis: " + analysis);
-+                TryDeleteFile(journalCopy);
-+                TryDeleteFile(ownershipCopy);
++                if (Environment.GetEnvironmentVariable("SI_DR_KEEP_ANALYSIS") != "1")
++                {
++                    TryDeleteFile(journalCopy);
++                    TryDeleteFile(ownershipCopy);
++                    if (precommit is not null) TryDeleteFile(precommit);
++                }
++            }
++
++            string? guard = null;
++            if (Environment.GetEnvironmentVariable("SI_DR_GUARD_LOG") is { } guardLog && File.Exists(guardLog))
++            {
++                guard = Guard.Summarise(File.ReadAllLines(guardLog));
++                Console.WriteLine("IMP-11: " + guard);
 +            }
 +
 +            var phases = imported?.Phases;
 +            var insertion = phases is null ? 0 : phases.Insertion.TotalSeconds;
 +            var growth = dbAfter - dbBefore;
-+            var files = imported?.Files ?? target.Files;
++            var files = imported?.Files ?? targetFiles;
 +            var result = new Result(o.Label, o.Family, o.Target, o.Prefill, o.TargetSource, o.Churn, o.Mode,
 +                files, imported?.Folders ?? target.FolderCount, imported?.NewNames ?? 0, seconds, imported is null ? 0 : files / seconds,
 +                insertion, insertion > 0 ? files / insertion : 0,
@@ -631,7 +797,7 @@ index 0000000..bf45214
 +                wsBefore, peakWs, (GC.GetTotalPauseDuration() - gcPause).TotalMilliseconds, GC.CollectionCount(2) - gen2,
 +                loadStats.Mean, loadStats.P95, loadStats.Max, cpu, availableMb,
 +                outcome, cancelToReturn, journalAtStop, o.Mode == "cancel" ? dbAfter : 0,
-+                started.ToString("O", CultureInfo.InvariantCulture), analysis, ProbeDescription());
++                started.ToString("O", CultureInfo.InvariantCulture), analysis, ProbeDescription(), o.Params, generated, guard);
 +            session.TestOnlyShutdown();
 +            Console.WriteLine(JsonSerializer.Serialize(result));
 +            return 0;
@@ -644,11 +810,14 @@ index 0000000..bf45214
 +
 +    private static string? ProbeDescription()
 +    {
-+        var parts = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("SI_DR_", StringComparison.Ordinal) && k != "SI_DR_PREFILL_CACHE")
++        // path-valued variables (instruments and the names list) are never written: they name the scratch directory and the user profile
++        var parts = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("SI_DR_", StringComparison.Ordinal) && !IsPathVariable(k))
 +            .OrderBy(k => k, StringComparer.Ordinal).Select(k => k + "=" + Environment.GetEnvironmentVariable(k)).ToList();
 +        if (Environment.GetEnvironmentVariable("SI_DR_PROBE_REPORT") is { } rep && File.Exists(rep)) parts.Add(File.ReadAllText(rep).Trim());
 +        return parts.Count == 0 ? null : string.Join("; ", parts);
 +    }
++
++    private static bool IsPathVariable(string name) => name is "SI_DR_PREFILL_CACHE" or "SI_DR_PROBE_REPORT" or "SI_DR_GUARD_LOG" or "SI_DR_JOURNAL_COPY" or "SI_DR_REAL_NAMES" or "SI_DR_KEEP_ANALYSIS";
 +
 +    /// <summary>Times a start-up open of a Library left with a hot journal by a killed child (crash recovery cost).</summary>
 +    private static int Recover(string directory, string appData)
@@ -669,8 +838,13 @@ index 0000000..bf45214
 +        }
 +        session.TestOnlyShutdown();
 +        var mainAfter = HandleLengthOrZero(main);
-+        Console.WriteLine($"recovery open: {openSeconds:0.000} s, hot journal {journalBefore / 1048576.0:0.0} MB, main {mainBefore / 1048576.0:0.0} -> {mainAfter / 1048576.0:0.0} MB, state {status.State}, snapshots {snapshots}, older snapshots {(verify is null ? "verify" : "FAIL " + verify)}");
-+        Console.WriteLine(JsonSerializer.Serialize(new { OpenSeconds = openSeconds, HotJournalBytes = journalBefore, MainBeforeBytes = mainBefore, MainAfterBytes = mainAfter, State = status.State.ToString(), Snapshots = snapshots, OlderSnapshotsVerify = verify is null }));
++        // older snapshots are reported verified only when they were verified: a state other than Available skips the check, which is
++        // recorded as null with the reason (C4DR-O01: the old harness wrote "true" for a skipped check)
++        var verified = status.State == LibraryState.Available;
++        bool? olderVerify = verified ? verify is null : null;
++        var perSource = Environment.GetEnvironmentVariable("SI_DR_PERSOURCE") ?? "unset";
++        Console.WriteLine($"recovery open: {openSeconds:0.000} s, hot journal {journalBefore / 1048576.0:0.0} MiB, main {mainBefore / 1048576.0:0.0} -> {mainAfter / 1048576.0:0.0} MiB, state {status.State}, snapshots {snapshots}, older snapshots {(!verified ? "NOT VERIFIED (state " + status.State + ")" : verify is null ? "verify" : "FAIL " + verify)}; SI_DR_PERSOURCE {perSource}");
++        Console.WriteLine(JsonSerializer.Serialize(new { OpenSeconds = openSeconds, HotJournalBytes = journalBefore, MainBeforeBytes = mainBefore, MainAfterBytes = mainAfter, State = status.State.ToString(), Snapshots = snapshots, OlderSnapshotsVerify = olderVerify, VerifySkippedReason = verified ? null : "state " + status.State, RecoverPerSource = perSource }));
 +        return 0;
 +    }
 +
@@ -682,11 +856,12 @@ index 0000000..bf45214
 +        return lease;
 +    }
 +
-+    private static ImportResult Import(LibrarySession session, ISnapshotRowSource snapshot, string runId, ImportSourceSpec source, ImportOptions? options, CancellationToken cancellation, out double seconds)
++    private static ImportResult Import(LibrarySession session, ISnapshotRowSource snapshot, string runId, ImportSourceSpec source, ImportOptions? options, CancellationToken cancellation, out double seconds, Action? afterT0 = null)
 +    {
-+        var header = snapshot switch { DrSnapshot d => d.Header(runId), SyntheticSnapshot s => s.Header(runId), _ => throw new ArgumentException("row source") };
++        var header = snapshot switch { DrSnapshot d => d.Header(runId), ObjSnapshot b => b.Header(runId), SyntheticSnapshot s => s.Header(runId), _ => throw new ArgumentException("row source") };
 +        using var prepare = Lease(session, MutationKind.Prepare);
 +        var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes(@"D:\Media"), null, runId, DateTime.UtcNow.Ticks)).GetAwaiter().GetResult();
++        afterT0?.Invoke();
 +        using var save = prepare.HandOffToObservation().HandOffToSave(out _);
 +        var watch = Stopwatch.StartNew();
 +        try
@@ -1046,6 +1221,383 @@ index 0000000..bf45214
 +        var list = DesignReviewBench.RealNames.List(_realList);
 +        var slot = _seqStart[folder] + k;
 +        return list[(int)(slot % list.Length)];
++    }
++}
++
++/// <summary>C4 design repair: summarises the IMP-11 instrument of the probe build (one JSON line per check: kind, rows, page_count,
++/// page_size, main and journal length through handles). Pending main growth at a check = page_count x page_size - main length; the
++/// growth that COMMIT adds = main after COMMIT - main before COMMIT; the drop per interval = growth of main + journal between two
++/// consecutive row checks (16,384 rows apart).</summary>
++internal static class Guard
++{
++    internal static string Summarise(string[] lines)
++    {
++        var rows = lines.Where(l => l.StartsWith('{')).Select(l => JsonDocument.Parse(l).RootElement).ToList();
++        long Get(JsonElement e, string k) => e.GetProperty(k).GetInt64();
++        long Pending(JsonElement e) => Get(e, "pc") < 0 ? 0 : Math.Max(0, Get(e, "pc") * Get(e, "ps") - Get(e, "main"));
++        var pre = rows.LastOrDefault(e => e.GetProperty("k").GetString() == "precommit");
++        var post = rows.LastOrDefault(e => e.GetProperty("k").GetString() == "postcommit");
++        var endrows = rows.LastOrDefault(e => e.GetProperty("k").GetString() == "endrows");
++        var verified = rows.LastOrDefault(e => e.GetProperty("k").GetString() == "verified");
++        var begin = rows.FirstOrDefault(e => e.GetProperty("k").GetString() == "begin");
++        var checks = rows.Where(e => e.GetProperty("k").GetString() is "rows" or "folders").ToList();
++        long maxInterval = 0, maxPending = 0;
++        for (var i = 1; i < checks.Count; i++)
++        {
++            var grow = Get(checks[i], "main") + Get(checks[i], "journal") - Get(checks[i - 1], "main") - Get(checks[i - 1], "journal");
++            var rowsApart = Math.Max(1, Get(checks[i], "rows") - Get(checks[i - 1], "rows"));
++            if (Get(checks[i], "rows") > Get(checks[i - 1], "rows")) maxInterval = Math.Max(maxInterval, grow * 4_096 / rowsApart);
++        }
++        foreach (var c in rows) maxPending = Math.Max(maxPending, Pending(c));
++        var sb = new StringBuilder();
++        sb.Append(CultureInfo.InvariantCulture, $"checks {rows.Count}; max pending main growth at any check {maxPending} B; largest drop per 4,096 rows (scaled from 16,384-row intervals) {maxInterval} B");
++        if (endrows.ValueKind == JsonValueKind.Object) sb.Append(CultureInfo.InvariantCulture, $"; end of rows: pending {Pending(endrows)} B, main {Get(endrows, "main")} B, journal {Get(endrows, "journal")} B");
++        if (verified.ValueKind == JsonValueKind.Object && endrows.ValueKind == JsonValueKind.Object)
++            sb.Append(CultureInfo.InvariantCulture, $"; during verification main grew {Get(verified, "main") - Get(endrows, "main")} B, journal {Get(verified, "journal") - Get(endrows, "journal")} B");
++        if (pre.ValueKind == JsonValueKind.Object)
++        {
++            sb.Append(CultureInfo.InvariantCulture, $"; before COMMIT: page_count {Get(pre, "pc")}, page_size {Get(pre, "ps")}, main {Get(pre, "main")} B, journal {Get(pre, "journal")} B, pending {Pending(pre)} B");
++            if (post.ValueKind == JsonValueKind.Object)
++                sb.Append(CultureInfo.InvariantCulture, $"; after COMMIT: main {Get(post, "main")} B (COMMIT added {Get(post, "main") - Get(pre, "main")} B; predicted {Pending(pre)} B; difference {Get(post, "main") - Get(pre, "main") - Pending(pre)} B), journal {Get(post, "journal")} B");
++        }
++        if (begin.ValueKind == JsonValueKind.Object && pre.ValueKind == JsonValueKind.Object)
++            sb.Append(CultureInfo.InvariantCulture, $"; total growth from BEGIN: pages {Get(pre, "pc") - Get(begin, "pc")}");
++        return sb.ToString();
++    }
++}
++
++/// <summary>C4 design repair: the numeric parameters of the objective name families (§15.4 of the repaired specification). A cell is
++/// fully described by them before it runs; nothing is harvested from a machine.</summary>
++internal sealed record ObjParams(double D, string Model, double Beta, double Omega, double Rho, double Delta, double Alpha)
++{
++    /// <summary>"system" (the reference machine's system drive) or "data" (a data volume of the same machine): each selects that
++    /// census's length quantiles and its repeat skew beta (docs/evidence/c4-design-review/census/calibration.json); a repeat occurrence
++    /// takes vocabulary rank floor(V * u^beta), u uniform in [0, 1).</summary>
++    internal static ObjParams Parse(string text)
++    {
++        var map = text.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(kv => kv.Split('=', 2)).ToDictionary(kv => kv[0].Trim(), kv => kv[1].Trim(), StringComparer.Ordinal);
++        double Num(string key, double fallback) => map.TryGetValue(key, out var v) ? double.Parse(v, CultureInfo.InvariantCulture) : fallback;
++        var model = map.GetValueOrDefault("model", "system");
++        return new ObjParams(Num("d", 0.25), model, Num("beta", ObjNames.Beta(model)), Num("omega", 0.25),
++            Num("rho", 0), Num("delta", 0), Num("alpha", 0));
++    }
++
++    /// <summary>The part of a parameter string that changes a prefill (the vocabulary), canonical, for the prefill cache key.</summary>
++    internal static string PrefillPart(string text)
++    {
++        if (string.IsNullOrWhiteSpace(text)) return "";
++        var p = Parse(text);
++        return string.Create(CultureInfo.InvariantCulture, $"d={p.D:0.####};model={p.Model};beta={p.Beta:0.####};omega={p.Omega:0.####}");
++    }
++}
++
++/// <summary>Deterministic file names for the objective families. A vocabulary entry v of vocabulary seed s is
++/// Enc(v) + filler + extension: Enc is five letters (A-Z, a-z) encoding a bijective scramble of v, so every entry of one vocabulary is
++/// distinct and entries spread uniformly over the key space; the total length follows the selected census's length quantiles (a name is
++/// never shorter than its five letters and extension, so the shortest percentiles are raised to that).</summary>
++internal static class ObjNames
++{
++    /// <summary>File-name length quantiles in UTF-16 code units, 0th to 100th percentile (census/calibration.json, "system").</summary>
++    private static readonly int[] SystemQuantiles = [1, 5, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 14, 14, 14, 14, 14, 15, 15, 15, 16, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20, 20, 21, 23, 23, 24, 24, 25, 26, 28, 31, 34, 38, 40, 40, 43, 44, 44, 44, 47, 54, 65, 78, 93, 99, 108, 249];
++
++    /// <summary>The same for the data volume (census/calibration.json, "data").</summary>
++    private static readonly int[] DataQuantiles = [1, 6, 7, 8, 9, 10, 10, 10, 12, 12, 13, 14, 15, 16, 17, 17, 17, 17, 18, 18, 18, 19, 19, 20, 20, 21, 21, 21, 21, 21, 22, 23, 23, 23, 23, 23, 24, 24, 25, 27, 28, 29, 30, 32, 32, 32, 32, 34, 35, 37, 37, 39, 40, 40, 40, 40, 40, 40, 42, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 46, 47, 47, 48, 48, 49, 49, 50, 50, 51, 52, 52, 52, 53, 53, 54, 54, 59, 59, 66, 70, 80, 228];
++
++    /// <summary>The repeat skew fitted to each census's share of files carried by its most frequent 1% of names.</summary>
++    internal static double Beta(string model) => model == "data" ? 2.558 : 13.501;
++
++    private const long Space = 380_204_032;   // 52^5
++    private const long Scramble = 2_654_435_761 % Space;   // odd and not a multiple of 13: a bijection on [0, 52^5)
++    private const string Letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
++    private const string Filler = "abcdefghijklmnopqrstuvwxyz0123456789_- ";
++    private static readonly string[] Extensions = [".dll", ".jpg", ".png", ".txt", ".xml", ".js", ".json", ".html", ".mui", ".pdf", ".mp3", ".log", ".ini", ".cs", ".py", ".zip",
++        ".exe", ".dat", ".h", ".cpp", ".css", ".svg", ".gif", ".mp4", ".docx", ".xlsx", ".pyc", ".md", ".cab", ".sys", "", ""];
++
++    internal static string Name(long v, int seed, string lengthModel)
++    {
++        var quantiles = lengthModel == "data" ? DataQuantiles : SystemQuantiles;
++        var h = Mix((ulong)v, (ulong)seed, 0x4E414D45UL);
++        var code = (long)(((ulong)((v % Space) * Scramble % Space) + (ulong)seed * 104_729UL) % (ulong)Space);
++        var sb = new StringBuilder(64);
++        Span<char> enc = stackalloc char[5];
++        for (var i = 4; i >= 0; i--) { enc[i] = Letters[(int)(code % 52)]; code /= 52; }
++        sb.Append(enc);
++        var ext = Extensions[(int)((h >> 20) % (ulong)Extensions.Length)];
++        // the length percentile follows a golden-ratio sequence over the vocabulary rank, so the few most frequent names (which carry
++        // half the files in the system model) take evenly spread lengths and the file-weighted lengths match the census's per-file ones
++        var q = (int)(((v + seed * 7_919L) * 0.6180339887498949 % 1.0) * 10_000);   // 0..9999: percentile with two decimals
++        var lo = quantiles[q / 100];
++        var hi = quantiles[Math.Min(100, q / 100 + 1)];
++        var total = lo + (int)Math.Round((hi - lo) * (q % 100) / 100.0);
++        var fill = Math.Max(0, total - 5 - ext.Length);
++        var x = h | 1UL;
++        for (var i = 0; i < fill; i++)
++        {
++            x ^= x << 13; x ^= x >> 7; x ^= x << 17;
++            sb.Append(Filler[(int)(x % (ulong)Filler.Length)]);
++        }
++        // a name never ends with a space or starts its extension after one
++        while (sb.Length > 5 && sb[^1] == ' ') sb[^1] = '_';
++        sb.Append(ext);
++        return sb.ToString();
++    }
++
++    /// <summary>A repeat occurrence's vocabulary rank: floor(V * u^beta).</summary>
++    internal static long RepeatRank(ulong h, long vocabulary, double beta)
++    {
++        var u = (h >> 11) * (1.0 / (1UL << 53));
++        return Math.Min(vocabulary - 1, (long)(vocabulary * Math.Pow(u, beta)));
++    }
++
++    internal static ulong Mix(ulong a, ulong b, ulong c)
++    {
++        var x = a * 0x9E3779B97F4A7C15UL ^ (b + 0x632BE59BD9B4E019UL) * 0xBF58476D1CE4E5B9UL ^ (c + 0x94D049BB133111EBUL);
++        x ^= x >> 31; x *= 0xD6E8FEB86659FD93UL; x ^= x >> 29; x *= 0x94D049BB133111EBUL; x ^= x >> 32;
++        return x;
++    }
++
++    internal static double Unit(ulong h) => (h >> 11) * (1.0 / (1UL << 53));
++}
++
++/// <summary>C4 design repair: an objective-family snapshot. The tree (folders, file counts, sizes, times) is DrSnapshot's for the tree
++/// seed. File names: a base snapshot of n files over a vocabulary of V = round(D * n) distinct names, in which every vocabulary entry
++/// occurs once (at the slots an affine permutation sends below V) and the other n - V slots repeat entries by RepeatRank, never twice in
++/// one folder; then, for a re-scan, one churn layer: of the base's files a fraction Delta is deleted, a fraction Rho renamed to names
++/// new to the source (spread over the key space), and for a fraction Alpha one file is added beside it with a name already in the
++/// vocabulary. Source B of the Library shares a fraction Omega of its vocabulary entries with the target's vocabulary.</summary>
++internal sealed class ObjSnapshot : ISnapshotRowSource
++{
++    private const int Branching = 6;
++    private readonly int _folders;
++    private readonly int _treeSeed;
++    private readonly int _vocabSeed;
++    private readonly int? _sharedSeed;
++    private readonly int _layer;
++    private readonly ObjParams _p;
++    private readonly int[] _baseCount;
++    private readonly long[] _baseStart;
++    private readonly int[] _directFiles;
++    private readonly long[] _directBytes;
++    private readonly long[] _totalFiles;
++    private readonly long[] _totalBytes;
++    private readonly long[] _directSubfolders;
++    private readonly long[] _totalSubfolders;
++    private readonly long[] _seqStart;
++    private readonly long _baseFiles;
++    private readonly long _vocabulary;
++    private readonly long _a;
++    private readonly long _b;
++
++    internal ObjSnapshot(int folders, int treeSeed, ObjParams p, int vocabSeed, int? sharedSeed = null, int layer = 0)
++    {
++        _folders = folders;
++        _treeSeed = treeSeed;
++        _vocabSeed = vocabSeed;
++        _sharedSeed = sharedSeed;
++        _layer = layer;
++        _p = p;
++        _baseCount = new int[folders];
++        _baseStart = new long[folders];
++        _directFiles = new int[folders];
++        _directBytes = new long[folders];
++        _totalFiles = new long[folders];
++        _totalBytes = new long[folders];
++        _directSubfolders = new long[folders];
++        _totalSubfolders = new long[folders];
++        _seqStart = new long[folders];
++        long baseSeq = 0;
++        for (var i = 0; i < folders; i++)
++        {
++            _baseCount[i] = (int)((uint)Hash(i, 17, _treeSeed) % 9u);
++            _baseStart[i] = baseSeq;
++            baseSeq += _baseCount[i];
++        }
++        _baseFiles = baseSeq;
++        _vocabulary = Math.Max(1, (long)Math.Round(p.D * _baseFiles));
++        _a = 2_654_435_761L % Math.Max(2, _baseFiles);
++        while (Gcd(_a, _baseFiles) != 1) _a++;
++        _b = 40_503L % Math.Max(1, _baseFiles);
++        long seq = 0;
++        for (var i = 0; i < folders; i++)
++        {
++            var (count, bytes) = Shape(i);
++            _directFiles[i] = count;
++            _seqStart[i] = seq;
++            seq += count;
++            _directBytes[i] = bytes;
++            _totalFiles[i] = count;
++            _totalBytes[i] = bytes;
++            if (i > 0) _directSubfolders[ParentOf(i)]++;
++        }
++        for (var i = folders - 1; i >= 1; i--)
++        {
++            var parent = ParentOf(i);
++            _totalFiles[parent] += _totalFiles[i];
++            _totalBytes[parent] += _totalBytes[i];
++            _totalSubfolders[parent] += 1 + _totalSubfolders[i];
++        }
++        Files = seq;
++        Bytes = _totalBytes[0];
++    }
++
++    internal long Files { get; }
++
++    internal long Bytes { get; }
++
++    internal long Vocabulary => _vocabulary;
++
++    public int FolderCount => _folders;
++
++    private static long Gcd(long a, long b) { while (b != 0) (a, b) = (b, a % b); return a; }
++
++    private static int ParentOf(int index) => (index - 1) / Branching;
++
++    private static int Hash(int a, int b, int seed) => unchecked((a * 73856093) ^ (b * 19349663) ^ (seed * 83492791));
++
++    private long SizeOf(int folder, int k) => 1 + (uint)Hash(folder, k + 1000, _treeSeed) % 100_000u;
++
++    private enum Fate { Kept, Deleted, Renamed }
++
++    private Fate FateOf(int folder, int k)
++    {
++        if (_layer == 0) return Fate.Kept;
++        var u = ObjNames.Unit(ObjNames.Mix((ulong)folder, (ulong)k, 0xC4000UL + (ulong)_layer));
++        return u < _p.Delta ? Fate.Deleted : u < _p.Delta + _p.Rho ? Fate.Renamed : Fate.Kept;
++    }
++
++    private bool Adds(int folder, int k) => _layer != 0 && ObjNames.Unit(ObjNames.Mix((ulong)folder, (ulong)k, 0xADD00UL + (ulong)_layer)) < _p.Alpha;
++
++    private (int Count, long Bytes) Shape(int folder)
++    {
++        var count = 0;
++        long bytes = 0;
++        var extra = 0;
++        for (var k = 0; k < _baseCount[folder]; k++)
++        {
++            if (FateOf(folder, k) != Fate.Deleted) { count++; bytes += SizeOf(folder, k); }
++            if (Adds(folder, k)) { count++; bytes += SizeOf(folder, _baseCount[folder] + extra++); }
++        }
++        return (count, bytes);
++    }
++
++    internal ImportSnapshotHeader Header(string runId) => new()
++    {
++        Completion = ScanCompletionState.Complete,
++        RunId = runId,
++        StartedUtcTicks = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).Ticks,
++        FinishedUtcTicks = new DateTime(2026, 1, 1, 0, 1, 0, DateTimeKind.Utc).Ticks,
++        RootPathAsEntered = Utf16.ToBytes(@"D:\Media"),
++        CanonicalRoot = Utf16.ToBytes(@"D:\Media"),
++        MountPoint = Utf16.ToBytes(@"D:\"),
++        VolumeLabel = Utf16.ToBytes("Data"),
++        CapacityBytes = 1_000_000_000,
++        FreeBytes = 500_000_000,
++        Confidence = IdentityConfidence.Strong,
++        Basis = IdentityBasis.Evidence,
++        CaptureKind = SourceKind.LocalVolume,
++        FsName = "NTFS",
++        Files = Files,
++        Folders = _folders,
++        Bytes = Bytes,
++    };
++
++    public IEnumerable<ImportFolder> Folders()
++    {
++        for (var i = 0; i < _folders; i++)
++        {
++            yield return new ImportFolder(i, i == 0 ? -1 : ParentOf(i), i == 0 ? [] : Utf16.ToBytes("dir" + (i % 997)), FolderScanStatus.Ok, null, true, 0x10,
++                CreatedTicks: 637_000_000_000_000_000L + i, ModifiedTicks: 637_100_000_000_000_000L + i,
++                _directBytes[i], _totalBytes[i], _directFiles[i], _totalFiles[i], _directSubfolders[i], _totalSubfolders[i],
++                LargestFileBytes: _totalFiles[i] == 0 ? null : 100_000);
++        }
++    }
++
++    private string VocabularyName(long v) =>
++        _sharedSeed is { } shared && ObjNames.Unit(ObjNames.Mix((ulong)v, (ulong)_vocabSeed, 0x0E6AUL)) < _p.Omega
++            ? ObjNames.Name(v, shared, _p.Model)
++            : ObjNames.Name(v, _vocabSeed, _p.Model);
++
++    /// <summary>The base snapshot's vocabulary indexes for one folder: first occurrences first, then repeats re-drawn off collisions.</summary>
++    private long[] BaseIndexes(int folder)
++    {
++        var count = _baseCount[folder];
++        var result = new long[count];
++        var used = new HashSet<long>();
++        var repeat = new List<int>();
++        for (var k = 0; k < count; k++)
++        {
++            var t = (long)(((ulong)(_baseStart[folder] + k) * (ulong)_a + (ulong)_b) % (ulong)_baseFiles);
++            if (t < _vocabulary) { result[k] = t; used.Add(t); }
++            else repeat.Add(k);
++        }
++        foreach (var k in repeat)
++        {
++            var t = (long)(((ulong)(_baseStart[folder] + k) * (ulong)_a + (ulong)_b) % (ulong)_baseFiles);
++            var v = ObjNames.RepeatRank(ObjNames.Mix((ulong)_vocabSeed, (ulong)t, 0x5EEDUL), _vocabulary, _p.Beta);
++            for (var j = 0; !used.Add(v); j++) v = (v + 1 + j * 7_919L) % _vocabulary;
++            result[k] = v;
++        }
++        return result;
++    }
++
++    public IReadOnlyList<ImportFile> FilesOfFolder(int folderIndex)
++    {
++        var count = _directFiles[folderIndex];
++        if (count == 0) return [];
++        var baseIdx = BaseIndexes(folderIndex);
++        var used = new HashSet<long>(baseIdx);
++        var files = new List<ImportFile>(count);
++        var extra = 0;
++        var seq = _seqStart[folderIndex];
++        for (var k = 0; k < _baseCount[folderIndex]; k++)
++        {
++            var fate = FateOf(folderIndex, k);
++            if (fate != Fate.Deleted)
++            {
++                var name = fate == Fate.Renamed
++                    ? ObjNames.Name(_vocabulary + (long)_baseFiles * _layer + _baseStart[folderIndex] + k, _vocabSeed, _p.Model)   // new to the source
++                    : VocabularyName(baseIdx[k]);
++                files.Add(new ImportFile(Utf16.ToBytes(name), seq++, SizeOf(folderIndex, k), 637_100_000_000_000_000L + k, 637_000_000_000_000_000L, 637_200_000_000_000_000L, 0x20));
++            }
++            if (Adds(folderIndex, k))
++            {
++                var v = ObjNames.RepeatRank(ObjNames.Mix((ulong)folderIndex, (ulong)k, 0xADD01UL + (ulong)_layer), _vocabulary, _p.Beta);
++                for (var j = 0; !used.Add(v); j++) v = (v + 1 + j * 7_919L) % _vocabulary;
++                var kk = _baseCount[folderIndex] + extra++;
++                files.Add(new ImportFile(Utf16.ToBytes(VocabularyName(v)), seq++, SizeOf(folderIndex, kk), 637_100_000_000_000_000L + kk, 637_000_000_000_000_000L, 637_200_000_000_000_000L, 0x20));
++            }
++        }
++        return files;
++    }
++
++    public IEnumerable<ImportError> Errors() => [];
++
++    /// <summary>The realised statistics, computed before the import from the generator alone (recorded with every run).</summary>
++    internal (long Files, long Distinct, double MeanLength, long Renamed, long Deleted, long Added, long Once, long Top1) Describe()
++    {
++        var distinct = new Dictionary<string, int>(StringComparer.Ordinal);
++        long files = 0, length = 0, renamed = 0, deleted = 0, added = 0;
++        for (var i = 0; i < _folders; i++)
++        {
++            foreach (var f in FilesOfFolder(i))
++            {
++                var name = Utf16.ToString(f.Name);
++                distinct[name] = distinct.GetValueOrDefault(name) + 1;
++                files++;
++                length += name.Length;
++            }
++            for (var k = 0; k < _baseCount[i]; k++)
++            {
++                var fate = FateOf(i, k);
++                if (fate == Fate.Deleted) deleted++;
++                if (fate == Fate.Renamed) renamed++;
++                if (Adds(i, k)) added++;
++            }
++        }
++        var counts = distinct.Values.OrderByDescending(c => c).ToArray();
++        var once = counts.LongCount(c => c == 1);
++        var top1 = counts.Take(Math.Max(1, counts.Length / 100)).Sum(c => (long)c);
++        return (files, distinct.Count, files == 0 ? 0 : (double)length / files, renamed, deleted, added, once, top1);
 +    }
 +}
 +

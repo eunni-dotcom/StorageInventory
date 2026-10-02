@@ -1,0 +1,52 @@
+# plan rollback x2 started 2026-10-02T16:09:09.9690279Z, 16 logical CPUs, exe <scratch>\bin-pristine\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 6.42 of 16
+=== cancel append 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  cancelled at the journal's peak (0.2 MB): returned rolled back after 0.035 s; main 375.9 MB (before 375.9 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 0.2 MB (FileInfo 0.2 MB); growth 0.0 MB; library before 375.9 MB; new names 0; other load mean 61.7%
+=== cancel hash 1M/750k r1
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  cancelled at the journal's peak (22.3 MB): returned rolled back after 0.584 s; main 98.9 MB (before 98.9 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 22.3 MB (FileInfo 22.3 MB); growth 0.0 MB; library before 98.9 MB; new names 0; other load mean 60.7%
+=== cancel hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  cancelled at the journal's peak (88.6 MB): returned rolled back after 1.814 s; main 392.5 MB (before 392.5 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 88.6 MB (FileInfo 88.6 MB); growth 0.0 MB; library before 392.5 MB; new names 0; other load mean 58.1%
+=== cancel hash 2M/6000k r1
+  building prefill hash-2000000
+    prefill hash 3x2,000,000 built in 97.5 s, 785.7 MB
+  target: 1,997,023 files in 500,000 folders; library before 785.7 MB (201,139 pages, 0 free), 3,019,497 names (132.5 MB of UTF-16), 1,000,000 folder paths
+  cancelled at the journal's peak (177.2 MB): returned rolled back after 3.259 s; main 785.7 MB (before 785.7 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 177.2 MB (FileInfo 177.2 MB); growth 0.0 MB; library before 785.7 MB; new names 0; other load mean 49.1%
+=== crash hash 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  recovery open: 0.678 s, hot journal 88.6 MB, main 516.5 -> 392.5 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 88.6 MB; next open 0.68 s, state Available
+=== crash append 1M/3000k r1
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  recovery open: 0.110 s, hot journal 0.2 MB, main 449.1 -> 375.9 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 0.2 MB; next open 0.11 s, state Available
+=== cancel append 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  cancelled at the journal's peak (0.2 MB): returned rolled back after 0.045 s; main 375.9 MB (before 375.9 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 0.2 MB (FileInfo 0.2 MB); growth 0.0 MB; library before 375.9 MB; new names 0; other load mean 39.7%
+=== cancel hash 1M/750k r2
+  target: 999,111 files in 250,000 folders; library before 98.9 MB (25,311 pages, 0 free), 393,658 names (17.0 MB of UTF-16), 125,000 folder paths
+  cancelled at the journal's peak (22.3 MB): returned rolled back after 0.761 s; main 98.9 MB (before 98.9 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 22.3 MB (FileInfo 22.3 MB); growth 0.0 MB; library before 98.9 MB; new names 0; other load mean 52.7%
+=== cancel hash 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  cancelled at the journal's peak (88.6 MB): returned rolled back after 1.198 s; main 392.5 MB (before 392.5 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 88.6 MB (FileInfo 88.6 MB); growth 0.0 MB; library before 392.5 MB; new names 0; other load mean 44.4%
+=== cancel hash 2M/6000k r2
+  target: 1,997,023 files in 500,000 folders; library before 785.7 MB (201,139 pages, 0 free), 3,019,497 names (132.5 MB of UTF-16), 1,000,000 folder paths
+  cancelled at the journal's peak (177.2 MB): returned rolled back after 3.958 s; main 785.7 MB (before 785.7 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 177.2 MB (FileInfo 177.2 MB); growth 0.0 MB; library before 785.7 MB; new names 0; other load mean 51.3%
+=== crash hash 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 392.5 MB (100,482 pages, 0 free), 1,518,549 names (66.3 MB of UTF-16), 500,000 folder paths
+  recovery open: 0.705 s, hot journal 88.6 MB, main 516.5 -> 392.5 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 88.6 MB; next open 0.71 s, state Available
+=== crash append 1M/3000k r2
+  target: 999,111 files in 250,000 folders; library before 375.9 MB (96,218 pages, 0 free), 1,518,549 names (59.3 MB of UTF-16), 500,000 folder paths
+  recovery open: 0.162 s, hot journal 0.2 MB, main 449.1 -> 375.9 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 0.2 MB; next open 0.16 s, state Available
+# plan rollback finished 2026-10-02T16:15:20.5510885Z; busy elsewhere (cores): total 5.44 of 16

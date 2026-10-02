@@ -1,0 +1,19 @@
+# plan repair:rollback x1 started 2026-10-02T19:54:10.8076600Z, 16 logical CPUs, exe <worktree>\tests\StorageInventory.Library.Tests\bin\Release\net10.0-windows\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.41 of 16
+=== cancel persource objrescan 2M/6000k n1
+  generator: params d=0.25;model=system;rho=0.01;delta=0.005;alpha=0.005 (model system, beta 13.501, omega 0.25); generated 2001522 files, 516090 distinct names (25.78%), mean length 20.01 code units, names seen once 58.4% of distinct, files in the top 1% of names 53.4%; base vocabulary 500427; churn: renamed to new names 20016, deleted 10086, added with existing names 9901
+  target: 2,001,522 files in 500,000 folders; library before 562.1 MiB (589,443,072 B; 143,907 pages, 0 free), 1,022,532 names (42.1 MiB of UTF-16), 1,000,000 folder paths
+  cancelled at the end of row insertion (28.9 MiB of journal): returned rolled back after 0.378 s; main 562.1 MiB (before 562.1 MiB), journal now 0 bytes
+  IMP-11: checks 154; max pending main growth at any check 46473216 B; largest drop per 4,096 rows (scaled from 16,384-row intervals) 526614 B; end of rows: pending 27303936 B, main 709308416 B, journal 30325728 B
+  files/s 0; insertion files/s 0; peak journal 28.9 MiB (FileInfo 28.9 MiB); growth 0.0 MiB; library before 562.1 MiB; new names 0; other load mean 55.2%
+=== crash persource objrescan 2M/6000k n1
+  generator: params d=0.25;model=system;rho=0.01;delta=0.005;alpha=0.005 (model system, beta 13.501, omega 0.25); generated 2001522 files, 516090 distinct names (25.78%), mean length 20.01 code units, names seen once 58.4% of distinct, files in the top 1% of names 53.4%; base vocabulary 500427; churn: renamed to new names 20016, deleted 10086, added with existing names 9901
+  target: 2,001,522 files in 500,000 folders; library before 562.1 MiB (589,443,072 B; 143,907 pages, 0 free), 1,022,532 names (42.1 MiB of UTF-16), 1,000,000 folder paths
+  recovery open: 0.875 s, hot journal 28.9 MiB, main 676.4 -> 562.1 MiB, state Available, snapshots 3, older snapshots verify; SI_DR_PERSOURCE 1
+  crash: journal at kill 28.9 MiB; next open 0.87 s, state Available
+=== cancel persource obj first 2M/6000k d25
+  generator: params d=0.25;model=system (model system, beta 13.501, omega 0.25); generated 1997023 files, 499256 distinct names (25.00%), mean length 21.76 code units, names seen once 56.6% of distinct, files in the top 1% of names 53.7%; base vocabulary 499256; churn: renamed to new names 0, deleted 0, added with existing names 0
+  target: 1,997,023 files in 500,000 folders; library before 562.1 MiB (589,443,072 B; 143,907 pages, 0 free), 1,022,532 names (42.1 MiB of UTF-16), 1,000,000 folder paths
+  cancelled at the end of row insertion (0.2 MiB of journal): returned rolled back after 0.077 s; main 562.1 MiB (before 562.1 MiB), journal now 0 bytes
+  IMP-11: checks 153; max pending main growth at any check 58232832 B; largest drop per 4,096 rows (scaled from 16,384-row intervals) 538624 B; end of rows: pending 31371264 B, main 783183872 B, journal 235040 B
+  files/s 0; insertion files/s 0; peak journal 0.2 MiB (FileInfo 0.2 MiB); growth 0.0 MiB; library before 562.1 MiB; new names 0; other load mean 47.5%
+# plan repair:rollback finished 2026-10-02T19:56:03.2899612Z; busy elsewhere (cores): total 3.10 of 16

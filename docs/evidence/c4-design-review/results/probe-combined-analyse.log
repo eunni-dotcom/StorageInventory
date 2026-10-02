@@ -1,0 +1,22 @@
+# plan probe:combined-analyse x1 started 2026-10-02T16:27:59.7185198Z, 16 logical CPUs, exe <scratch>\bin-probes\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 2.24 of 16
+=== analyse persource+chunked hash new-source 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 235016 B, 2 segment(s) (1 synced), sector 512, page 4096, 57 records, 57 distinct pages (0 repeats), 4123 B per distinct page, original 101792 pages; journalled/total by B-tree: file_obs 10/41614, sqlite_autoindex_name_1 10/23264, folder_obs 10/11153, folder_path_child 7/2303, name 5/21164, folder_path 5/2276, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, volume 1/1, volume_by_serial 1/1, source 1/1, source_local_key 1/1, folder_path_root 1/1, snapshot_extension_total 1/1
+  files/s 70,363; insertion files/s 95,083; peak journal 0.2 MB (FileInfo 0.2 MB); growth 138.6 MB; library before 397.6 MB; new names 518,069; other load mean 40.3%
+=== analyse persource+chunked rescan 1% 1M/3000k
+  target: 1,000,846 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 38817120 B, 2 segment(s) (1 synced), sector 512, page 4096, 9458 records, 9458 distinct pages (0 repeats), 4104 B per distinct page, original 101792 pages; journalled/total by B-tree: sqlite_autoindex_name_1 9428/23264, file_obs 10/41614, folder_obs 10/11153, name 5/21164, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, snapshot_extension_total 1/1, folder_path_child 0/2303, folder_path 0/2276
+  files/s 57,826; insertion files/s 95,464; peak journal 37.0 MB (FileInfo 37.0 MB); growth 70.4 MB; library before 397.6 MB; new names 10,187; other load mean 63.3%
+=== analyse persource+chunked hash existing 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 62283568 B, 2 segment(s) (1 synced), sector 512, page 4096, 15176 records, 15176 distinct pages (0 repeats), 4104 B per distinct page, original 101792 pages; journalled/total by B-tree: sqlite_autoindex_name_1 15146/23264, file_obs 10/41614, folder_obs 10/11153, name 5/21164, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, snapshot_extension_total 1/1, folder_path_child 0/2303, folder_path 0/2276
+  files/s 59,688; insertion files/s 95,611; peak journal 59.4 MB (FileInfo 59.4 MB); growth 124.8 MB; library before 397.6 MB; new names 499,571; other load mean 55.9%
+=== cancel persource+chunked hash existing 2M/6000k
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  cancelled at the journal's peak (120.2 MB): returned rolled back after 1.962 s; main 796.6 MB (before 796.6 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 120.2 MB (FileInfo 120.2 MB); growth 0.0 MB; library before 796.6 MB; new names 0; other load mean 40.1%
+=== crash persource+chunked hash existing 2M/6000k
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  recovery open: 1.897 s, hot journal 120.2 MB, main 1040.1 -> 796.6 MB, state NotALibrary, snapshots -1, older snapshots verify
+  crash: journal at kill 120.2 MB; next open 1.90 s, state NotALibrary
+# plan probe:combined-analyse finished 2026-10-02T16:29:55.1505837Z; busy elsewhere (cores): total 2.14 of 16

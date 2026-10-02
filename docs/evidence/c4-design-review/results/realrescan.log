@@ -1,0 +1,13 @@
+# plan realrescan x1 started 2026-10-02T16:54:40.2715636Z, 16 logical CPUs, exe <scratch>\bin-pristine3\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 3.13 of 16
+=== rescanreal 1% 1M/3000k r1
+  target: 1,000,846 files in 250,000 folders; library before 230.1 MB (58,917 pages, 0 free), 70,772 names (2.9 MB of UTF-16), 500,000 folder paths
+  files/s 148,139; insertion files/s 217,571; peak journal 2.2 MB (FileInfo 2.2 MB); growth 71.3 MB; library before 230.1 MB; new names 10,187; other load mean 59.6%
+=== rescanreal 1% 2M/6000k r1
+  building prefill real-2000000
+    prefill real 3x2,000,000 built in 43.4 s, 453.8 MB
+  target: 2,001,707 files in 500,000 folders; library before 453.8 MB (116,165 pages, 0 free), 70,793 names (2.9 MB of UTF-16), 1,000,000 folder paths
+  files/s 136,312; insertion files/s 196,051; peak journal 2.4 MB (FileInfo 2.4 MB); growth 142.7 MB; library before 453.8 MB; new names 20,121; other load mean 47.6%
+=== real new-source 2M/6000k r1
+  target: 1,997,023 files in 500,000 folders; library before 453.8 MB (116,165 pages, 0 free), 70,793 names (2.9 MB of UTF-16), 1,000,000 folder paths
+  files/s 118,499; insertion files/s 171,319; peak journal 2.5 MB (FileInfo 2.5 MB); growth 193.3 MB; library before 453.8 MB; new names 108,189; other load mean 46.7%
+# plan realrescan finished 2026-10-02T16:56:11.1502369Z; busy elsewhere (cores): total 4.40 of 16

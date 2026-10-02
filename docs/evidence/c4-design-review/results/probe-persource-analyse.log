@@ -1,0 +1,26 @@
+# plan probe:persource-analyse x1 started 2026-10-02T17:00:56.6549949Z, 16 logical CPUs, exe <scratch>\bin-probes3\StorageInventory.Library.Tests.exe; busy elsewhere (cores): total 1.86 of 16
+=== analyse persource hash new-source 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 235016 B, 2 segment(s) (1 synced), sector 512, page 4096, 57 records, 57 distinct pages (0 repeats), 4123 B per distinct page, original 101792 pages; journalled/total by B-tree: file_obs 10/41614, sqlite_autoindex_name_1 10/23264, folder_obs 10/11153, folder_path_child 7/2303, name 5/21164, folder_path 5/2276, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, volume 1/1, volume_by_serial 1/1, source 1/1, source_local_key 1/1, folder_path_root 1/1, snapshot_extension_total 1/1
+  files/s 87,060; insertion files/s 111,559; peak journal 0.2 MB (FileInfo 0.2 MB); growth 139.2 MB; library before 397.6 MB; new names 518,069; other load mean 34.4%
+=== analyse persource hash existing 1M/3000k
+  target: 999,111 files in 250,000 folders; library before 397.6 MB (101,792 pages, 0 free), 1,537,047 names (66.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 62279616 B, 2 segment(s) (1 synced), sector 512, page 4096, 15175 records, 15175 distinct pages (0 repeats), 4104 B per distinct page, original 101792 pages; journalled/total by B-tree: sqlite_autoindex_name_1 15145/23264, file_obs 10/41614, folder_obs 10/11153, name 5/21164, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, snapshot_extension_total 1/1, folder_path_child 0/2303, folder_path 0/2276
+  files/s 61,222; insertion files/s 86,481; peak journal 59.4 MB (FileInfo 59.4 MB); growth 126.1 MB; library before 397.6 MB; new names 499,571; other load mean 43.5%
+=== analyse persource rescanreal 1% 1M/3000k
+  target: 1,000,846 files in 250,000 folders; library before 231.1 MB (59,172 pages, 0 free), 72,657 names (2.9 MB of UTF-16), 500,000 folder paths
+  analysis: journal 1601600 B, 2 segment(s) (1 synced), sector 512, page 4096, 390 records, 390 distinct pages (0 repeats), 4107 B per distinct page, original 59172 pages; journalled/total by B-tree: sqlite_autoindex_name_1 357/1061, file_obs 10/41403, folder_obs 10/11153, name 5/949, snapshot_extension_total 4/10, sqlite_schema 1/4, snapshot 1/1, sqlite_autoindex_snapshot_1 1/1, snapshot_by_source 1/1, folder_path_child 0/2303, folder_path 0/2276
+  files/s 187,941; insertion files/s 345,588; peak journal 1.5 MB (FileInfo 1.5 MB); growth 71.3 MB; library before 231.1 MB; new names 10,187; other load mean 35.0%
+=== cancel persource hash existing 2M/6000k
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  cancelled at the journal's peak (120.2 MB): returned rolled back after 3.094 s; main 796.6 MB (before 796.6 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 120.2 MB (FileInfo 120.2 MB); growth 0.0 MB; library before 796.6 MB; new names 0; other load mean 40.6%
+=== crash persource hash existing 2M/6000k
+  target: 1,997,023 files in 500,000 folders; library before 796.6 MB (203,933 pages, 0 free), 3,037,995 names (133.0 MB of UTF-16), 1,000,000 folder paths
+  recovery open: 1.409 s, hot journal 120.2 MB, main 1050.4 -> 796.6 MB, state Available, snapshots 3, older snapshots verify
+  crash: journal at kill 120.2 MB; next open 1.41 s, state Available
+=== cancel persource rescanreal 1% 2M/6000k
+  target: 2,001,707 files in 500,000 folders; library before 455.4 MB (116,580 pages, 0 free), 72,678 names (2.9 MB of UTF-16), 1,000,000 folder paths
+  cancelled at the journal's peak (1.6 MB): returned rolled back after 0.079 s; main 455.4 MB (before 455.4 MB), journal now 0 bytes
+  files/s 0; insertion files/s 0; peak journal 1.6 MB (FileInfo 1.6 MB); growth 0.0 MB; library before 455.4 MB; new names 0; other load mean 27.6%
+# plan probe:persource-analyse finished 2026-10-02T17:03:53.1104012Z; busy elsewhere (cores): total 4.44 of 16
