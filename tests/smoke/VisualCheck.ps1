@@ -90,10 +90,12 @@ public sealed class LumaImage {
         foreach (int p in bgra) if ((p >> 24 & 255) != 0) { hasAlpha = true; break; }
         return new LumaImage(w, h, ToLuma(bgra, underlay, hasAlpha));
     }
-    /// <summary>Share of pixels that are fully transparent (all four bytes zero): nothing painted there.</summary>
+    /// <summary>Share of pixels that are fully transparent (all four bytes zero): nothing painted there. A legacy opaque
+    /// surface (no alpha anywhere) counts as painted, unless every pixel is zero, which means nothing was painted at all.</summary>
     public static double TransparentShare(int[] bgra) {
-        bool hasAlpha = false;
-        foreach (int p in bgra) if ((p >> 24 & 255) != 0) { hasAlpha = true; break; }
+        bool hasAlpha = false, anyPixel = false;
+        foreach (int p in bgra) { if ((p >> 24 & 255) != 0) hasAlpha = true; if (p != 0) anyPixel = true; }
+        if (!anyPixel) return 1;
         if (!hasAlpha) return 0;
         long n = 0; foreach (int p in bgra) if (p == 0) n++;
         return (double)n / bgra.Length;
