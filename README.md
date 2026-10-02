@@ -5,7 +5,7 @@ space: every file and folder, with sizes, dates and attributes, written to CSV r
 only ever reads filesystem metadata. It never opens, changes, moves or deletes your files, and it says plainly when a
 scan could not see everything.
 
-**Version 1.0.0** · Windows 10 and 11 (x64) · [MIT License](LICENSE)
+**Version 1.0.1** · Windows 10 and 11 (x64) · [MIT License](LICENSE)
 
 ![StorageInventory results screen after scanning a small synthetic folder tree](docs/images/results.png)
 
@@ -149,8 +149,11 @@ reproducible byte for byte. See [docs/release.md](docs/release.md).
   - **parity**: the native reports must match the PowerShell reference line for line.
 - **PowerShell reference suite** (`powershell/tests`) and a **release smoke test** (`tests/smoke`), which drives the
   published exe from outside the repository.
+- A **visual startup gate** (`tests/smoke/Test-VisibleStartup.ps1`), which checks the pixels of the published exe's
+  window in the light and the dark theme. UI Automation alone can't tell whether a window is actually visible.
 
-CI builds, tests and publishes every change on GitHub Actions. Tests that need something a hosted runner lacks
+CI builds, tests and publishes every change on GitHub Actions, then runs the visual startup gate on the published exe.
+Tests that need something a hosted runner lacks
 (8.3 names, large benchmark trees) report SKIP with a reason. The hosted runner can create symbolic links, so CI exercises the symbolic-link cases that need privileges locally.
 
 ## Documentation
@@ -165,7 +168,8 @@ CI builds, tests and publishes every change on GitHub Actions. Tests that need s
 | [Benchmarks](docs/benchmarks/native.md) | Measured performance, with method and caveats |
 | [Roadmap](docs/roadmap.md) | What's next, and what is permanently out of scope |
 | [Integration boundary](docs/integration-consumers.md) | How other tools are expected to consume scan results |
-| [v1.0.0 release notes](docs/release-notes/v1.0.0.md) | What's in this release |
+| [v1.0.1 release notes](docs/release-notes/v1.0.1.md) | What's in this release: the blank-window fix |
+| [v1.0.0 release notes](docs/release-notes/v1.0.0.md) | The first release |
 
 ## Known limitations
 
