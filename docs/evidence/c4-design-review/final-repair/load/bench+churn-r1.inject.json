@@ -1,0 +1,11 @@
+{
+ "mode": "churn",
+ "processes": 196,
+ "on_wall_start": 1790981127.128,
+ "on_wall_end": 1790981146.442,
+ "seconds": 19.314,
+ "children_cpu_seconds": 69.328,
+ "launcher_cpu_seconds": 1.062,
+ "injected_machine_percent": 22.78,
+ "mean_process_life_cpu_seconds": 0.354
+}

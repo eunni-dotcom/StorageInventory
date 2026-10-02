@@ -1,0 +1,962 @@
+{
+ "mode": "quiet",
+ "counter": "\\Processor Information(_Total)\\% Processor Time",
+ "interval_s": 0.5,
+ "collections": 80,
+ "logical_processors": 16,
+ "seconds": 40.03,
+ "other_load_U_percent": {
+  "mean": 64.42,
+  "p95": 95.04,
+  "max": 98.48
+ },
+ "whole_machine_percent": {
+  "mean": 64.66,
+  "p95": 95.25,
+  "max": 98.66
+ },
+ "own_percent": {
+  "mean": 0.25,
+  "p95": 0.48,
+  "max": 0.75
+ },
+ "diagnostics": {
+  "external_counted_percent": {
+   "mean": 39.23,
+   "p95": 57.51,
+   "max": 66.8
+  },
+  "induced_counted_percent": {
+   "mean": 5.17,
+   "p95": 13.87,
+   "max": 23.34
+  },
+  "own_counted_by_pid_percent": {
+   "mean": 0.24,
+   "p95": 0.39,
+   "max": 0.58
+  },
+  "unattributed_percent": {
+   "mean": 20.02,
+   "p95": 44.0,
+   "max": 56.36
+  },
+  "processor_object_total_percent": {
+   "mean": 64.65,
+   "p95": 95.23,
+   "max": 98.66
+  },
+  "processor_utility_percent": {
+   "mean": 69.62,
+   "p95": 85.16,
+   "max": 89.1
+  },
+  "getsystemtimes_busy_percent": {
+   "mean": 64.64,
+   "p95": 96.01,
+   "max": 98.57
+  },
+  "dpc_and_interrupt_percent": {
+   "mean": 1.24,
+   "p95": 2.54,
+   "max": 2.93
+  },
+  "renumbered_instance_samples_discarded": 135,
+  "new_process_samples_without_rate": 210,
+  "misaligned_collections": 0,
+  "defender_engine_visible": true,
+  "processes_per_sample": {
+   "mean": 450.68,
+   "p95": 458,
+   "max": 466
+  },
+  "job_processes_total": 1
+ },
+ "rule": {
+  "mean": 5.0,
+  "p95": 15.0
+ },
+ "verdict": "NOT QUIET",
+ "series": [
+  {
+   "t": 0.52,
+   "wall": 1790981260.939,
+   "whole": 49.612,
+   "own": 0.188,
+   "U": 49.424,
+   "external_counted": 30.666,
+   "induced_counted": 3.218,
+   "unattributed": 15.541,
+   "dpc_interrupt": 1.385
+  },
+  {
+   "t": 1.013,
+   "wall": 1790981261.432,
+   "whole": 56.804,
+   "own": 0.198,
+   "U": 56.606,
+   "external_counted": 50.489,
+   "induced_counted": 3.718,
+   "unattributed": 2.398,
+   "dpc_interrupt": 1.564
+  },
+  {
+   "t": 1.512,
+   "wall": 1790981261.931,
+   "whole": 47.667,
+   "own": 0.196,
+   "U": 47.471,
+   "external_counted": 27.366,
+   "induced_counted": 2.15,
+   "unattributed": 17.955,
+   "dpc_interrupt": 1.172
+  },
+  {
+   "t": 2.012,
+   "wall": 1790981262.431,
+   "whole": 52.73,
+   "own": 0.195,
+   "U": 52.535,
+   "external_counted": 49.369,
+   "induced_counted": 1.756,
+   "unattributed": 1.409,
+   "dpc_interrupt": 0.977
+  },
+  {
+   "t": 2.511,
+   "wall": 1790981262.93,
+   "whole": 53.545,
+   "own": 0.196,
+   "U": 53.35,
+   "external_counted": 29.894,
+   "induced_counted": 7.425,
+   "unattributed": 16.032,
+   "dpc_interrupt": 1.952
+  },
+  {
+   "t": 3.01,
+   "wall": 1790981263.43,
+   "whole": 36.284,
+   "own": 0.196,
+   "U": 36.088,
+   "external_counted": 34.559,
+   "induced_counted": 1.562,
+   "unattributed": -0.033,
+   "dpc_interrupt": 0.0
+  },
+  {
+   "t": 3.511,
+   "wall": 1790981263.93,
+   "whole": 48.074,
+   "own": 0.195,
+   "U": 47.879,
+   "external_counted": 44.553,
+   "induced_counted": 1.759,
+   "unattributed": 1.567,
+   "dpc_interrupt": 1.562
+  },
+  {
+   "t": 4.01,
+   "wall": 1790981264.429,
+   "whole": 35.517,
+   "own": 0.196,
+   "U": 35.322,
+   "external_counted": 33.414,
+   "induced_counted": 1.172,
+   "unattributed": 0.735,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 4.51,
+   "wall": 1790981264.929,
+   "whole": 41.63,
+   "own": 0.195,
+   "U": 41.434,
+   "external_counted": 37.287,
+   "induced_counted": 2.733,
+   "unattributed": 1.415,
+   "dpc_interrupt": 0.781
+  },
+  {
+   "t": 5.011,
+   "wall": 1790981265.431,
+   "whole": 39.036,
+   "own": 0.195,
+   "U": 38.841,
+   "external_counted": 33.999,
+   "induced_counted": 3.908,
+   "unattributed": 0.933,
+   "dpc_interrupt": 0.195
+  },
+  {
+   "t": 5.51,
+   "wall": 1790981265.93,
+   "whole": 36.911,
+   "own": 0.196,
+   "U": 36.715,
+   "external_counted": 34.333,
+   "induced_counted": 2.341,
+   "unattributed": 0.041,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 6.023,
+   "wall": 1790981266.443,
+   "whole": 40.074,
+   "own": 0.19,
+   "U": 39.884,
+   "external_counted": 32.948,
+   "induced_counted": 5.654,
+   "unattributed": 1.282,
+   "dpc_interrupt": 0.781
+  },
+  {
+   "t": 6.514,
+   "wall": 1790981266.933,
+   "whole": 43.944,
+   "own": 0.398,
+   "U": 43.546,
+   "external_counted": 33.245,
+   "induced_counted": 4.107,
+   "unattributed": 6.195,
+   "dpc_interrupt": 0.977
+  },
+  {
+   "t": 7.01,
+   "wall": 1790981267.429,
+   "whole": 36.89,
+   "own": 0.197,
+   "U": 36.693,
+   "external_counted": 32.017,
+   "induced_counted": 2.343,
+   "unattributed": 2.333,
+   "dpc_interrupt": 1.954
+  },
+  {
+   "t": 7.509,
+   "wall": 1790981267.928,
+   "whole": 30.832,
+   "own": 0.0,
+   "U": 30.832,
+   "external_counted": 28.943,
+   "induced_counted": 1.564,
+   "unattributed": 0.324,
+   "dpc_interrupt": 0.195
+  },
+  {
+   "t": 8.016,
+   "wall": 1790981268.435,
+   "whole": 35.997,
+   "own": 0.385,
+   "U": 35.612,
+   "external_counted": 31.585,
+   "induced_counted": 3.509,
+   "unattributed": 0.517,
+   "dpc_interrupt": 0.585
+  },
+  {
+   "t": 8.511,
+   "wall": 1790981268.931,
+   "whole": 42.139,
+   "own": 0.197,
+   "U": 41.942,
+   "external_counted": 27.395,
+   "induced_counted": 4.696,
+   "unattributed": 9.851,
+   "dpc_interrupt": 0.782
+  },
+  {
+   "t": 9.019,
+   "wall": 1790981269.438,
+   "whole": 63.294,
+   "own": 0.193,
+   "U": 63.102,
+   "external_counted": 55.08,
+   "induced_counted": 4.671,
+   "unattributed": 3.35,
+   "dpc_interrupt": 0.391
+  },
+  {
+   "t": 9.515,
+   "wall": 1790981269.935,
+   "whole": 84.57,
+   "own": 0.0,
+   "U": 84.57,
+   "external_counted": 47.954,
+   "induced_counted": 7.242,
+   "unattributed": 29.374,
+   "dpc_interrupt": 2.539
+  },
+  {
+   "t": 10.018,
+   "wall": 1790981270.438,
+   "whole": 83.586,
+   "own": 0.194,
+   "U": 83.392,
+   "external_counted": 56.193,
+   "induced_counted": 2.937,
+   "unattributed": 24.262,
+   "dpc_interrupt": 1.759
+  },
+  {
+   "t": 10.521,
+   "wall": 1790981270.94,
+   "whole": 89.853,
+   "own": 0.389,
+   "U": 89.464,
+   "external_counted": 54.526,
+   "induced_counted": 6.621,
+   "unattributed": 28.317,
+   "dpc_interrupt": 2.732
+  },
+  {
+   "t": 11.023,
+   "wall": 1790981271.442,
+   "whole": 82.805,
+   "own": 0.194,
+   "U": 82.61,
+   "external_counted": 37.87,
+   "induced_counted": 7.418,
+   "unattributed": 37.323,
+   "dpc_interrupt": 1.759
+  },
+  {
+   "t": 11.52,
+   "wall": 1790981271.939,
+   "whole": 90.041,
+   "own": 0.393,
+   "U": 89.648,
+   "external_counted": 59.816,
+   "induced_counted": 5.864,
+   "unattributed": 23.968,
+   "dpc_interrupt": 1.367
+  },
+  {
+   "t": 12.02,
+   "wall": 1790981272.44,
+   "whole": 73.451,
+   "own": 0.195,
+   "U": 73.256,
+   "external_counted": 42.947,
+   "induced_counted": 4.88,
+   "unattributed": 25.429,
+   "dpc_interrupt": 1.952
+  },
+  {
+   "t": 12.518,
+   "wall": 1790981272.938,
+   "whole": 91.984,
+   "own": 0.392,
+   "U": 91.591,
+   "external_counted": 59.244,
+   "induced_counted": 6.061,
+   "unattributed": 26.286,
+   "dpc_interrupt": 2.151
+  },
+  {
+   "t": 13.017,
+   "wall": 1790981273.437,
+   "whole": 84.96,
+   "own": 0.196,
+   "U": 84.765,
+   "external_counted": 33.953,
+   "induced_counted": 5.464,
+   "unattributed": 45.348,
+   "dpc_interrupt": 2.344
+  },
+  {
+   "t": 13.522,
+   "wall": 1790981273.942,
+   "whole": 85.948,
+   "own": 0.193,
+   "U": 85.755,
+   "external_counted": 57.287,
+   "induced_counted": 4.106,
+   "unattributed": 24.361,
+   "dpc_interrupt": 1.366
+  },
+  {
+   "t": 14.016,
+   "wall": 1790981274.436,
+   "whole": 88.666,
+   "own": 0.395,
+   "U": 88.27,
+   "external_counted": 54.477,
+   "induced_counted": 7.029,
+   "unattributed": 26.764,
+   "dpc_interrupt": 1.173
+  },
+  {
+   "t": 14.517,
+   "wall": 1790981274.937,
+   "whole": 83.01,
+   "own": 0.195,
+   "U": 82.815,
+   "external_counted": 36.872,
+   "induced_counted": 3.707,
+   "unattributed": 42.236,
+   "dpc_interrupt": 2.539
+  },
+  {
+   "t": 15.022,
+   "wall": 1790981275.441,
+   "whole": 91.017,
+   "own": 0.194,
+   "U": 90.824,
+   "external_counted": 48.38,
+   "induced_counted": 10.339,
+   "unattributed": 32.105,
+   "dpc_interrupt": 1.757
+  },
+  {
+   "t": 15.525,
+   "wall": 1790981275.945,
+   "whole": 85.195,
+   "own": 0.388,
+   "U": 84.807,
+   "external_counted": 47.532,
+   "induced_counted": 6.428,
+   "unattributed": 30.847,
+   "dpc_interrupt": 1.364
+  },
+  {
+   "t": 16.02,
+   "wall": 1790981276.44,
+   "whole": 84.528,
+   "own": 0.394,
+   "U": 84.133,
+   "external_counted": 32.544,
+   "induced_counted": 6.47,
+   "unattributed": 45.119,
+   "dpc_interrupt": 0.588
+  },
+  {
+   "t": 16.516,
+   "wall": 1790981276.936,
+   "whole": 87.7,
+   "own": 0.394,
+   "U": 87.306,
+   "external_counted": 53.746,
+   "induced_counted": 5.081,
+   "unattributed": 28.478,
+   "dpc_interrupt": 2.538
+  },
+  {
+   "t": 17.019,
+   "wall": 1790981277.439,
+   "whole": 89.061,
+   "own": 0.194,
+   "U": 88.867,
+   "external_counted": 48.249,
+   "induced_counted": 9.767,
+   "unattributed": 30.85,
+   "dpc_interrupt": 2.344
+  },
+  {
+   "t": 17.521,
+   "wall": 1790981277.94,
+   "whole": 79.492,
+   "own": 0.195,
+   "U": 79.297,
+   "external_counted": 45.313,
+   "induced_counted": 6.445,
+   "unattributed": 27.538,
+   "dpc_interrupt": 1.367
+  },
+  {
+   "t": 18.016,
+   "wall": 1790981278.435,
+   "whole": 74.418,
+   "own": 0.197,
+   "U": 74.221,
+   "external_counted": 27.144,
+   "induced_counted": 5.273,
+   "unattributed": 41.805,
+   "dpc_interrupt": 1.172
+  },
+  {
+   "t": 18.515,
+   "wall": 1790981278.935,
+   "whole": 77.342,
+   "own": 0.195,
+   "U": 77.146,
+   "external_counted": 46.778,
+   "induced_counted": 3.719,
+   "unattributed": 26.649,
+   "dpc_interrupt": 0.195
+  },
+  {
+   "t": 19.02,
+   "wall": 1790981279.44,
+   "whole": 73.054,
+   "own": 0.193,
+   "U": 72.861,
+   "external_counted": 29.843,
+   "induced_counted": 4.486,
+   "unattributed": 38.531,
+   "dpc_interrupt": 2.343
+  },
+  {
+   "t": 19.543,
+   "wall": 1790981279.993,
+   "whole": 95.182,
+   "own": 0.747,
+   "U": 94.435,
+   "external_counted": 66.801,
+   "induced_counted": 4.415,
+   "unattributed": 23.219,
+   "dpc_interrupt": 1.156
+  },
+  {
+   "t": 20.019,
+   "wall": 1790981280.439,
+   "whole": 95.247,
+   "own": 0.205,
+   "U": 95.042,
+   "external_counted": 57.861,
+   "induced_counted": 6.562,
+   "unattributed": 30.62,
+   "dpc_interrupt": 1.386
+  },
+  {
+   "t": 20.54,
+   "wall": 1790981281.013,
+   "whole": 90.025,
+   "own": 0.188,
+   "U": 89.837,
+   "external_counted": 53.276,
+   "induced_counted": 9.007,
+   "unattributed": 27.554,
+   "dpc_interrupt": 1.151
+  },
+  {
+   "t": 21.073,
+   "wall": 1790981281.513,
+   "whole": 89.467,
+   "own": 0.183,
+   "U": 89.284,
+   "external_counted": 46.75,
+   "induced_counted": 6.565,
+   "unattributed": 35.968,
+   "dpc_interrupt": 1.59
+  },
+  {
+   "t": 21.521,
+   "wall": 1790981281.941,
+   "whole": 89.637,
+   "own": 0.218,
+   "U": 89.419,
+   "external_counted": 45.709,
+   "induced_counted": 8.986,
+   "unattributed": 34.724,
+   "dpc_interrupt": 1.955
+  },
+  {
+   "t": 22.06,
+   "wall": 1790981282.481,
+   "whole": 96.876,
+   "own": 0.543,
+   "U": 96.332,
+   "external_counted": 54.282,
+   "induced_counted": 14.449,
+   "unattributed": 27.601,
+   "dpc_interrupt": 1.953
+  },
+  {
+   "t": 22.612,
+   "wall": 1790981283.034,
+   "whole": 98.657,
+   "own": 0.177,
+   "U": 98.48,
+   "external_counted": 57.514,
+   "induced_counted": 16.104,
+   "unattributed": 24.862,
+   "dpc_interrupt": 1.727
+  },
+  {
+   "t": 23.022,
+   "wall": 1790981283.442,
+   "whole": 98.01,
+   "own": 0.477,
+   "U": 97.533,
+   "external_counted": 30.83,
+   "induced_counted": 10.343,
+   "unattributed": 56.359,
+   "dpc_interrupt": 1.99
+  },
+  {
+   "t": 23.517,
+   "wall": 1790981283.937,
+   "whole": 85.36,
+   "own": 0.394,
+   "U": 84.966,
+   "external_counted": 52.756,
+   "induced_counted": 5.471,
+   "unattributed": 26.738,
+   "dpc_interrupt": 1.171
+  },
+  {
+   "t": 24.022,
+   "wall": 1790981284.441,
+   "whole": 83.779,
+   "own": 0.193,
+   "U": 83.585,
+   "external_counted": 53.381,
+   "induced_counted": 5.279,
+   "unattributed": 24.925,
+   "dpc_interrupt": 1.563
+  },
+  {
+   "t": 24.515,
+   "wall": 1790981284.935,
+   "whole": 90.047,
+   "own": 0.396,
+   "U": 89.651,
+   "external_counted": 36.141,
+   "induced_counted": 9.963,
+   "unattributed": 43.547,
+   "dpc_interrupt": 0.585
+  },
+  {
+   "t": 25.021,
+   "wall": 1790981285.44,
+   "whole": 82.23,
+   "own": 0.193,
+   "U": 82.037,
+   "external_counted": 27.116,
+   "induced_counted": 8.193,
+   "unattributed": 46.727,
+   "dpc_interrupt": 2.929
+  },
+  {
+   "t": 25.526,
+   "wall": 1790981285.978,
+   "whole": 84.174,
+   "own": 0.58,
+   "U": 83.594,
+   "external_counted": 42.828,
+   "induced_counted": 10.756,
+   "unattributed": 30.011,
+   "dpc_interrupt": 0.977
+  },
+  {
+   "t": 26.018,
+   "wall": 1790981286.438,
+   "whole": 76.953,
+   "own": 0.198,
+   "U": 76.754,
+   "external_counted": 49.224,
+   "induced_counted": 3.711,
+   "unattributed": 23.82,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 26.518,
+   "wall": 1790981286.937,
+   "whole": 79.299,
+   "own": 0.195,
+   "U": 79.103,
+   "external_counted": 34.923,
+   "induced_counted": 4.097,
+   "unattributed": 40.083,
+   "dpc_interrupt": 1.172
+  },
+  {
+   "t": 27.019,
+   "wall": 1790981287.439,
+   "whole": 76.355,
+   "own": 0.195,
+   "U": 76.161,
+   "external_counted": 43.141,
+   "induced_counted": 6.832,
+   "unattributed": 26.187,
+   "dpc_interrupt": 1.368
+  },
+  {
+   "t": 27.551,
+   "wall": 1790981288.0,
+   "whole": 86.407,
+   "own": 0.184,
+   "U": 86.223,
+   "external_counted": 34.6,
+   "induced_counted": 13.996,
+   "unattributed": 37.628,
+   "dpc_interrupt": 1.165
+  },
+  {
+   "t": 28.014,
+   "wall": 1790981288.434,
+   "whole": 78.004,
+   "own": 0.422,
+   "U": 77.582,
+   "external_counted": 27.888,
+   "induced_counted": 5.695,
+   "unattributed": 43.998,
+   "dpc_interrupt": 0.982
+  },
+  {
+   "t": 28.514,
+   "wall": 1790981288.933,
+   "whole": 62.894,
+   "own": 0.196,
+   "U": 62.698,
+   "external_counted": 36.751,
+   "induced_counted": 1.564,
+   "unattributed": 24.383,
+   "dpc_interrupt": 0.976
+  },
+  {
+   "t": 29.016,
+   "wall": 1790981289.436,
+   "whole": 64.653,
+   "own": 0.194,
+   "U": 64.458,
+   "external_counted": 36.912,
+   "induced_counted": 2.539,
+   "unattributed": 25.008,
+   "dpc_interrupt": 1.367
+  },
+  {
+   "t": 29.512,
+   "wall": 1790981289.931,
+   "whole": 60.531,
+   "own": 0.197,
+   "U": 60.334,
+   "external_counted": 36.928,
+   "induced_counted": 2.54,
+   "unattributed": 20.866,
+   "dpc_interrupt": 1.368
+  },
+  {
+   "t": 30.011,
+   "wall": 1790981290.431,
+   "whole": 51.004,
+   "own": 0.195,
+   "U": 50.809,
+   "external_counted": 46.312,
+   "induced_counted": 0.391,
+   "unattributed": 4.107,
+   "dpc_interrupt": 0.976
+  },
+  {
+   "t": 30.509,
+   "wall": 1790981290.928,
+   "whole": 27.678,
+   "own": 0.196,
+   "U": 27.481,
+   "external_counted": 26.388,
+   "induced_counted": 0.782,
+   "unattributed": 0.312,
+   "dpc_interrupt": 0.0
+  },
+  {
+   "t": 31.009,
+   "wall": 1790981291.428,
+   "whole": 27.2,
+   "own": 0.0,
+   "U": 27.2,
+   "external_counted": 24.982,
+   "induced_counted": 1.171,
+   "unattributed": 1.047,
+   "dpc_interrupt": 0.39
+  },
+  {
+   "t": 31.51,
+   "wall": 1790981291.93,
+   "whole": 24.977,
+   "own": 0.389,
+   "U": 24.588,
+   "external_counted": 24.617,
+   "induced_counted": 0.195,
+   "unattributed": -0.225,
+   "dpc_interrupt": 0.391
+  },
+  {
+   "t": 32.01,
+   "wall": 1790981292.429,
+   "whole": 32.015,
+   "own": 0.195,
+   "U": 31.82,
+   "external_counted": 30.671,
+   "induced_counted": 0.781,
+   "unattributed": 0.367,
+   "dpc_interrupt": 0.781
+  },
+  {
+   "t": 32.516,
+   "wall": 1790981292.936,
+   "whole": 57.828,
+   "own": 0.193,
+   "U": 57.635,
+   "external_counted": 52.073,
+   "induced_counted": 3.706,
+   "unattributed": 1.857,
+   "dpc_interrupt": 0.976
+  },
+  {
+   "t": 33.01,
+   "wall": 1790981293.429,
+   "whole": 32.646,
+   "own": 0.198,
+   "U": 32.448,
+   "external_counted": 31.231,
+   "induced_counted": 0.39,
+   "unattributed": 0.827,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 33.509,
+   "wall": 1790981293.928,
+   "whole": 25.722,
+   "own": 0.195,
+   "U": 25.526,
+   "external_counted": 24.073,
+   "induced_counted": 0.587,
+   "unattributed": 0.866,
+   "dpc_interrupt": 1.173
+  },
+  {
+   "t": 34.011,
+   "wall": 1790981294.43,
+   "whole": 33.265,
+   "own": 0.195,
+   "U": 33.071,
+   "external_counted": 31.611,
+   "induced_counted": 0.39,
+   "unattributed": 1.069,
+   "dpc_interrupt": 0.976
+  },
+  {
+   "t": 34.511,
+   "wall": 1790981294.931,
+   "whole": 33.546,
+   "own": 0.195,
+   "U": 33.351,
+   "external_counted": 30.881,
+   "induced_counted": 0.977,
+   "unattributed": 1.492,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 35.009,
+   "wall": 1790981295.428,
+   "whole": 24.185,
+   "own": 0.196,
+   "U": 23.989,
+   "external_counted": 23.033,
+   "induced_counted": 0.0,
+   "unattributed": 0.956,
+   "dpc_interrupt": 1.172
+  },
+  {
+   "t": 35.509,
+   "wall": 1790981295.928,
+   "whole": 26.579,
+   "own": 0.195,
+   "U": 26.384,
+   "external_counted": 23.457,
+   "induced_counted": 1.759,
+   "unattributed": 1.168,
+   "dpc_interrupt": 0.976
+  },
+  {
+   "t": 36.014,
+   "wall": 1790981296.433,
+   "whole": 40.229,
+   "own": 0.194,
+   "U": 40.035,
+   "external_counted": 20.859,
+   "induced_counted": 6.043,
+   "unattributed": 13.133,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 36.512,
+   "wall": 1790981296.932,
+   "whole": 55.303,
+   "own": 0.196,
+   "U": 55.107,
+   "external_counted": 29.863,
+   "induced_counted": 3.318,
+   "unattributed": 21.926,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 37.011,
+   "wall": 1790981297.43,
+   "whole": 44.9,
+   "own": 0.196,
+   "U": 44.704,
+   "external_counted": 25.256,
+   "induced_counted": 1.175,
+   "unattributed": 18.273,
+   "dpc_interrupt": 1.172
+  },
+  {
+   "t": 37.512,
+   "wall": 1790981297.931,
+   "whole": 42.578,
+   "own": 0.195,
+   "U": 42.383,
+   "external_counted": 22.629,
+   "induced_counted": 2.731,
+   "unattributed": 17.023,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 38.01,
+   "wall": 1790981298.43,
+   "whole": 58.604,
+   "own": 0.196,
+   "U": 58.408,
+   "external_counted": 23.433,
+   "induced_counted": 8.006,
+   "unattributed": 26.969,
+   "dpc_interrupt": 1.367
+  },
+  {
+   "t": 38.519,
+   "wall": 1790981298.938,
+   "whole": 49.779,
+   "own": 0.192,
+   "U": 49.587,
+   "external_counted": 26.553,
+   "induced_counted": 1.562,
+   "unattributed": 21.472,
+   "dpc_interrupt": 0.586
+  },
+  {
+   "t": 39.042,
+   "wall": 1790981299.475,
+   "whole": 65.938,
+   "own": 0.373,
+   "U": 65.565,
+   "external_counted": 34.733,
+   "induced_counted": 7.956,
+   "unattributed": 22.877,
+   "dpc_interrupt": 1.362
+  },
+  {
+   "t": 39.521,
+   "wall": 1790981299.94,
+   "whole": 97.845,
+   "own": 0.204,
+   "U": 97.641,
+   "external_counted": 47.652,
+   "induced_counted": 23.336,
+   "unattributed": 26.654,
+   "dpc_interrupt": 2.155
+  },
+  {
+   "t": 40.026,
+   "wall": 1790981300.446,
+   "whole": 85.788,
+   "own": 0.58,
+   "U": 85.209,
+   "external_counted": 44.328,
+   "induced_counted": 13.865,
+   "unattributed": 27.015,
+   "dpc_interrupt": 1.168
+  }
+ ]
+}

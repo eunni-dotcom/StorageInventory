@@ -1,0 +1,11 @@
+{
+ "mode": "sustained",
+ "processes": 4,
+ "on_wall_start": 1790981004.127,
+ "on_wall_end": 1790981024.197,
+ "seconds": 20.071,
+ "children_cpu_seconds": 71.688,
+ "launcher_cpu_seconds": 0.0,
+ "injected_machine_percent": 22.32,
+ "mean_process_life_cpu_seconds": 17.922
+}

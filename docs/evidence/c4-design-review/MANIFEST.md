@@ -7,12 +7,17 @@ committed bytes, LF line endings). Regenerate after any change; `git diff` on th
 |---|---:|---|
 | `.gitignore` | 161 | `175a06e580d86e0f5f698be6fb673b48a72c6cea62193fd361d4dae326f1f0bd` |
 | `ERRATUM.md` | 10,637 | `20452772172c18cbd867cf9c869d282083b2ee0c4bdfb6cfc5f31d1354f69738` |
-| `README.md` | 7,288 | `b1f809690500e2e09313f921b3711da7d2b4793f0d46d5346579bb9fac69abf9` |
+| `README.md` | 9,998 | `26b7a2e9f592f0c5f2a7fb34eb52d282d4a114086646417e7ad4d6a0a1c94e4a` |
 | `b1_table.py` | 4,171 | `62c1a817d4f6777e9f7002dad952536dcb77bba92bbf8474436a24e7800c083e` |
 | `calibrate.py` | 3,565 | `b9f629ab5d013b7af2b150fc1c40c240fd5a1eaf0f5278bf2409673257571688` |
 | `harness.patch` | 111,833 | `19c53a365737ee86d76cc3637b36904333e9a1c027c50a949c4f4b9a2a255e7a` |
-| `journal_ranges.py` | 17,977 | `add19420651c25b3077c480f6be9305e2f83b3ffd99b86cd33344d302271ba5a` |
-| `load_probe.py` | 7,806 | `cf590d618d71ac6b7f405092a0bb22a8faa700ca126656523d68a29dcf19bd5f` |
+| `journal_ranges.py` | 33,219 | `df179422b1c4ba34edf86ee7228d41103fea1c94b9ea36fb4c67141dc847d0ef` |
+| `journal_ranges_rerun.py` | 4,101 | `e81e4082d944555fca0e7cffa2828d6236e080a505044ee4d483e8c7d8f11384` |
+| `journal_ranges_selftest.py` | 16,285 | `7cbd97e68208c7d7560df07378e5ab195973b32389068109623fadefd6ec27cc` |
+| `load_experiments.py` | 11,421 | `65132115edb1d6e6c595cb08a3d838967e8aa1d9662da863453b8394f4e25bd5` |
+| `load_harness.py` | 3,891 | `ce228c899299c22fb4bbd8e70fad3ce0073b984e3293506adc6e44fa4afba718` |
+| `load_inject.py` | 5,453 | `8fa67fdf77f62f2bbdc4e9bc9ab3ec2b69940cb5c88e344e9e9b51d75a411c01` |
+| `load_probe.py` | 14,351 | `6fb5a6b9b37c389cfb39f577e8a635c261d8608375c056fd457f7c540bf12774` |
 | `manifest.py` | 2,459 | `9c87b3c309e5deea73360bc1e8389c5627f6a0fbe8e72d6787506a1cc227ab7c` |
 | `name_census.py` | 8,118 | `8f0e74a06d3a80fe36734a609915dd3cbccf9a92f2689ca8d3dd9f74066fb15a` |
 | `overlap.py` | 2,333 | `6eb739e6ed4048329baa2fec3ec2c71e3c563632c3c233be5c1463031485554c` |
@@ -20,12 +25,46 @@ committed bytes, LF line endings). Regenerate after any change; `git diff` on th
 | `privacy_scan.py` | 6,575 | `79922e42158bc81283f28e6d39bc39d24a1f6db6fd686a6cbc74da7b17edefc4` |
 | `probes.patch` | 23,368 | `10719b9296db85b6402041c76ed4fa90073e65092feb3cfd11c212f5712f2901` |
 | `repair_tables.py` | 7,563 | `43fc6fcda4e9cae89c4c36026639091e4ad6dd0d2a3821e499522e647f70fff0` |
-| `sanitize.py` | 2,201 | `43708524335a8fbfda31b7d3d8885b4a9df6b5b094e7c5b5c9fab09f9cc0c2d2` |
-| `spec_check.py` | 13,629 | `07108456da40e5b9bf1a70bbeb76b707de727f1fde6507f5dcaf244c1ca450da` |
+| `sanitize.py` | 2,428 | `6d46e3775860417a253eee15923f79994868d4a71aecce81cb7d65e3a476980b` |
+| `spec_check.py` | 19,800 | `6d48245fff2879b627ec72f39c914397b22b9961fb1fc0591e2c94d64c2e84bf` |
 | `tables.py` | 8,122 | `f066dfa1b34961c86779111c86c4a7ea2132200609f90e330fc4aba00559f185` |
+| `workload_class.py` | 16,177 | `5d3e0adfa6e125c64fb9aa75400a7140914f6e01690ad5a4085f40828beac05c` |
 | `census/calibration.json` | 2,399 | `fffd3e9e146cdcdf759554abaaea57f5aa89beb2590ee4a87bf646e9b9f1c243` |
 | `census/data.json` | 4,158 | `72d72ccba5272c574d146ec9fade374bf8b57a34b000181ce87ab1aba916cf5a` |
 | `census/system.json` | 4,584 | `e9b9d2529dd089bf5901c332e1383bca360ba975863d6a7ef7b81ddf23e8cbbb` |
+| `final-repair/checker-rerun.json` | 2,016 | `357dd469b2ed2dfa83b70f77877ad9243a7e5dc3b059665aeab21715a65a7058` |
+| `final-repair/checker-selftest.json` | 11,376 | `e1ef4baa20b1eb08b82b6ba474c221aaed9b88d63108c74cbf36379b3198af37` |
+| `final-repair/classes.md` | 5,435 | `cf4c66eecb596ed330a8da12c7b83a21f7be43a93b682ca29b84154d088d3d11` |
+| `final-repair/harness-load.json` | 3,900 | `35e706bbf79eee1a0b8b1e7dbdd96054a954d1a77f19dc963aa4466461a93d94` |
+| `final-repair/load/bench+churn-cycles-r1.inject.json` | 591 | `ccebbb94ee8e12ae604363d8074558b16e9d972e637649af276eb3834a60dfc4` |
+| `final-repair/load/bench+churn-cycles-r1.probe.json` | 59,487 | `4fd5b77ac6230af970aba4f5231a319e408a5abaa26091b7234c91b3817cc49a` |
+| `final-repair/load/bench+churn-cycles-r2.inject.json` | 590 | `ccb1648596484c7ac751906ce3e58f61a4b66f1eb82cb85d0c115b4eb950238d` |
+| `final-repair/load/bench+churn-cycles-r2.probe.json` | 59,451 | `edfee984e78533ccac4dc41514aeec9724d5010b0c3868b0228005cbce2647bc` |
+| `final-repair/load/bench+churn-r1.inject.json` | 268 | `996aabcf65d22f67329eb98828ce5c01319f16e752cadabec154d95c08dde56e` |
+| `final-repair/load/bench+churn-r1.probe.json` | 18,641 | `407d2c6baf17838348d9a8db353cac209a51eb262cec08da7a2aea8a12a8482f` |
+| `final-repair/load/bench+churn-r2.inject.json` | 266 | `117f3939e68db99b898a92ac3fbebed188a8e6207975d2baba2c9f1051a9118b` |
+| `final-repair/load/bench+churn-r2.probe.json` | 18,617 | `7e4a57f59857f6a8fc9c0f18dd06d4f300333258f1b616e5419c81dcde03060f` |
+| `final-repair/load/bench-r1.probe.json` | 18,589 | `ade8510e11066fc50d5e77d65380baf8611f022ab38ac7f7f66a8fdaffdedc6d` |
+| `final-repair/load/bench-r2.probe.json` | 18,627 | `364ba2e85762369fcc028226929b8f058a9f0c72ebacc3984b7fa19fd8cea6cb` |
+| `final-repair/load/churn-cycles-r1.inject.json` | 592 | `a4c10ae7e00d0119282b4006420c44c0815e1df042441e9ac25d24acfcf74450` |
+| `final-repair/load/churn-cycles-r1.probe.json` | 59,644 | `f589f365651aa0c7428beffe75d57e9847249044f3b898347f76cda6514671cf` |
+| `final-repair/load/churn-cycles-r2.inject.json` | 591 | `4f3a25f287bc4bb93bcaa00d80f542f1915637f18dfea39fbf97c2f5f78e3930` |
+| `final-repair/load/churn-cycles-r2.probe.json` | 59,526 | `aa0909f8e370ac1449e0403f8733c30d9f8d8f46c3ccf38e01eb1897f1dcd393` |
+| `final-repair/load/churn-r1.inject.json` | 267 | `7f8fadb14524e51f965cc2f90a23541f58269963ff48a840bc443f04cfa750ed` |
+| `final-repair/load/churn-r1.probe.json` | 18,797 | `4bbba990b43cdea249ebabcaa4adc4547b5af309e466922827f2936a4f711a14` |
+| `final-repair/load/churn-r2.inject.json` | 268 | `61d820275c7dbc973503b4c00cd58c1ee67c1db54a8fd4783d885305d72d7bc5` |
+| `final-repair/load/churn-r2.probe.json` | 18,785 | `b715341b555b0cff9cd2809a96c3fb06e08a723f597f613ec8b76d76b1c09b6c` |
+| `final-repair/load/harness-after.probe.json` | 27,457 | `4b91c8568f74828fafaa62e268c3dabdb40698e6dfa3b6f7da8d3e089ceab80c` |
+| `final-repair/load/harness-before.probe.json` | 27,392 | `c453c543ee567ae313008ba2a4b09d1761ecdea099aed3572a3c0f30e077e20c` |
+| `final-repair/load/harness-run.probe.json` | 37,012 | `1826269f46740e20fc2dab29ed287c9154e292fcd77e72c70fb438506a397291` |
+| `final-repair/load/idle-r1.probe.json` | 27,421 | `076221428f8f287433c7edf3622de840908c46a6005352571a3367782157d187` |
+| `final-repair/load/idle-r2.probe.json` | 27,419 | `6f95297c164db9990783e2489081ae462109675f5edca1220c88ebfe9f04e5d2` |
+| `final-repair/load/summary-cycles.json` | 8,986 | `b8987e9a794742423f67c6f876495e6318e29604ed97c5fd8a04d1bdb07206aa` |
+| `final-repair/load/summary.json` | 10,627 | `626bec14743374e9bd803535932e59a76feeba8998fa240282ba32909f1d60cd` |
+| `final-repair/load/sustained-r1.inject.json` | 269 | `63d24a26970f2d0be191e0705edbf1f9df58cf6122f016fd6134e8a6aee3f412` |
+| `final-repair/load/sustained-r1.probe.json` | 18,756 | `4120d82272945f181edcd827cdc9a193b85764b7747f861bd465087548296531` |
+| `final-repair/load/sustained-r2.inject.json` | 271 | `8b7e8b2f0635a3fe978d268d5a9553e4f7a1757f0b03ad43cac607c0e0e91a56` |
+| `final-repair/load/sustained-r2.probe.json` | 18,769 | `2a38e2c95f703864240152df0397468f5f8d3dbeb805884a52d88a62971603ae` |
 | `repair-results/repair-dryrun-timing.jsonl` | 8,948 | `231d893db5287da5c9751d995d1f410cab5a305140bfef7ad53ec08f51bad868` |
 | `repair-results/repair-dryrun-timing.log` | 4,648 | `2d06fae3bf0ab0150643c4b2641faa895cd6aae22ef26fede0c54bfb5ce62242` |
 | `repair-results/repair-extra.jsonl` | 6,944 | `165b3167d91d991c0e4491e353bb1303a9d2667815f657f2c90f66d5349df69e` |
@@ -89,4 +128,4 @@ committed bytes, LF line endings). Regenerate after any change; `git diff` on th
 | `results/size.jsonl` | 11,044 | `9b2ee86d41e3dcf482c635cec2ab3d9db0ffe49f6648d9be35428013071af2b3` |
 | `results/size.log` | 3,210 | `7b184249355b3c4cac0cabdb08015e806be5a96e61595be1ed85311871e13f1c` |
 
-83 files.
+122 files.

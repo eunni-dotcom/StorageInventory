@@ -44,6 +44,9 @@ def main(src, dst, worktree, scratch):
 
 if __name__ == '__main__':
     args = sys.argv[1:]
-    wt = args[args.index('--worktree') + 1] if '--worktree' in args else None
+    if len(args) < 2 or args[0].startswith('--') or args[1].startswith('--'):
+        print(__doc__.strip().split('\n\n')[1], file=sys.stderr)     # the usage line (C4DRR-O12: no arguments raised IndexError)
+        sys.exit(2)
+    wt =args[args.index('--worktree') + 1] if '--worktree' in args else None
     sc = args[args.index('--scratch') + 1] if '--scratch' in args else None
     main(args[0], args[1], wt, sc)

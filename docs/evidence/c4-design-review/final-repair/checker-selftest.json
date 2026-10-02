@@ -1,0 +1,434 @@
+{
+ "summary": {
+  "cases": 39,
+  "ok": 39,
+  "bad": 0,
+  "by_expected": {
+   "PASS": 5,
+   "FAIL": 2,
+   "INVALID": 32
+  },
+  "invalid_never_pass": true
+ },
+ "cases": [
+  {
+   "case": "valid per-source journal, new source (F)",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "valid per-source journal, existing source (R)",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "valid Library-wide negative control (G)",
+   "expected": "FAIL",
+   "verdict": "FAIL",
+   "exit": 1,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "empty journal (a copy taken after COMMIT), recorded length given",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "empty",
+   "reasons": [
+    "journal: 0 B, but the run recorded 1596968 B immediately before COMMIT",
+    "journal: empty (0 B), but the run is not declared to journal no page; a copy taken after COMMIT is empty"
+   ],
+   "ok": true
+  },
+  {
+   "case": "empty journal, recorded length 0",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "empty",
+   "reasons": [
+    "journal: empty (0 B), but the run is not declared to journal no page; a copy taken after COMMIT is empty"
+   ],
+   "ok": true
+  },
+  {
+   "case": "empty journal declared separately as expected (--expect-no-records)",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "records present although declared empty",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "declared to journal no page",
+   "reasons": [
+    "journal: records present, but the run was declared to journal no page"
+   ],
+   "ok": true
+  },
+  {
+   "case": "journal of zeros, same length",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "sector size",
+   "reasons": [
+    "journal: header at offset 0 has an invalid sector size 0"
+   ],
+   "ok": true
+  },
+  {
+   "case": "truncated header (20 B)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "truncated header",
+   "reasons": [
+    "journal: truncated header at offset 0"
+   ],
+   "ok": true
+  },
+  {
+   "case": "header sector truncated (300 of 512 B)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "truncated",
+   "reasons": [
+    "journal: header at offset 0 truncated (sector 512 B)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "corrupted header magic",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "magic",
+   "reasons": [
+    "journal: header at offset 0 has neither SQLite's magic nor the unsynced zero form"
+   ],
+   "ok": true
+  },
+  {
+   "case": "journal page size 8192 against a 4096-byte copy",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "page size",
+   "reasons": [
+    "journal: page size 8192 differs from the copy's 4096"
+   ],
+   "ok": true
+  },
+  {
+   "case": "journal page size not a power of two",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "invalid page size",
+   "reasons": [
+    "journal: header at offset 0 has an invalid page size 1000"
+   ],
+   "ok": true
+  },
+  {
+   "case": "original database size unlike the copy's page count",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "original database size",
+   "reasons": [
+    "journal: original database size 7044 pages (segment 1) differs from the copy's 7045"
+   ],
+   "ok": true
+  },
+  {
+   "case": "journal truncated to half, recorded length given",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "recorded",
+   "reasons": [
+    "journal: 798484 B, but the run recorded 1596968 B immediately before COMMIT",
+    "journal: the last segment does not end on a record boundary (1796 B left over)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "truncated final record (100 B short), length taken from the file itself",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "record boundary",
+   "reasons": [
+    "journal: the last segment does not end on a record boundary (4004 B left over)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "journal copied before the final statements (the end-of-rows copy)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "recorded",
+   "reasons": [
+    "journal: 1584656 B, but the run recorded 1596968 B immediately before COMMIT"
+   ],
+   "ok": true
+  },
+  {
+   "case": "one record checksum corrupted",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "checksum",
+   "reasons": [
+    "journal: 1 record checksum(s) fail"
+   ],
+   "ok": true
+  },
+  {
+   "case": "one image byte the checksum does not sample",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "original image",
+   "reasons": [
+    "journal: 1 original image(s) differ from the copy (wrong copy, or a journal of another run)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "record page number beyond the original size",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "beyond the original size",
+   "reasons": [
+    "journal: 1 record page number(s) 0 or beyond the original size"
+   ],
+   "ok": true
+  },
+  {
+   "case": "record page number 0",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "beyond the original size",
+   "reasons": [
+    "journal: 1 record page number(s) 0 or beyond the original size"
+   ],
+   "ok": true
+  },
+  {
+   "case": "one page journalled twice",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "twice",
+   "reasons": [
+    "journal: 1 page(s) journalled twice",
+    "journal: 1 original image(s) differ from the copy (wrong copy, or a journal of another run)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "wrong copy: another run's database (F's copy with R's journal)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "original image",
+   "reasons": [
+    "journal: 1 original image(s) differ from the copy (wrong copy, or a journal of another run)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "wrong copy: same Library one commit later (change counter differs)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "original image",
+   "reasons": [
+    "journal: 1 original image(s) differ from the copy (wrong copy, or a journal of another run)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy unlike the SHA-256 recorded when it was taken",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "SHA-256",
+   "reasons": [
+    "copy: SHA-256 differs from the one recorded when the copy was taken"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy with the SHA-256 recorded when it was taken",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "wrong copy: the negative control's Library with a per-source journal",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "not as the declared",
+   "reasons": [
+    "copy: the name index is keyed by ['utf16'], not as the declared persource layout (['source_id', 'utf16'])"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy without StorageInventory's application_id",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "application_id",
+   "reasons": [
+    "copy: application_id 0x00000000 is not StorageInventory's 0x53494E56",
+    "journal: 1 original image(s) differ from the copy (wrong copy, or a journal of another run)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy that is not an SQLite database",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "not an SQLite database",
+   "reasons": [
+    "copy: not an SQLite database"
+   ],
+   "ok": true
+  },
+  {
+   "case": "undecodable key page in the copy (a name-index leaf not journalled)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "cannot be decoded",
+   "reasons": [
+    "copy: PRAGMA quick_check reports 1 problem(s)",
+    "copy: page 4676 of tree sqlite_autoindex_name_1 cannot be decoded (overflow pointer 1644192512 out of range or shared)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy whose name index entry is corrupt (SQLite rejects the schema)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "schema",
+   "reasons": [
+    "input cannot be read: DatabaseError: malformed database schema (sqlite_autoindex_namX_1) - orphan index"
+   ],
+   "ok": true
+  },
+  {
+   "case": "copy without a dictionary index (folder_path_child dropped)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "missing",
+   "reasons": [
+    "copy: not the Library schema (missing trees ['folder_path_child'], unexpected trees [])",
+    "copy: index folder_path_child is missing or not keyed by source_id first"
+   ],
+   "ok": true
+  },
+  {
+   "case": "per-source evidence declared as the negative control's layout",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "not as the declared",
+   "reasons": [
+    "copy: the name index is keyed by ['source_id', 'utf16'], not as the declared global layout (['utf16'])"
+   ],
+   "ok": true
+  },
+  {
+   "case": "negative control declared as per-source",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "not as the declared",
+   "reasons": [
+    "copy: the name index is keyed by ['utf16'], not as the declared persource layout (['source_id', 'utf16'])"
+   ],
+   "ok": true
+  },
+  {
+   "case": "target source that does not exist in the copy",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "not an existing source",
+   "reasons": [
+    "target: source 99 has no key in the copy's dictionary (not an existing source)"
+   ],
+   "ok": true
+  },
+  {
+   "case": "existing-source journal checked as a new source (valid evidence, wrong question)",
+   "expected": "FAIL",
+   "verdict": "FAIL",
+   "exit": 1,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "LIMIT: new-source journal checked as the bordering existing source 2 (wrong target, bound by the run record)",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "reason_required": null,
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "usage error (no recorded journal length)",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "usage",
+   "reasons": [],
+   "ok": true
+  },
+  {
+   "case": "journal file missing",
+   "expected": "INVALID",
+   "verdict": "INVALID",
+   "exit": 2,
+   "reason_required": "cannot be read",
+   "reasons": [
+    "input cannot be read: FileNotFoundError: [Errno 2] No such file or directory: '<tmp>\\\\nothing.journal'"
+   ],
+   "ok": true
+  }
+ ]
+}

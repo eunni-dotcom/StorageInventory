@@ -1,4 +1,5 @@
-"""Consistency checks of the C4 design review's spec edits and of the C4 design repair's (scripted part of §23.1).
+"""Consistency checks of the C4 design review's spec edits, of the C4 design repair's (scripted part of §23.1) and of the C4
+design final repair's (§23.2: group "final"; it also runs workload_class.py's checks on the specification).
 
 Usage:  python spec_check.py docs/v1.1-preproduction-spec.md        prints a markdown table and the number of failures
 """
@@ -103,7 +104,7 @@ for prefix in ['| IMP-09 | **Performance', '| **D-52** |', '| Q-17 | The one-tra
 
 # ---------------------------------------------------------------------------------------------------- C4DR-H01
 G = 'H01'
-for k in ['F(n, d, m)', 'R(n, d, m; ρ, δ, α)', '**system**', '**data**', 'β = 13.5', 'β = 2.56', 'never from its result', '**Representative** (acceptance)', '**Stress**', '**Worst-case**', '**Informational**', 'hardest of them', 'Why these boundaries', 'F(1M, 25%, system)', 'F(2M, 60%, data)', 'ρ = 10%', 'F(2M, 100%, data)', '**N1**', '**N2**', '**N3**', '**L1**', '**L2**']:
+for k in ['F(n, d, m)', 'R(n, d, m; ρ, δ, α)', '**system**', '**data**', 'β = 13.5', 'β = 2.56', 'never from its result', 'Representative band', 'Stress band', 'Worst-case band', '**Informational**', 'hardest band among its parameters', 'Why these boundaries', 'F(1M, 25%, system)', 'F(2M, 60%, data)', 'R(2M, 25%, system; 10%, 5%, 5%)', 'F(2M, 100%, data)', '**N1**', '**N2**', '**N3**', '**L1**', '**L2**']:
     check(G, f'§15.4 states {k}', k in S154)
 check(G, 'TEST-P2 measures real re-scan churn', 'two captures' in row('| TEST-P2 |'))
 check(G, 'D-53 records the high-novelty product decision', 'stress' in row('| **D-53** |') and 'not by PERF-01' in row('| **D-53** |'))
@@ -154,7 +155,7 @@ check(G, 'TEST-P2 measures PERF-14 end to end in representative and stress cells
 
 # ---------------------------------------------------------------------------------------------------- C4DR-M05
 G = 'M05'
-for k in ['Load source (the only one)', 'PdhAddEnglishCounterW', '\\Process(*)\\% Processor Time', '\\Process(*)\\ID Process', '**500 ms**', '`_Total` and `Idle`', 'renumbers', '`MsMpEng`', 'process ID 4', 'divided by the number of logical processors', '**mean ≤ 5%**', '**95th percentile ≤ 15%**', 'after every round', 'declared before it starts', 'gate session', 'exactly five measured runs per cell', 'No valid run is ever discarded', 'median of its first five valid runs', 'documented objective invalidation']:
+for k in ['Load source: the whole machine', 'PdhAddEnglishCounterW', '\\Process(*)\\% Processor Time', '\\Process(*)\\ID Process', '**500 ms**', '`_Total` and `Idle`', 'renumbers', '`MsMpEng`', 'process ID 4', 'divided by the number of logical processors', '**mean ≤ 5%**', '**95th percentile ≤ 15%**', 'after every round', 'declared before it starts', 'gate session', 'exactly five measured runs per cell', 'No valid run is ever discarded', 'median of its first five valid runs', 'documented objective invalidation']:
     check(G, f'§15.4 method states {k}', k in S154)
 
 # ---------------------------------------------------------------------------------------------------- C4DR-M06 and structure
@@ -170,6 +171,62 @@ check(G, '§9.5 invariant 4 names the source', 'with `source_id` = X' in s)
 check(G, '§18.2 lists IMP-11', '| IMP-11 | TEST-L9, TEST-T1, TEST-P1 |' in s)
 check(G, '§23 scopes its table and points to §23.1', '### 23.1 Audit of the C4 design repair' in s and 'Scope of the table below' in s)
 check(G, 'status block names the repair and the focused re-review', 'C4 design repair' in s[:3000] and 'focused re-review' in s[:3000])
+
+# ---------------------------------------------------------------------------------------------------- C4 design final repair
+G = 'final'
+S154n = S154.replace(NL + '      ', ' ').replace(NL + '    ', ' ')
+d53 = row('| **D-53** |')
+# C4DRR-M01: the class function
+check(G, 'M01: §15.4 band table (parameter, representative, stress, worst-case bands)', '| Parameter of the cell | Representative band | Stress band | Worst-case band |' in S154)
+check(G, 'M01: §15.4 matrix table with a Class column', '| Cell | Kind | Files | Source (model, d) | ρ | δ | α | Library before | Class |' in S154)
+check(G, 'M01: classes are a total function, hardest band among the parameters', 'a total function of the cell' in S154 and 'hardest band among its parameters' in S154)
+check(G, 'M01: re-scans of high-novelty sources classed and justified', 'Re-scans of high-novelty sources' in S154 and 'R(2M, 60%, data; 1%, 0.5%, 0.5%)' in S154)
+check(G, 'M01: "the hardest of them" tie-break gone', 'hardest of them' not in s, f"{s.count('hardest of them')} occurrence(s)")
+check(G, 'M01: D-53 states the function and the routine re-scans of high-novelty sources', 'total function' in d53 and 'routine re-scans' in d53 and 'not a label inherited' in d53)
+try:
+    import os as _os
+    sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    import workload_class as wc
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        wc_rc = wc.main(p, None)
+    wc_line = [l for l in buf.getvalue().split(NL) if l.startswith('checks:')]
+    check(G, 'M01: workload_class.py on this specification: every check passes', wc_rc == 0, wc_line[0] if wc_line else 'no summary')
+except Exception as e:      # noqa: BLE001 (a failure to run is a failed check)
+    check(G, 'M01: workload_class.py on this specification: every check passes', False, f'{type(e).__name__}: {e}')
+# C4DRR-M02: the fail-closed attribution
+for k in ['valid only when the checker validates its evidence completely', '**PASS** (0)', '**FAIL** (1)', '**INVALID** (2)', 'An INVALID attribution is never PASS', 'journal_ranges_selftest.py', 'never from the analyst', 'page 1 is not journalled', 'any checksum fails']:
+    check(G, f'M02: §15.4 attribution states "{k}"', k in S154n)
+check(G, 'M02: PERF-15 (a) row: INVALID evidence never passes', 'INVALID evidence is never a pass' in row('| PERF-15 | **The transient'))
+check(G, 'M02: TEST-P1: attribution valid only when validated, self-tests', 'never a pass' in row('| TEST-P1 |') and 'negative self-tests' in row('| TEST-P1 |'))
+check(G, 'M02: §19 C4 acceptance: attributions valid, never INVALID', 'never INVALID' in section('### C4:', '### C5:'))
+# C4DRR-M03: the whole-machine load source
+for k in ['\\Processor Information(_Total)\\% Processor Time', 'JobObjectBasicAccountingInformation', '`U` = whole machine − own', 'Not used for validity', 'Induced work counts', 'Diagnostics, recorded but never deciding', '`% Processor Utility`']:
+    check(G, f'M03: §15.4 load source states "{k}"', k in S154)
+check(G, 'M03: quiet check and run validity on U', '`U` **mean ≤ 5%**' in S154 and 'if `U` exceeded **10%**' in S154)
+check(G, 'M03: per-process external CPU no longer decides the quiet check or a run', 'external plus induced CPU **mean ≤ 5%**' not in s and 'if its external CPU exceeded' not in s)
+check(G, 'M03: D-53 names the whole-machine load source', 'whole-machine load source' in d53)
+check(G, 'M03: measured figures filled in (no placeholder left)', '[[' not in s)
+# observations corrected
+p15 = row('| PERF-15 | **The transient')
+check(G, 'O04: PERF-15 (c) fourth cancel point is detected by the final check', 'during the final statements' in p15 and 'detects it' in p15)
+check(G, 'O04: no cancel point "immediately before COMMIT" after the final check', 'immediately before `COMMIT` (after the final statements and IMP-11\'s final check)' not in s and 'during the in-transaction verification, immediately before `COMMIT`)' not in s and 'during the verification, immediately before `COMMIT`)' not in s)
+check(G, 'O04: TEST-P1 names the corrected fourth point', 'during the final statements' in row('| TEST-P1 |'))
+check(G, 'O04: UI-10 keys the band on the outcome', 'outcome, not the moment of the click' in section('### 14.3', '### 14.4'))
+check(G, 'O04: UI-13 has a "Stopping…" row', '| **Stopping…**' in section('### 14.3', '### 14.4'))
+check(G, 'O04: CAN-01d read-based cadence for the error pass and the footprint query', 'error pass of IMP-03 (5) checks the token' in section('### 11.5', '### 11.6'))
+check(G, 'O02: the 4,096-row figures labelled as 16,384-row averages', 'not maxima over 4,096' in imp11 or 'not maxima over 4,096' in row('| IMP-11 | **Library space'))
+check(G, 'O03: COMMIT exactness stated for the file length, with its assumptions', "exact **for the main file's length**" in row('| IMP-11 | **Library space') and 'no auto-vacuum' in row('| IMP-11 | **Library space'))
+check(G, 'O03: TEST-L9 "lies within" Λ + R_C', "lies within the final check's `Λ` + `R_C`" in row('| TEST-L9 |'))
+check(G, 'O05: the shared cap derived from W and key order', 'the cap follows from W and key order' in p15)
+check(G, 'O06: the prefill key names the binary', 'identity of the binary that builds it' in S154n)
+check(G, 'O07: induced load counts against a run', 'counts against the run like any other load' in S154n)
+check(G, 'O08: gate session designation, round invalidation, 120 collections', 'must complete' in S154n and 'are invalid runs that receive replacements' in S154n and '120 collections a minute' in S154n)
+check(G, 'status block names the final repair and the three-item recheck', 'C4 design final repair' in s[:4000] and 'three-item recheck' in s[:4000])
+check(G, '§22.5 dispositions of C4DRR-M01 to C4DRR-M03', all(f'**{k}**' in section('### 22.5', '## 23.') for k in ['C4DRR-M01', 'C4DRR-M02', 'C4DRR-M03']))
+check(G, '§23.2 audits the final repair', '### 23.2 Audit of the C4 design final repair' in s)
 
 if __name__ == '__main__':
     print('| Group | Check | Result | Detail |')

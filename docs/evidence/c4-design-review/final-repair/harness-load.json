@@ -1,0 +1,241 @@
+{
+ "quiet_checks": {
+  "before": {
+   "verdict": "NOT QUIET",
+   "U": {
+    "mean": 37.06,
+    "p95": 61.26,
+    "n": 120
+   },
+   "whole": {
+    "mean": 37.25,
+    "p95": 61.46,
+    "n": 120
+   },
+   "own": {
+    "mean": 0.19,
+    "p95": 0.39,
+    "n": 120
+   },
+   "induced_counted": {
+    "mean": 2.96,
+    "p95": 8.46,
+    "n": 120
+   },
+   "dpc_interrupt": {
+    "mean": 1.07,
+    "p95": 1.95,
+    "n": 120
+   },
+   "induced_plus_dpc": {
+    "mean": 4.04,
+    "p95": 9.76,
+    "n": 120
+   }
+  },
+  "after": {
+   "verdict": "NOT QUIET",
+   "U": {
+    "mean": 53.08,
+    "p95": 76.28,
+    "n": 120
+   },
+   "whole": {
+    "mean": 53.28,
+    "p95": 76.68,
+    "n": 120
+   },
+   "own": {
+    "mean": 0.2,
+    "p95": 0.39,
+    "n": 120
+   },
+   "induced_counted": {
+    "mean": 7.73,
+    "p95": 14.64,
+    "n": 120
+   },
+   "dpc_interrupt": {
+    "mean": 1.26,
+    "p95": 2.74,
+    "n": 120
+   },
+   "induced_plus_dpc": {
+    "mean": 8.99,
+    "p95": 17.41,
+    "n": 120
+   }
+  }
+ },
+ "quiet_induced_plus_dpc_mean": 6.52,
+ "plan_run": {
+  "verdict": "INVALID",
+  "U": {
+   "mean": 40.81,
+   "p95": 68.76,
+   "max": 87.42
+  },
+  "own": {
+   "mean": 5.57,
+   "p95": 7.88,
+   "max": 11.32
+  },
+  "job_processes_total": 10
+ },
+ "operations": [
+  {
+   "cell": "persource hash existing 1M/3000k r1",
+   "import_seconds": 16.83,
+   "collections": 32,
+   "U": {
+    "mean": 49.21,
+    "p95": 71.56,
+    "n": 32
+   },
+   "whole": {
+    "mean": 55.57,
+    "p95": 78.32,
+    "n": 32
+   },
+   "own": {
+    "mean": 6.35,
+    "p95": 9.12,
+    "n": 32
+   },
+   "induced_counted": {
+    "mean": 6.95,
+    "p95": 15.56,
+    "n": 32
+   },
+   "dpc_interrupt": {
+    "mean": 1.58,
+    "p95": 3.12,
+    "n": 32
+   },
+   "induced_plus_dpc": {
+    "mean": 8.53,
+    "p95": 17.32,
+    "n": 32
+   },
+   "induced_over_quiet_mean": 2.01,
+   "induced_over_quiet_p95": 10.8,
+   "run_rule_verdict": "INVALID"
+  },
+  {
+   "cell": "persource hash new-source 1M/3000k r1",
+   "import_seconds": 9.01,
+   "collections": 17,
+   "U": {
+    "mean": 37.84,
+    "p95": 65.39,
+    "n": 17
+   },
+   "whole": {
+    "mean": 44.68,
+    "p95": 72.27,
+    "n": 17
+   },
+   "own": {
+    "mean": 6.84,
+    "p95": 8.17,
+    "n": 17
+   },
+   "induced_counted": {
+    "mean": 7.83,
+    "p95": 11.15,
+    "n": 17
+   },
+   "dpc_interrupt": {
+    "mean": 0.65,
+    "p95": 1.56,
+    "n": 17
+   },
+   "induced_plus_dpc": {
+    "mean": 8.48,
+    "p95": 11.74,
+    "n": 17
+   },
+   "induced_over_quiet_mean": 1.96,
+   "induced_over_quiet_p95": 5.22,
+   "run_rule_verdict": "INVALID"
+  },
+  {
+   "cell": "persource obj first 2M/6000k d25 r1",
+   "import_seconds": 17.38,
+   "collections": 34,
+   "U": {
+    "mean": 31.94,
+    "p95": 49.76,
+    "n": 34
+   },
+   "whole": {
+    "mean": 38.58,
+    "p95": 55.85,
+    "n": 34
+   },
+   "own": {
+    "mean": 6.64,
+    "p95": 7.94,
+    "n": 34
+   },
+   "induced_counted": {
+    "mean": 2.84,
+    "p95": 6.85,
+    "n": 34
+   },
+   "dpc_interrupt": {
+    "mean": 0.6,
+    "p95": 1.37,
+    "n": 34
+   },
+   "induced_plus_dpc": {
+    "mean": 3.45,
+    "p95": 8.22,
+    "n": 34
+   },
+   "induced_over_quiet_mean": -3.07,
+   "induced_over_quiet_p95": 1.71,
+   "run_rule_verdict": "INVALID"
+  },
+  {
+   "cell": "persource objrescan 2M/6000k n1 r1",
+   "import_seconds": 18.69,
+   "collections": 36,
+   "U": {
+    "mean": 33.98,
+    "p95": 50.57,
+    "n": 36
+   },
+   "whole": {
+    "mean": 40.32,
+    "p95": 57.78,
+    "n": 36
+   },
+   "own": {
+    "mean": 6.35,
+    "p95": 7.82,
+    "n": 36
+   },
+   "induced_counted": {
+    "mean": 4.35,
+    "p95": 9.18,
+    "n": 36
+   },
+   "dpc_interrupt": {
+    "mean": 0.75,
+    "p95": 2.34,
+    "n": 36
+   },
+   "induced_plus_dpc": {
+    "mean": 5.11,
+    "p95": 9.96,
+    "n": 36
+   },
+   "induced_over_quiet_mean": -1.41,
+   "induced_over_quiet_p95": 3.45,
+   "run_rule_verdict": "INVALID"
+  }
+ ],
+ "largest_induced_over_quiet_mean": 2.01,
+ "largest_induced_over_quiet_p95": 10.8
+}

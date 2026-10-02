@@ -1,0 +1,89 @@
+{
+ "all_as_expected_and_identical": true,
+ "cells": [
+  {
+   "cell": "analyse persource hash new-source 1M/3000k",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "invalid_reasons": [],
+   "journal_bytes": 247328,
+   "recorded_bytes": 247328,
+   "records": 60,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  },
+  {
+   "cell": "analyse persource hash existing 1M/3000k",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "invalid_reasons": [],
+   "journal_bytes": 62927656,
+   "recorded_bytes": 62927656,
+   "records": 15333,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  },
+  {
+   "cell": "analyse global hash new-source 1M/750k",
+   "expected": "FAIL",
+   "verdict": "FAIL",
+   "exit": 1,
+   "invalid_reasons": [],
+   "journal_bytes": 23423024,
+   "recorded_bytes": 23423024,
+   "records": 5707,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  },
+  {
+   "cell": "analyse global hash existing 1M/750k",
+   "expected": "FAIL",
+   "verdict": "FAIL",
+   "exit": 1,
+   "invalid_reasons": [],
+   "journal_bytes": 23402536,
+   "recorded_bytes": 23402536,
+   "records": 5702,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  },
+  {
+   "cell": "analyse persource obj first 2M/6000k d25",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "invalid_reasons": [],
+   "journal_bytes": 247352,
+   "recorded_bytes": 247352,
+   "records": 60,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  },
+  {
+   "cell": "analyse persource objrescan 2M/6000k n1",
+   "expected": "PASS",
+   "verdict": "PASS",
+   "exit": 0,
+   "invalid_reasons": [],
+   "journal_bytes": 30338040,
+   "recorded_bytes": 30338040,
+   "records": 7392,
+   "segments": 2,
+   "synced_segments": 1,
+   "identical_to_committed": true,
+   "differences": []
+  }
+ ]
+}

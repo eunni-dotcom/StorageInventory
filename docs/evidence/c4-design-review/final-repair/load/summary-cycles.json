@@ -1,0 +1,501 @@
+{
+ "logical_processors": 16,
+ "experiments": [
+  {
+   "experiment": "churn-cycles",
+   "round": 1,
+   "verdict": "NOT QUIET",
+   "U": {
+    "mean": 64.73,
+    "p95": 97.28,
+    "max": 99.61
+   },
+   "whole": {
+    "mean": 64.97,
+    "p95": 97.47,
+    "max": 100.0
+   },
+   "own": {
+    "mean": 0.24,
+    "p95": 0.41,
+    "max": 0.58
+   },
+   "collections": 268,
+   "blocks": 6,
+   "injected": {
+    "processes": 621,
+    "machine_percent": 22.09,
+    "cpu_seconds_per_process": 0.339
+   },
+   "change_mean": {
+    "whole": 25.21,
+    "own": 0.06,
+    "U": 25.16,
+    "external_counted": 3.97,
+    "induced_counted": 1.98,
+    "unattributed": 19.21,
+    "dpc_interrupt": 0.29
+   },
+   "change_range": {
+    "whole": [
+     19.62,
+     35.18
+    ],
+    "own": [
+     0.04,
+     0.12
+    ],
+    "U": [
+     19.59,
+     35.14
+    ],
+    "external_counted": [
+     -9.59,
+     20.22
+    ],
+    "induced_counted": [
+     0.51,
+     4.13
+    ],
+    "unattributed": [
+     14.18,
+     25.99
+    ],
+    "dpc_interrupt": [
+     0.0,
+     0.56
+    ]
+   },
+   "per_block": [
+    {
+     "whole": 27.25,
+     "own": 0.06,
+     "U": 27.2,
+     "external_counted": 6.98,
+     "induced_counted": 4.13,
+     "unattributed": 16.09,
+     "dpc_interrupt": 0.42
+    },
+    {
+     "whole": 23.46,
+     "own": 0.12,
+     "U": 23.34,
+     "external_counted": 4.24,
+     "induced_counted": 0.55,
+     "unattributed": 18.55,
+     "dpc_interrupt": 0.45
+    },
+    {
+     "whole": 22.45,
+     "own": 0.04,
+     "U": 22.4,
+     "external_counted": 1.07,
+     "induced_counted": 2.75,
+     "unattributed": 18.58,
+     "dpc_interrupt": 0.19
+    },
+    {
+     "whole": 35.18,
+     "own": 0.05,
+     "U": 35.14,
+     "external_counted": 20.22,
+     "induced_counted": 0.75,
+     "unattributed": 14.18,
+     "dpc_interrupt": 0.56
+    },
+    {
+     "whole": 23.33,
+     "own": 0.05,
+     "U": 23.28,
+     "external_counted": 0.89,
+     "induced_counted": 0.51,
+     "unattributed": 21.87,
+     "dpc_interrupt": 0.0
+    },
+    {
+     "whole": 19.62,
+     "own": 0.04,
+     "U": 19.59,
+     "external_counted": -9.59,
+     "induced_counted": 3.19,
+     "unattributed": 25.99,
+     "dpc_interrupt": 0.11
+    }
+   ],
+   "seen_by_U_share_of_injected": 1.139,
+   "seen_by_counted_external_share_of_injected": 0.18
+  },
+  {
+   "experiment": "bench+churn-cycles",
+   "round": 1,
+   "verdict": "INVALID",
+   "U": {
+    "mean": 63.09,
+    "p95": 90.03,
+    "max": 96.24
+   },
+   "whole": {
+    "mean": 68.78,
+    "p95": 94.92,
+    "max": 99.61
+   },
+   "own": {
+    "mean": 5.69,
+    "p95": 6.49,
+    "max": 6.78
+   },
+   "collections": 267,
+   "blocks": 6,
+   "injected": {
+    "processes": 604,
+    "machine_percent": 21.72,
+    "cpu_seconds_per_process": 0.341
+   },
+   "change_mean": {
+    "whole": 23.55,
+    "own": -0.09,
+    "U": 23.64,
+    "external_counted": 1.28,
+    "induced_counted": 1.96,
+    "unattributed": 20.39,
+    "dpc_interrupt": 0.21
+   },
+   "change_range": {
+    "whole": [
+     4.98,
+     34.27
+    ],
+    "own": [
+     -0.7,
+     0.67
+    ],
+    "U": [
+     4.3,
+     34.98
+    ],
+    "external_counted": [
+     -17.24,
+     10.91
+    ],
+    "induced_counted": [
+     0.13,
+     2.77
+    ],
+    "unattributed": [
+     18.58,
+     21.63
+    ],
+    "dpc_interrupt": [
+     -0.25,
+     0.59
+    ]
+   },
+   "per_block": [
+    {
+     "whole": 4.98,
+     "own": 0.67,
+     "U": 4.3,
+     "external_counted": -17.24,
+     "induced_counted": 0.13,
+     "unattributed": 21.41,
+     "dpc_interrupt": -0.25
+    },
+    {
+     "whole": 13.42,
+     "own": 0.22,
+     "U": 13.2,
+     "external_counted": -8.95,
+     "induced_counted": 2.77,
+     "unattributed": 19.37,
+     "dpc_interrupt": 0.13
+    },
+    {
+     "whole": 27.24,
+     "own": -0.27,
+     "U": 27.51,
+     "external_counted": 6.42,
+     "induced_counted": 2.51,
+     "unattributed": 18.58,
+     "dpc_interrupt": 0.05
+    },
+    {
+     "whole": 29.31,
+     "own": -0.65,
+     "U": 29.96,
+     "external_counted": 6.78,
+     "induced_counted": 1.85,
+     "unattributed": 21.33,
+     "dpc_interrupt": 0.36
+    },
+    {
+     "whole": 34.27,
+     "own": -0.7,
+     "U": 34.98,
+     "external_counted": 10.91,
+     "induced_counted": 2.43,
+     "unattributed": 21.63,
+     "dpc_interrupt": 0.59
+    },
+    {
+     "whole": 32.07,
+     "own": 0.2,
+     "U": 31.88,
+     "external_counted": 9.77,
+     "induced_counted": 2.07,
+     "unattributed": 20.05,
+     "dpc_interrupt": 0.4
+    }
+   ],
+   "seen_by_U_share_of_injected": 1.088,
+   "seen_by_counted_external_share_of_injected": 0.059
+  },
+  {
+   "experiment": "churn-cycles",
+   "round": 2,
+   "verdict": "NOT QUIET",
+   "U": {
+    "mean": 59.45,
+    "p95": 95.98,
+    "max": 99.62
+   },
+   "whole": {
+    "mean": 59.61,
+    "p95": 96.43,
+    "max": 100.0
+   },
+   "own": {
+    "mean": 0.16,
+    "p95": 0.4,
+    "max": 0.58
+   },
+   "collections": 268,
+   "blocks": 6,
+   "injected": {
+    "processes": 632,
+    "machine_percent": 22.43,
+    "cpu_seconds_per_process": 0.338
+   },
+   "change_mean": {
+    "whole": 26.0,
+    "own": 0.11,
+    "U": 25.89,
+    "external_counted": 4.13,
+    "induced_counted": 1.08,
+    "unattributed": 20.68,
+    "dpc_interrupt": 0.37
+   },
+   "change_range": {
+    "whole": [
+     5.79,
+     41.29
+    ],
+    "own": [
+     0.03,
+     0.19
+    ],
+    "U": [
+     5.76,
+     41.1
+    ],
+    "external_counted": [
+     -5.33,
+     10.87
+    ],
+    "induced_counted": [
+     -5.29,
+     5.74
+    ],
+    "unattributed": [
+     15.87,
+     26.98
+    ],
+    "dpc_interrupt": [
+     -0.31,
+     0.72
+    ]
+   },
+   "per_block": [
+    {
+     "whole": 26.31,
+     "own": 0.06,
+     "U": 26.25,
+     "external_counted": 8.66,
+     "induced_counted": 1.72,
+     "unattributed": 15.87,
+     "dpc_interrupt": 0.36
+    },
+    {
+     "whole": 23.58,
+     "own": 0.05,
+     "U": 23.53,
+     "external_counted": 6.54,
+     "induced_counted": -0.32,
+     "unattributed": 17.32,
+     "dpc_interrupt": 0.24
+    },
+    {
+     "whole": 5.79,
+     "own": 0.03,
+     "U": 5.76,
+     "external_counted": -5.33,
+     "induced_counted": -5.29,
+     "unattributed": 16.37,
+     "dpc_interrupt": -0.31
+    },
+    {
+     "whole": 27.76,
+     "own": 0.16,
+     "U": 27.61,
+     "external_counted": 0.04,
+     "induced_counted": 0.58,
+     "unattributed": 26.98,
+     "dpc_interrupt": 0.72
+    },
+    {
+     "whole": 41.29,
+     "own": 0.19,
+     "U": 41.1,
+     "external_counted": 10.87,
+     "induced_counted": 5.74,
+     "unattributed": 24.49,
+     "dpc_interrupt": 0.63
+    },
+    {
+     "whole": 31.28,
+     "own": 0.17,
+     "U": 31.11,
+     "external_counted": 4.01,
+     "induced_counted": 4.07,
+     "unattributed": 23.03,
+     "dpc_interrupt": 0.57
+    }
+   ],
+   "seen_by_U_share_of_injected": 1.154,
+   "seen_by_counted_external_share_of_injected": 0.184
+  },
+  {
+   "experiment": "bench+churn-cycles",
+   "round": 2,
+   "verdict": "INVALID",
+   "U": {
+    "mean": 62.35,
+    "p95": 89.44,
+    "max": 95.5
+   },
+   "whole": {
+    "mean": 68.28,
+    "p95": 95.11,
+    "max": 100.0
+   },
+   "own": {
+    "mean": 5.93,
+    "p95": 6.65,
+    "max": 6.99
+   },
+   "collections": 267,
+   "blocks": 6,
+   "injected": {
+    "processes": 620,
+    "machine_percent": 22.02,
+    "cpu_seconds_per_process": 0.34
+   },
+   "change_mean": {
+    "whole": 27.8,
+    "own": -0.17,
+    "U": 27.97,
+    "external_counted": 4.29,
+    "induced_counted": 1.82,
+    "unattributed": 21.87,
+    "dpc_interrupt": 0.39
+   },
+   "change_range": {
+    "whole": [
+     2.35,
+     42.41
+    ],
+    "own": [
+     -0.61,
+     0.27
+    ],
+    "U": [
+     2.08,
+     43.02
+    ],
+    "external_counted": [
+     -8.62,
+     14.42
+    ],
+    "induced_counted": [
+     -2.83,
+     4.5
+    ],
+    "unattributed": [
+     13.52,
+     27.23
+    ],
+    "dpc_interrupt": [
+     -0.2,
+     0.74
+    ]
+   },
+   "per_block": [
+    {
+     "whole": 26.99,
+     "own": -0.01,
+     "U": 27.0,
+     "external_counted": 2.19,
+     "induced_counted": 4.5,
+     "unattributed": 20.32,
+     "dpc_interrupt": 0.36
+    },
+    {
+     "whole": 42.41,
+     "own": -0.61,
+     "U": 43.02,
+     "external_counted": 14.42,
+     "induced_counted": 4.43,
+     "unattributed": 24.16,
+     "dpc_interrupt": 0.32
+    },
+    {
+     "whole": 25.05,
+     "own": -0.27,
+     "U": 25.32,
+     "external_counted": 4.41,
+     "induced_counted": -1.3,
+     "unattributed": 22.22,
+     "dpc_interrupt": 0.39
+    },
+    {
+     "whole": 2.35,
+     "own": 0.27,
+     "U": 2.08,
+     "external_counted": -8.62,
+     "induced_counted": -2.83,
+     "unattributed": 13.52,
+     "dpc_interrupt": -0.2
+    },
+    {
+     "whole": 30.99,
+     "own": -0.55,
+     "U": 31.54,
+     "external_counted": 4.21,
+     "induced_counted": 3.55,
+     "unattributed": 23.77,
+     "dpc_interrupt": 0.74
+    },
+    {
+     "whole": 39.02,
+     "own": 0.14,
+     "U": 38.88,
+     "external_counted": 9.1,
+     "induced_counted": 2.55,
+     "unattributed": 27.23,
+     "dpc_interrupt": 0.72
+    }
+   ],
+   "seen_by_U_share_of_injected": 1.27,
+   "seen_by_counted_external_share_of_injected": 0.195
+  }
+ ]
+}
