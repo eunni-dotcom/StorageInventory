@@ -47,13 +47,13 @@ internal readonly record struct HeaderRead(HeaderOutcome Outcome, uint ChangeCou
 }
 
 /// <summary>The existence and length of one Library member.</summary>
-internal readonly record struct MemberInfo(bool Exists, long Length)
+internal readonly record struct MemberFacts(bool Exists, long Length)
 {
     internal bool NonEmpty => Exists && Length > 0;
 }
 
 /// <summary>The owned members as found (LIB-02). Anything else in the directory is never inspected, written or deleted.</summary>
-internal sealed record MemberSet(MemberInfo Lock, MemberInfo Main, MemberInfo Journal, MemberInfo Wal, MemberInfo Shm);
+internal sealed record MemberSet(MemberFacts Lock, MemberFacts Main, MemberFacts Journal, MemberFacts Wal, MemberFacts Shm);
 
 internal enum LockOutcome
 {
@@ -144,10 +144,10 @@ internal sealed class LibraryStore
         return new MemberSet(Info(LockPath), Info(MainPath), Info(JournalPath), Info(WalPath), Info(ShmPath));
     }
 
-    private static MemberInfo Info(string path)
+    private static MemberFacts Info(string path)
     {
         var info = new FileInfo(path);
-        return info.Exists ? new MemberInfo(true, info.Length) : new MemberInfo(false, 0);
+        return info.Exists ? new MemberFacts(true, info.Length) : new MemberFacts(false, 0);
     }
 
     /// <summary>Reads and classifies the first 100 bytes of <c>library.sqlite3</c> without SQLite (LIB-08 step 4; also the commit

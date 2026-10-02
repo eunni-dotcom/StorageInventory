@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Re-runs ONLY the source and assembly audit rules of StorageInventory.IntegrationTests (SecurityAuditTests, with its fixtures)
+  <!-- Re-runs ONLY the source and assembly audit rules of StorageInventory.IntegrationTests (SecurityAuditTests, with its fixtures; v1.1 C4: the Library is referenced too, because the A-08 rule counts its P/Invokes)
        without the WPF App assembly, so the mutation script can exercise the A-08 rules on a machine that cannot host WPF (a Linux
        reviewer, a container). It is not part of the solution and the build script never builds it: the real audit runs in
        StorageInventory.IntegrationTests on Windows. The assembly name is the integration tests' so Core's InternalsVisibleTo applies. -->
@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
     <ProjectReference Include="..\..\..\src\StorageInventory.History\StorageInventory.History.csproj" />
+    <ProjectReference Include="..\..\..\src\StorageInventory.Library\StorageInventory.Library.csproj" />
   </ItemGroup>
 
 </Project>

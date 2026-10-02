@@ -49,6 +49,12 @@ jobs:
         shell: powershell
         run: .\build.ps1 -Target Publish
 
+      # A-20 / TEST-R3 (BLD-14): the native files the single-file host extracts are exactly the five WPF natives plus e_sqlite3.dll,
+      # and that e_sqlite3.dll is byte-identical to the one in the SQLitePCLRaw.lib.e_sqlite3 package.
+      - name: Check the native file set of the publish output
+        shell: powershell
+        run: .\tests\smoke\Test-NativeFileSet.ps1
+
       - name: Upload executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

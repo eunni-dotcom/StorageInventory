@@ -14,17 +14,17 @@ namespace StorageInventory.IntegrationTests;
 /// </summary>
 public static class SecurityAuditTests
 {
-    private static readonly Lazy<Dictionary<string, string>> Sources = new(() =>
+    internal static readonly Lazy<Dictionary<string, string>> Sources = new(() =>
         Directory.EnumerateFiles(Path.Combine(TestEnvironment.RepoRoot, "src"), "*.*", SearchOption.AllDirectories)
             .Where(f => (f.EndsWith(".cs", StringComparison.Ordinal) || f.EndsWith(".xaml", StringComparison.Ordinal) || f.EndsWith(".csproj", StringComparison.Ordinal) || f.EndsWith(".manifest", StringComparison.Ordinal))
                         && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .ToDictionary(f => Path.GetRelativePath(TestEnvironment.RepoRoot, f), File.ReadAllText));
 
     /// <summary>Files (relative to the repo) whose code matches the pattern, ignoring // comments.</summary>
-    private static List<string> FilesMatching(string pattern) => FilesMatching(pattern, Sources.Value);
+    internal static List<string> FilesMatching(string pattern) => FilesMatching(pattern, Sources.Value);
 
     /// <summary>The same matcher over any set of sources, so a rule can be shown to reject a violating snippet.</summary>
-    private static List<string> FilesMatching(string pattern, IReadOnlyDictionary<string, string> sources)
+    internal static List<string> FilesMatching(string pattern, IReadOnlyDictionary<string, string> sources)
     {
         var regex = new Regex(pattern, RegexOptions.Multiline);
         return sources
@@ -34,25 +34,28 @@ public static class SecurityAuditTests
             .ToList();
     }
 
-    private static string StripComment(string line)
+    internal static string StripComment(string line)
     {
         var i = line.IndexOf("//", StringComparison.Ordinal);
         return i >= 0 && !line[..i].Contains('"') ? line[..i] : line;
     }
 
-    private static void OnlyIn(string what, string pattern, params string[] allowed)
+    internal static void OnlyIn(string what, string pattern, params string[] allowed)
     {
         var found = FilesMatching(pattern);
         Assert.SequenceEqual(allowed.Order(StringComparer.Ordinal), found, $"{what} may only appear in the audited location(s)");
     }
 
     [Test]
-    public static void File_creation_happens_only_in_ReportRun()
+    public static void File_creation_happens_only_in_ReportRun_and_LibraryStore()
     {
-        OnlyIn("FileMode.CreateNew", @"FileMode\.CreateNew", "src/StorageInventory.Core/Reports/ReportRun.cs");
+        // A-01 (v1.1): FileMode.CreateNew and Directory.CreateDirectory only in ReportRun.cs and LibraryStore.cs
+        OnlyIn("FileMode.CreateNew", @"FileMode\.CreateNew", "src/StorageInventory.Core/Reports/ReportRun.cs", "src/StorageInventory.Library/LibraryStore.cs");
+        // A-03 (v1.1): new FileStream( only in the report readers and writers, ReportRun.cs and LibraryStore.cs
         OnlyIn("new FileStream", @"new FileStream\(",
-            "src/StorageInventory.Core/Reports/ReportCsvReader.cs", "src/StorageInventory.Core/Reports/ReportRun.cs", "src/StorageInventory.Core/Reports/ReportWriters.cs");
-        OnlyIn("Directory.CreateDirectory", @"Directory\.CreateDirectory\(", "src/StorageInventory.Core/Reports/ReportRun.cs");
+            "src/StorageInventory.Core/Reports/ReportCsvReader.cs", "src/StorageInventory.Core/Reports/ReportRun.cs", "src/StorageInventory.Core/Reports/ReportWriters.cs",
+            "src/StorageInventory.Library/LibraryStore.cs");
+        OnlyIn("Directory.CreateDirectory", @"Directory\.CreateDirectory\(", "src/StorageInventory.Core/Reports/ReportRun.cs", "src/StorageInventory.Library/LibraryStore.cs");
         Assert.Equal(0, FilesMatching(@"FileMode\.(Create|OpenOrCreate|Truncate|Append)\b").Count, "no overwriting or appending file modes");
         Assert.Equal(0, FilesMatching(@"File\.(Create|WriteAll\w*|AppendAll\w*|AppendText|CreateText|Copy|Replace|Encrypt|Decrypt|SetAttributes|Set\w*Time\w*|SetAccessControl|SetUnixFileMode)\(").Count,
             "no other File writing/metadata APIs");
@@ -70,15 +73,46 @@ public static class SecurityAuditTests
                 Assert.Contains("FileAccess.Read", m.Groups[1].Value);
             }
         }
+
+        // A-03 (v1.1): in LibraryStore.cs every construction is either a create-new (for writing), or FileMode.Open with FileAccess.Read
+        var violations = LibraryStoreFileStreamViolations(Sources.Value);
+        Assert.Equal(0, violations.Count, string.Join("; ", violations));
+    }
+
+    /// <summary>The A-03 rule for <c>LibraryStore.cs</c> as a function over sources, so a negative self-test can run it on a violating file.</summary>
+    internal static List<string> LibraryStoreFileStreamViolations(IReadOnlyDictionary<string, string> sources)
+    {
+        var violations = new List<string>();
+        foreach (var (file, raw) in sources.Where(kv => kv.Key.Replace('\\', '/').EndsWith("LibraryStore.cs", StringComparison.Ordinal)))
+        {
+            var code = string.Join("\n", raw.Split('\n').Select(StripComment));
+            foreach (Match m in Regex.Matches(code, @"new FileStream\(([^;]*)\)"))
+            {
+                var args = m.Groups[1].Value;
+                var createNew = args.Contains("FileMode.CreateNew", StringComparison.Ordinal);
+                var readOnly = Regex.IsMatch(args, @"FileMode\.Open\b") && Regex.IsMatch(args, @"FileAccess\.Read\b");   // word boundaries: FileAccess.ReadWrite is not FileAccess.Read
+                if (!createNew && !readOnly) violations.Add($"{file}: new FileStream({args.Trim()}) is neither a create-new nor FileMode.Open with FileAccess.Read");
+                if (createNew && !Regex.IsMatch(args, @"FileAccess\.Write\b")) violations.Add($"{file}: a create-new without FileAccess.Write: {args.Trim()}");
+            }
+        }
+        return violations;
     }
 
     [Test]
-    public static void Deletes_and_renames_happen_only_in_ReportRun_and_nothing_deletes_folders()
+    public static void Deletes_and_renames_happen_only_in_ReportRun_and_the_set_aside_and_nothing_deletes_folders()
     {
+        // A-04 (v1.1): File.Delete only in ReportRun.cs (the Library never deletes files); File.Move only in ReportRun.cs (the
+        // workbook) and LibraryStore.QuarantineSet, both with overwrite: false
         OnlyIn("File.Delete", @"File\.Delete\(", "src/StorageInventory.Core/Reports/ReportRun.cs");
-        OnlyIn("File.Move", @"File\.Move\(", "src/StorageInventory.Core/Reports/ReportRun.cs");
+        OnlyIn("File.Move", @"File\.Move\(", "src/StorageInventory.Core/Reports/ReportRun.cs", "src/StorageInventory.Library/LibraryStore.cs");
         Assert.Equal(0, FilesMatching(@"(Directory\.(Delete|Move)|\.Delete\(\s*(true|recursive))").Count, "no folder deletion or moving anywhere");
         Assert.Contains("overwrite: false", Sources.Value[Path.Combine("src", "StorageInventory.Core", "Reports", "ReportRun.cs")]);
+        var store = Sources.Value[Path.Combine("src", "StorageInventory.Library", "LibraryStore.cs")];
+        var moves = Regex.Matches(string.Join("\n", store.Split('\n').Select(StripComment)), @"File\.Move\(([^;]*)\)");
+        Assert.Equal(1, moves.Count, "one rename in LibraryStore: the set-aside");
+        Assert.Contains("overwrite: false", moves[0].Groups[1].Value);
+        Assert.Contains("stem + suffix", moves[0].Groups[1].Value);   // the destination is the quarantine stem (library.damaged-...) plus the member's suffix
+        Assert.Contains("LibraryNames.QuarantinePrefix", store);
     }
 
     [Test]
@@ -111,13 +145,14 @@ public static class SecurityAuditTests
 
     // ---- v1.1 C3 (A-08): the first-party native surface is exactly six read-only kernel32 functions ----
 
-    /// <summary>Every first-party assembly that can hold a P/Invoke: Core, History and the App (Library joins in C4). The
+    /// <summary>Every first-party assembly that can hold a P/Invoke: Core, History, the Library and the App. The
     /// <c>AUDIT_WITHOUT_APP</c> symbol exists only for <c>tests/mutation/AuditHarness</c>, which re-runs these audit rules on a
     /// machine that cannot load the WPF App assembly (Linux); the real test project never defines it.</summary>
     private static readonly Assembly[] FirstPartyAssemblies =
     [
         typeof(StorageScanResult).Assembly,
         typeof(StorageInventory.History.Identity.IdentityMatching).Assembly,
+        typeof(StorageInventory.Library.LibraryNames).Assembly,
 #if !AUDIT_WITHOUT_APP
         typeof(StorageInventory.App.App).Assembly,
 #endif
@@ -436,8 +471,12 @@ public static class SecurityAuditTests
         var history = typeof(StorageInventory.History.Identity.IdentityMatching).Assembly.GetReferencedAssemblies().Select(a => a.Name!).Where(n => n.StartsWith("StorageInventory", StringComparison.Ordinal)).ToList();
         Assert.SequenceEqual(["StorageInventory.Core"], history, "History references only Core among first-party assemblies");
 
-        // and no project under src carries a package reference (the product still builds from the SDK alone in C3)
-        Assert.Equal(0, FilesMatching(@"<PackageReference|SQLitePCL|Microsoft\.Data\.Sqlite").Count, "no SQLite or package reference in src");
+        // and neither project's source or project file carries a package reference or SQLite (A-12: SQLite is the Library's alone;
+        // the exact approved set is A-11, in LibrarySecurityAuditTests)
+        var packageFree = FilesMatching(@"<PackageReference|SQLitePCL|Microsoft\.Data\.Sqlite",
+            Sources.Value.Where(kv => kv.Key.Replace('\\', '/').StartsWith("src/StorageInventory.Core/", StringComparison.Ordinal) || kv.Key.Replace('\\', '/').StartsWith("src/StorageInventory.History/", StringComparison.Ordinal))
+                .ToDictionary(kv => kv.Key, kv => kv.Value));
+        Assert.Equal(0, packageFree.Count, "Core and History stay package-free: " + string.Join(", ", packageFree));
     }
 
     [Test]
@@ -465,12 +504,6 @@ public static class SecurityAuditTests
         var manifest = Sources.Value[Path.Combine("src", "StorageInventory.App", "app.manifest")];
         Assert.Contains("level=\"asInvoker\"", manifest);
         Assert.False(manifest.Contains("requireAdministrator") || manifest.Contains("highestAvailable"), "no elevation request");
-    }
-
-    [Test]
-    public static void No_package_references_anywhere()
-    {
-        Assert.Equal(0, FilesMatching(@"<PackageReference").Count, "the product builds from the SDK alone");
     }
 
     // ---- C1 (v1.1): the observer fan-out and the spool codec. The v1 rules above are unchanged. ----
@@ -544,8 +577,7 @@ public static class SecurityAuditTests
         var visibleTo = core.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
         string[] approved = ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests",
             "StorageInventory.Library", "StorageInventory.Library.Tests"];
-        var friendViolations = FriendViolations("Core", visibleTo, approved,
-            ["StorageInventory.Core.Tests", "StorageInventory.History", "StorageInventory.History.Tests", "StorageInventory.IntegrationTests"]);   // C3's list: v1's two test assemblies plus History and History.Tests
+        var friendViolations = FriendViolations("Core", visibleTo, approved, approved);   // A-13 from C4 on: exactly History, Library and the four test assemblies
         Assert.Equal(0, friendViolations.Count, string.Join("; ", friendViolations));
         foreach (var t in core.GetTypes().Where(t => t.Namespace is "StorageInventory.Core.Scanning" or "StorageInventory.Core.Spool" or "StorageInventory.Core.Identity"))
         {
@@ -565,7 +597,7 @@ public static class SecurityAuditTests
         Assert.Equal(0, history.GetExportedTypes().Length, "public types: " + string.Join(", ", history.GetExportedTypes().Select(t => t.FullName)));
         var visibleTo = history.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
         var friendViolations = FriendViolations("History", visibleTo, ["StorageInventory.History.Tests", "StorageInventory.IntegrationTests", "StorageInventory.Library", "StorageInventory.Library.Tests"],
-            ["StorageInventory.History.Tests", "StorageInventory.IntegrationTests"]);   // Library and its tests are added by C4
+            ["StorageInventory.History.Tests", "StorageInventory.IntegrationTests", "StorageInventory.Library", "StorageInventory.Library.Tests"]);   // C4 adds the Library (which applies the path rules) and its tests
         Assert.Equal(0, friendViolations.Count, string.Join("; ", friendViolations));
     }
 }

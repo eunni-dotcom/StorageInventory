@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
     <ProjectReference Include="..\..\src\StorageInventory.History\StorageInventory.History.csproj" />
+    <ProjectReference Include="..\..\src\StorageInventory.Library\StorageInventory.Library.csproj" />
     <ProjectReference Include="..\..\src\StorageInventory.App\StorageInventory.App.csproj" />
   </ItemGroup>
 

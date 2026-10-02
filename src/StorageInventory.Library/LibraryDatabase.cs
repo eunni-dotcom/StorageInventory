@@ -164,30 +164,6 @@ internal static class LibraryDatabase
         8 => DatabaseFailure.ReadOnly,
         _ => DatabaseFailure.Other,
     };
-
-    /// <summary>Runs a constant read-back statement and returns its first column as text.</summary>
-    internal static string ReadBack(SqliteConnection connection, string sql)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) ?? "";
-    }
-
-    /// <summary>Runs a constant statement that returns a value (a pragma that is set) and returns its text.</summary>
-    internal static string SetAndReadBack(SqliteConnection connection, string setSql, string getSql, string expected, string name)
-    {
-        using (var set = connection.CreateCommand())
-        {
-            set.CommandText = setSql;
-            set.ExecuteNonQuery();
-        }
-        var actual = ReadBack(connection, getSql);
-        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new EngineConfigurationException($"{name} reads back as '{actual}', expected '{expected}'.");
-        }
-        return actual;
-    }
 }
 
 /// <summary>
@@ -230,14 +206,14 @@ internal sealed class WriterConnection : IDisposable
     /// inside one.</summary>
     internal void Configure(bool importCache)
     {
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetJournalMode, OpenSql.GetJournalMode, "truncate", "journal_mode");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetSynchronous, OpenSql.GetSynchronous, "2", "synchronous");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetLockingMode, OpenSql.GetLockingMode, "normal", "locking_mode");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetBusyTimeout, OpenSql.GetBusyTimeout, "5000", "busy_timeout");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetTempStore, OpenSql.GetTempStore, "2", "temp_store");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetForeignKeys, OpenSql.GetForeignKeys, "1", "foreign_keys");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetTrustedSchema, OpenSql.GetTrustedSchema, "0", "trusted_schema");
-        if (importCache) LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetImportCacheSize, OpenSql.GetCacheSize, "-65536", "cache_size");
+        SetAndReadBack(_connection, OpenSql.SetJournalMode, OpenSql.GetJournalMode, "truncate", "journal_mode");
+        SetAndReadBack(_connection, OpenSql.SetSynchronous, OpenSql.GetSynchronous, "2", "synchronous");
+        SetAndReadBack(_connection, OpenSql.SetLockingMode, OpenSql.GetLockingMode, "normal", "locking_mode");
+        SetAndReadBack(_connection, OpenSql.SetBusyTimeout, OpenSql.GetBusyTimeout, "5000", "busy_timeout");
+        SetAndReadBack(_connection, OpenSql.SetTempStore, OpenSql.GetTempStore, "2", "temp_store");
+        SetAndReadBack(_connection, OpenSql.SetForeignKeys, OpenSql.GetForeignKeys, "1", "foreign_keys");
+        SetAndReadBack(_connection, OpenSql.SetTrustedSchema, OpenSql.GetTrustedSchema, "0", "trusted_schema");
+        if (importCache) SetAndReadBack(_connection, OpenSql.SetImportCacheSize, OpenSql.GetCacheSize, "-65536", "cache_size");
         if (_faults?.LimitDatabaseToTwoThousandPages == true)
         {
             using var limit = _connection.CreateCommand();
@@ -251,7 +227,7 @@ internal sealed class WriterConnection : IDisposable
 
     internal void Begin(MutationLease lease)
     {
-        Guard(lease, "BEGIN IMMEDIATE");
+        Guard(lease, "begin the transaction");
         using (var command = _connection.CreateCommand())
         {
             command.CommandText = TransactionSql.BeginImmediate;
@@ -266,7 +242,7 @@ internal sealed class WriterConnection : IDisposable
     internal void Commit(MutationLease lease)
     {
         _faults?.BeforeCommit?.Invoke();
-        Guard(lease, "COMMIT");
+        Guard(lease, "commit the transaction");
         using var command = _connection.CreateCommand();
         command.CommandText = TransactionSql.Commit;
         command.ExecuteNonQuery();
@@ -302,6 +278,23 @@ internal sealed class WriterConnection : IDisposable
     }
 
     internal void Guard(MutationLease lease, string what) => lease.Owner?.Require(lease, $"{_operation}: {what}", _allowed);
+
+    /// <summary>Sets a pragma from its constant and asserts it by reading it back (A-22).</summary>
+    private static void SetAndReadBack(SqliteConnection connection, string setSql, string getSql, string expected, string name)
+    {
+        using (var set = connection.CreateCommand())
+        {
+            set.CommandText = setSql;
+            set.ExecuteNonQuery();
+        }
+        using var get = connection.CreateCommand();
+        get.CommandText = getSql;
+        var actual = Convert.ToString(get.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new EngineConfigurationException($"{name} reads back as '{actual}', expected '{expected}'.");
+        }
+    }
 
     /// <summary>Closes the connection (a transaction still open is rolled back by SQLite) and tells the lease the resource is
     /// released. A release step that throws enters Faulted (OBS-13).</summary>
@@ -390,8 +383,22 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
     /// changes nothing.</summary>
     internal void Configure()
     {
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetTempStore, OpenSql.GetTempStore, "2", "temp_store");
-        LibraryDatabase.SetAndReadBack(_connection, OpenSql.SetTrustedSchema, OpenSql.GetTrustedSchema, "0", "trusted_schema");
+        SetAndReadBack(OpenSql.SetTempStore, OpenSql.GetTempStore, "2", "temp_store");
+        SetAndReadBack(OpenSql.SetTrustedSchema, OpenSql.GetTrustedSchema, "0", "trusted_schema");
+    }
+
+    private void SetAndReadBack(string setSql, string getSql, string expected, string name)
+    {
+        using (var set = _connection.CreateCommand())
+        {
+            set.CommandText = setSql;
+            set.ExecuteNonQuery();
+        }
+        var actual = ReadBack(getSql);
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new EngineConfigurationException($"{name} reads back as '{actual}', expected '{expected}'.");
+        }
     }
 
     /// <summary>Executes a constant query and returns its first column of the first row (null when none).</summary>
@@ -436,27 +443,22 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
         catch (SqliteException) when (Token.IsCancellationRequested) { throw new OperationCanceledException(Token); }
     }
 
-    /// <summary>The constant query plan of a statement, one line per step (A-24). Parameters are bound as NULL.</summary>
-    internal List<string> ExplainPlan(string sql, params string[] parameterNames)
-    {
-        var plan = new List<string>();
-        using var command = _connection.CreateCommand();
-        command.CommandText = "EXPLAIN QUERY PLAN " + sql;
-        foreach (var name in parameterNames) command.Parameters.AddWithValue(name, DBNull.Value);
-        using var reader = command.ExecuteReader();
-        while (reader.Read()) plan.Add(reader.GetString(3));
-        return plan;
-    }
-
     /// <summary>Runs <c>PRAGMA quick_check</c> and returns its first row ("ok" when intact). Only after an error that reports
     /// corruption (§6.7), never at every open. A failure of the check itself is returned as text, which is not "ok".</summary>
     internal string QuickCheck()
     {
-        try { return LibraryDatabase.ReadBack(_connection, OpenSql.QuickCheck); }
+        try { return ReadBack(OpenSql.QuickCheck); }
         catch (SqliteException ex) { return "quick_check failed: " + ex.Message; }
     }
 
-    internal string PragmaText(string sql) => LibraryDatabase.ReadBack(_connection, sql);
+    internal string PragmaText(string sql) => ReadBack(sql);
+
+    private string ReadBack(string sql)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) ?? "";
+    }
 
     private SqliteCommand Build(string sql, (string Name, object? Value)[] parameters)
     {
