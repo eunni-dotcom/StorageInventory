@@ -10,7 +10,6 @@ internal static class ImportSql
     internal const string InsertAttempt = """
         INSERT INTO scan_attempt (session_token, capture_token, source_id, root_path_as_entered, report_folder, run_id, started_utc, outcome)
         VALUES ($session_token, $capture_token, $source_id, $root_path, $report_folder, $run_id, $started_utc, 1)
-        RETURNING attempt_id
         """;
 
     internal const string RecordAttemptOutcome = """
@@ -28,13 +27,11 @@ internal static class ImportSql
     internal const string InsertVolume = """
         INSERT INTO volume (fs_type, serial64, serial32, confidence, display_name, last_label, last_capacity_bytes, first_seen_utc, last_seen_utc)
         VALUES ($fs_type, $serial64, $serial32, $confidence, $display_name, $last_label, $last_capacity_bytes, $now, $now)
-        RETURNING volume_id
         """;
 
     internal const string InsertSource = """
         INSERT INTO source (kind, volume_id, network_root, network_root_key, root_in_volume, identity_confidence, identity_basis, display_name, created_utc)
         VALUES ($kind, $volume_id, $network_root, $network_root_key, $root_in_volume, $confidence, $basis, $display_name, $now)
-        RETURNING source_id
         """;
 
     internal const string InsertSnapshot = """
@@ -55,13 +52,19 @@ internal static class ImportSql
     // ---- T-IMPORT: dictionaries (names are library-wide, folder paths per source) ----
     internal const string SelectNameId = "SELECT name_id FROM name WHERE utf16 = $utf16";
 
-    internal const string InsertName = "INSERT INTO name (utf16) VALUES ($utf16) RETURNING name_id";
+    /// <summary>No <c>RETURNING</c>: the engine's ephemeral result table costs about 8 microseconds a statement (TEST-P1's micro
+    /// benchmark), so the new id is read with <c>sqlite3_last_insert_rowid</c> instead (<c>WriterStatement.ExecuteInsert</c>).</summary>
+    internal const string InsertName = "INSERT INTO name (utf16) VALUES ($utf16)";
+
+    /// <summary>Insert-first interning for a run of names that are mostly new: one statement instead of a lookup and an insert. A
+    /// conflict changes no row, and the importer then looks the existing name up.</summary>
+    internal const string InsertNameIfAbsent = "INSERT INTO name (utf16) VALUES ($utf16) ON CONFLICT (utf16) DO NOTHING";
 
     internal const string SelectFolderPathId =
         "SELECT path_id FROM folder_path WHERE source_id = $source_id AND parent_path_id IS $parent_path_id AND name_id = $name_id";
 
     internal const string InsertFolderPath =
-        "INSERT INTO folder_path (source_id, parent_path_id, name_id, depth) VALUES ($source_id, $parent_path_id, $name_id, $depth) RETURNING path_id";
+        "INSERT INTO folder_path (source_id, parent_path_id, name_id, depth) VALUES ($source_id, $parent_path_id, $name_id, $depth)";
 
     // ---- T-IMPORT: observation rows ----
     internal const string InsertFolderObs = """
@@ -74,6 +77,14 @@ internal static class ImportSql
     internal const string InsertFileObs = """
         INSERT INTO file_obs (snapshot_id, folder_path_id, name_id, seq, size_bytes, modified_utc, created_utc, accessed_utc, attributes)
         VALUES ($snapshot_id, $folder_path_id, $name_id, $seq, $size_bytes, $modified_utc, $created_utc, $accessed_utc, $attributes)
+        """;
+
+    /// <summary>Eight file rows in one statement, with positional parameters (9 per row, in the column order of
+    /// <see cref="InsertFileObs"/>): the per-statement cost of the engine and its binding layer is paid once per eight rows.</summary>
+    internal const string InsertFileObsBatch8 = """
+        INSERT INTO file_obs (snapshot_id, folder_path_id, name_id, seq, size_bytes, modified_utc, created_utc, accessed_utc, attributes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?),
+               (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
     internal const string InsertScanError =
@@ -101,10 +112,21 @@ internal static class ImportSql
         WHERE o.snapshot_id = $snapshot_id AND (p.path_id IS NULL OR p.source_id <> $source_id)
         """;
 
-    /// <summary>Invariant 2 (b): every file row's folder has a folder row in this snapshot.</summary>
-    internal const string VerifyFileFolders = """
-        SELECT count(*) FROM file_obs f LEFT JOIN folder_obs o ON o.snapshot_id = f.snapshot_id AND o.path_id = f.folder_path_id
-        WHERE f.snapshot_id = $snapshot_id AND o.path_id IS NULL
+    /// <summary>Invariants 2 (b) and 5, first half: the files of each folder, as (folder_path_id, count, bytes) in primary-key order
+    /// (the grouping follows the index, so no temporary B-tree). The verifier merges this stream with <see cref="StreamFolderDirects"/>:
+    /// a folder with files but no folder row is an orphan (2b), and each folder's direct counts must equal what is stored (5).</summary>
+    internal const string StreamFileFolderTotals =
+        "SELECT folder_path_id, count(*), sum(size_bytes) FROM file_obs WHERE snapshot_id = $snapshot_id GROUP BY folder_path_id";
+
+    /// <summary>Invariant 5, second half: each folder's recorded direct counts, in primary-key order (<c>path_id</c> ascending).</summary>
+    internal const string StreamFolderDirects =
+        "SELECT path_id, direct_files, direct_bytes, direct_subfolders FROM folder_obs WHERE snapshot_id = $snapshot_id";
+
+    /// <summary>Invariant 5, third part: the parent of every non-root folder row, from which the verifier counts each folder's
+    /// child folders.</summary>
+    internal const string StreamFolderParents = """
+        SELECT p.parent_path_id FROM folder_obs o JOIN folder_path p ON p.path_id = o.path_id
+        WHERE o.snapshot_id = $snapshot_id AND p.parent_path_id IS NOT NULL
         """;
 
     /// <summary>Invariant 3 (parent closure): every non-root folder row has a parent row in this snapshot that was listed
@@ -127,16 +149,6 @@ internal static class ImportSql
     internal const string VerifyFolderNames = """
         SELECT count(*) FROM folder_obs o JOIN folder_path p ON p.path_id = o.path_id LEFT JOIN name n ON n.name_id = p.name_id
         WHERE o.snapshot_id = $snapshot_id AND n.name_id IS NULL
-        """;
-
-    /// <summary>Invariant 5: each folder's direct counts equal what is stored beneath it.</summary>
-    internal const string VerifyDirectTotals = """
-        SELECT count(*) FROM folder_obs o
-        WHERE o.snapshot_id = $snapshot_id AND (
-             o.direct_files <> (SELECT count(*) FROM file_obs f WHERE f.snapshot_id = o.snapshot_id AND f.folder_path_id = o.path_id)
-          OR o.direct_bytes <> (SELECT coalesce(sum(f.size_bytes), 0) FROM file_obs f WHERE f.snapshot_id = o.snapshot_id AND f.folder_path_id = o.path_id)
-          OR o.direct_subfolders <> (SELECT count(*) FROM folder_path cp JOIN folder_obs c ON c.snapshot_id = o.snapshot_id AND c.path_id = cp.path_id
-                                     WHERE cp.source_id = $source_id AND cp.parent_path_id = o.path_id))
         """;
 
     /// <summary>Invariant 6: what the data actually holds. Returns (files, bytes, folders).</summary>

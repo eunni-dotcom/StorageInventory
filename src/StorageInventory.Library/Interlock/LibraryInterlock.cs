@@ -357,6 +357,16 @@ internal sealed class LibraryInterlock
 
     /// <summary>The OBS-15 check for a mutation lease: current, of one of the named kinds. A failure refuses the operation
     /// BEFORE any I/O, enters Faulted (once) and throws; it never returns false. Runs inside the monitor and does no I/O.</summary>
+    internal void Require(MutationLease lease, string operation, string detail, MutationKind[] allowed)
+    {
+        // the hot path (every statement of an import): check under the monitor and compose the words only on failure
+        lock (_monitor)
+        {
+            if (CheckLocked(lease, allowed) is null) return;
+        }
+        Require(lease, operation + ": " + detail, allowed);
+    }
+
     internal void Require(MutationLease lease, string operation, params MutationKind[] allowed)
     {
         InterlockSnapshot? changed = null;

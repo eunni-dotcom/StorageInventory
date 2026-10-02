@@ -45,7 +45,7 @@ public static class LibrarySecurityAuditTests
                 foreach (Match m in Regex.Matches(code, @"CommandText\s*=\s*([^;]*);"))
                 {
                     var value = m.Groups[1].Value.Trim();
-                    if (!Regex.IsMatch(value, @"^(sql|setSql|getSql|[A-Za-z]+Sql\.[A-Za-z]+)$")) violations.Add($"{file}: command text assigned from '{value}' (must be a Sql constant or a forwarded SQL parameter)");
+                    if (!Regex.IsMatch(value, @"^(sql|setSql|getSql|[A-Za-z]+Sql.[A-Za-z0-9]+)$")) violations.Add($"{file}: command text assigned from '{value}' (must be a Sql constant or a forwarded SQL parameter)");
                 }
                 // a pragma helper forwards its two SQL parameters, so each call names two OpenSql constants
                 foreach (Match m in Regex.Matches(code, @"\bSetAndReadBack\(([^;]*)\)\s*;"))
@@ -53,14 +53,15 @@ public static class LibrarySecurityAuditTests
                     if (Regex.Matches(m.Groups[1].Value, @"\bOpenSql\.[A-Za-z]+").Count != 2 && !Regex.IsMatch(m.Groups[1].Value, @"^\s*SqliteConnection connection, string setSql")) violations.Add($"{file}: SetAndReadBack({m.Groups[1].Value.Trim()}) does not pass two OpenSql constants");
                 }
                 // the SQL argument of every call that runs a statement is a Sql constant (or the forwarding parameter 'sql')
-                foreach (var (call, index) in new (string, int)[] { ("Prepare", 1), ("Scalar", 0), ("Rows", 0), ("Query", 0), ("Long", 0), ("PragmaText", 0) })
+                foreach (var (call, index) in new (string, int)[] { ("Prepare", 0), ("Scalar", 0), ("Rows", 0), ("Query", 0), ("Long", 0), ("PragmaText", 0) })
                 {
                     foreach (var callArguments in CallArguments(code, $".{call}("))
                     {
                         var arguments = SplitTopLevel(callArguments);
-                        if (arguments.Count <= index) continue;
-                        var argument = arguments[index].Trim();
-                        if (!Regex.IsMatch(argument, @"^(sql|[A-Za-z]+Sql\.[A-Za-z]+)$")) violations.Add($"{file}: .{call}({argument}...) does not pass a Sql constant");
+                        var offset = arguments.Count > 0 && arguments[0].Trim() == "lease" ? 1 : 0;   // the writer's methods take the lease first
+                        if (arguments.Count <= index + offset) continue;
+                        var argument = arguments[index + offset].Trim();
+                        if (!Regex.IsMatch(argument, @"^(sql|[A-Za-z]+Sql.[A-Za-z0-9]+)$")) violations.Add($"{file}: .{call}({argument}...) does not pass a Sql constant");
                     }
                 }
             }
@@ -651,6 +652,13 @@ public static class LibrarySecurityAuditTests
         }
         var violations = IlAudit.MutationViolations(model, _ => true, leased);
         Assert.Equal(0, violations.Count, string.Join(Environment.NewLine, violations));
+
+        // the engine's own API is a primitive too: only the writer's statement and connection types step or prepare a statement, and
+        // every one of their entry points takes the lease (so the rule is not vacuous for the hot path)
+        var steppers = model.Methods.Values.Where(m => m.Calls.Contains("SQLitePCL.raw::sqlite3_step") || m.Calls.Contains("SQLitePCL.raw::sqlite3_prepare_v2")).ToList();
+        Assert.True(steppers.Count >= 6, "the analysis sees the raw calls: " + string.Join(", ", steppers.Select(m => m.Key)));
+        Assert.True(steppers.All(m => m.Type is "StorageInventory.Library.WriterStatement" or "StorageInventory.Library.WriterConnection"), "only the writer's types step or prepare: " + string.Join(", ", steppers.Select(m => m.Key)));
+        Assert.True(steppers.Where(m => m.Name is not "Finish").All(m => m.TakesLease), "every such entry point takes a MutationLease: " + string.Join(", ", steppers.Where(m => !m.TakesLease).Select(m => m.Key)));
 
         // the primitives have exactly the callers the design says (a proof that the allow-list is narrow)
         string[] primitiveCallers = [.. model.Methods.Values.Where(m => m.Calls.Any(c => c is "System.IO.Directory::CreateDirectory" or "System.IO.File::Move" or "System.IO.FileStream::.ctor")).Select(m => m.Key).Order(StringComparer.Ordinal)];

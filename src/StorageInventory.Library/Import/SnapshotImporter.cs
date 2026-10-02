@@ -39,9 +39,11 @@ internal static class SnapshotImporter
         {
             writer.Begin(lease);
             var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, SampleJournal, cancellation, stopwatch);
+            var commitStart = Stopwatch.GetTimestamp();
             writer.Commit(lease);
+            var commit = Stopwatch.GetElapsedTime(commitStart);
             SampleJournal();
-            return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = peakJournal };
+            return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = peakJournal, Phases = result.Phases! with { Commit = commit } };
         }
         catch (Exception ex)
         {
@@ -110,22 +112,30 @@ internal static class SnapshotImporter
         var folderCount = rows.FolderCount;
         var pathIds = new long[folderCount];
         var depths = new int[folderCount];
+        var phase = Stopwatch.GetTimestamp();
         InsertFolders(writer, lease, rows, snapshotId, sourceId, names, pathIds, depths, counts, options, cancellation);
+        var foldersTime = Stopwatch.GetElapsedTime(phase);
 
         // IMP-03 step 4: files, visiting folders in path-id order and inserting each run in name-id order.
-        var extensions = new Dictionary<string, (long Files, long Bytes)>(StringComparer.Ordinal);
+        phase = Stopwatch.GetTimestamp();
+        var extensions = new ExtensionTotals();
         InsertFiles(writer, lease, rows, snapshotId, names, pathIds, extensions, counts, options, sampleJournal, cancellation);
+        var filesTime = Stopwatch.GetElapsedTime(phase);
 
         // IMP-03 step 5: error records. Step 6: the extension totals.
+        phase = Stopwatch.GetTimestamp();
         InsertErrors(writer, lease, rows, snapshotId, counts, cancellation);
         InsertExtensionTotals(writer, lease, snapshotId, extensions);
+        var errorsTime = Stopwatch.GetElapsedTime(phase);
         options?.AfterRows?.Invoke();
 
         // IMP-05: verification inside the transaction, before the final statements. Cancelling here rolls everything back (CAN-01d).
         cancellation.ThrowIfCancellationRequested();
         VerifyCounts(header, counts);
+        phase = Stopwatch.GetTimestamp();
         var failure = SnapshotVerifier.Verify(new WriterQueryRunner(writer, lease), snapshotId, sourceId, header.Files, header.Bytes, header.Folders, header.ScanErrors,
             header.Completion == ScanCompletionState.Complete);
+        var verificationTime = Stopwatch.GetElapsedTime(phase);
         if (failure is not null) throw new ImportException(CaptureFailureKind.InvariantViolation, "The snapshot failed its in-transaction verification: " + failure);
         writer.CheckCurrent(lease);
 
@@ -144,7 +154,8 @@ internal static class SnapshotImporter
             ExpectOneRow(advance.Set(0, snapshotId).ExecuteNonQuery(lease), "advance the snapshot sequence");
         }
 
-        return new ImportResult(snapshotId, sourceId, counts.Files, counts.Folders, counts.Errors, names.NewNames, stopwatch.Elapsed, 0);
+        return new ImportResult(snapshotId, sourceId, counts.Files, counts.Folders, counts.Errors, names.NewNames, stopwatch.Elapsed, 0,
+            new ImportPhases(foldersTime, filesTime, errorsTime, verificationTime, TimeSpan.Zero));
     }
 
     private static void ExpectOneRow(int changed, string what)
@@ -181,14 +192,14 @@ internal static class SnapshotImporter
             {
                 var volume = created.NewVolume ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A new local source needs a volume.");
                 using var insert = writer.Prepare(lease, ImportSql.InsertVolume, "$fs_type", "$serial64", "$serial32", "$confidence", "$display_name", "$last_label", "$last_capacity_bytes", "$now");
-                volumeId = Convert.ToInt64(insert.Set(0, volume.FsType).Set(1, volume.Serial64).Set(2, volume.Serial32).Set(3, StableCodes.ToCode(volume.Confidence))
-                    .Set(4, volume.DisplayName).Set(5, volume.LastLabel).Set(6, volume.CapacityBytes).Set(7, now).ExecuteScalar(lease));
+                volumeId = insert.Set(0, volume.FsType).Set(1, volume.Serial64).Set(2, volume.Serial32).Set(3, StableCodes.ToCode(volume.Confidence))
+                    .Set(4, volume.DisplayName).Set(5, volume.LastLabel).Set(6, volume.CapacityBytes).Set(7, now).ExecuteInsert(lease);
             }
         }
 
         using var source = writer.Prepare(lease, ImportSql.InsertSource, "$kind", "$volume_id", "$network_root", "$network_root_key", "$root_in_volume", "$confidence", "$basis", "$display_name", "$now");
-        return Convert.ToInt64(source.Set(0, StableCodes.ToCode(created.Kind)).Set(1, volumeId).Set(2, created.NetworkRoot).Set(3, created.NetworkRootKey).Set(4, created.RootInVolume)
-            .Set(5, StableCodes.ToCode(created.Confidence)).Set(6, StableCodes.ToCode(created.Basis)).Set(7, created.DisplayName).Set(8, now).ExecuteScalar(lease));
+        return source.Set(0, StableCodes.ToCode(created.Kind)).Set(1, volumeId).Set(2, created.NetworkRoot).Set(3, created.NetworkRootKey).Set(4, created.RootInVolume)
+            .Set(5, StableCodes.ToCode(created.Confidence)).Set(6, StableCodes.ToCode(created.Basis)).Set(7, created.DisplayName).Set(8, now).ExecuteInsert(lease);
     }
 
     private static void InsertSnapshotRow(WriterConnection writer, MutationLease lease, long snapshotId, long sourceId, AttemptRef attempt, ImportSnapshotHeader h)
@@ -229,7 +240,7 @@ internal static class SnapshotImporter
             var existing = select.Set(0, sourceId).Set(1, parent).Set(2, nameId).ExecuteScalar(lease);
             long pathId;
             if (existing is not null) pathId = Convert.ToInt64(existing);
-            else pathId = Convert.ToInt64(insertPath.Set(0, sourceId).Set(1, parent).Set(2, nameId).Set(3, depth).ExecuteScalar(lease));
+            else pathId = insertPath.Set(0, sourceId).Set(1, parent).Set(2, nameId).Set(3, depth).ExecuteInsert(lease);
             pathIds[expected] = pathId;
             depths[expected] = depth;
 
@@ -250,15 +261,45 @@ internal static class SnapshotImporter
     }
 
     private static void InsertFiles(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, NameCache names, long[] pathIds,
-        Dictionary<string, (long Files, long Bytes)> extensions, Counters counts, ImportOptions? options, Action sampleJournal, CancellationToken cancellation)
+        ExtensionTotals extensions, Counters counts, ImportOptions? options, Action sampleJournal, CancellationToken cancellation)
     {
         var order = new int[pathIds.Length];
         for (var i = 0; i < order.Length; i++) order[i] = i;
         var keys = (long[])pathIds.Clone();
         Array.Sort(keys, order);
 
-        using var insert = writer.Prepare(lease, ImportSql.InsertFileObs, "$snapshot_id", "$folder_path_id", "$name_id", "$seq", "$size_bytes", "$modified_utc", "$created_utc", "$accessed_utc", "$attributes");
+        using var single = writer.Prepare(lease, ImportSql.InsertFileObs, "$snapshot_id", "$folder_path_id", "$name_id", "$seq", "$size_bytes", "$modified_utc", "$created_utc", "$accessed_utc", "$attributes");
+        using var batch = writer.Prepare(lease, ImportSql.InsertFileObsBatch8);
+        const int BatchRows = 8;
+        var pending = new (long Folder, long Name, ImportFile File)[BatchRows];
+        var pendingCount = 0;
         var nextCheck = CheckInterval;
+
+        void Flush()
+        {
+            if (pendingCount == BatchRows)
+            {
+                for (var r = 0; r < BatchRows; r++)
+                {
+                    var o = r * 9;
+                    var (folder, name, file) = pending[r];
+                    batch.Set(o, snapshotId).Set(o + 1, folder).Set(o + 2, name).Set(o + 3, file.Seq).Set(o + 4, file.Size).Set(o + 5, file.ModifiedTicks)
+                        .Set(o + 6, file.CreatedTicks).Set(o + 7, file.AccessedTicks).Set(o + 8, file.Attributes);
+                }
+                batch.ExecuteNonQuery(lease);
+            }
+            else
+            {
+                for (var r = 0; r < pendingCount; r++)
+                {
+                    var (folder, name, file) = pending[r];
+                    single.Set(0, snapshotId).Set(1, folder).Set(2, name).Set(3, file.Seq).Set(4, file.Size).Set(5, file.ModifiedTicks).Set(6, file.CreatedTicks)
+                        .Set(7, file.AccessedTicks).Set(8, file.Attributes).ExecuteNonQuery(lease);
+                }
+            }
+            pendingCount = 0;
+        }
+
         foreach (var folderIndex in order)
         {
             var files = rows.FilesOfFolder(folderIndex);
@@ -275,11 +316,10 @@ internal static class SnapshotImporter
             for (var k = 0; k < sorted.Length; k++)
             {
                 var file = files[sorted[k]];
-                insert.Set(0, snapshotId).Set(1, pathId).Set(2, ids[k]).Set(3, file.Seq).Set(4, file.Size).Set(5, file.ModifiedTicks).Set(6, file.CreatedTicks)
-                    .Set(7, file.AccessedTicks).Set(8, file.Attributes).ExecuteNonQuery(lease);
-                var key = ExtensionKey(file.Name);
-                extensions[key] = extensions.TryGetValue(key, out var total) ? (total.Files + 1, total.Bytes + file.Size) : (1, file.Size);
+                pending[pendingCount++] = (pathId, ids[k], file);
+                extensions.Add(file.Name, file.Size);
                 counts.Files++;
+                if (pendingCount == BatchRows) Flush();
                 if (counts.Files >= nextCheck)
                 {
                     nextCheck += CheckInterval;
@@ -290,11 +330,46 @@ internal static class SnapshotImporter
                 }
             }
         }
+        Flush();
     }
 
-    /// <summary>The extension key of a file name (<c>ScanEngine.ExtensionOf</c>, lower-invariant), as the string the name's exact
-    /// UTF-16 code units spell (an unpaired surrogate is kept as it is, never replaced).</summary>
-    private static string ExtensionKey(byte[] name) => ScanEngine.ExtensionOf(Utf16.ToString(name)).ToLowerInvariant();
+    /// <summary>The per-extension file and byte totals of one snapshot (<c>snapshot_extension_total</c>). The key is
+    /// <c>ScanEngine.ExtensionOf(name)</c> lower-invariant, as v1's own rule. Spellings are cached by their exact code units, so
+    /// the common case (an extension seen before) allocates nothing; two spellings that lower to the same key share one total.</summary>
+    private sealed class ExtensionTotals
+    {
+        private sealed class Total
+        {
+            internal long Files;
+            internal long Bytes;
+        }
+
+        private readonly Dictionary<string, Total> _byKey = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Total> _bySpelling = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Total>.AlternateLookup<ReadOnlySpan<char>> _lookup;
+
+        internal ExtensionTotals() => _lookup = _bySpelling.GetAlternateLookup<ReadOnlySpan<char>>();
+
+        internal void Add(byte[] name, long size)
+        {
+            var chars = MemoryMarshal.Cast<byte, char>(name);
+            var dot = chars.LastIndexOf('.');
+            // the same rule as ScanEngine.ExtensionOf: from the last '.', unless the name ends with '.' (or has none)
+            var extension = dot >= 0 && dot < chars.Length - 1 ? chars[dot..] : [];
+            if (!_lookup.TryGetValue(extension, out var total))
+            {
+                var spelling = extension.ToString();
+                var key = ScanEngine.ExtensionOf(Utf16.ToString(name)).ToLowerInvariant();
+                if (!_byKey.TryGetValue(key, out total)) _byKey[key] = total = new Total();
+                _bySpelling[spelling] = total;
+            }
+            total.Files++;
+            total.Bytes += size;
+        }
+
+        internal IEnumerable<(string Key, long Files, long Bytes)> Ordered() =>
+            _byKey.OrderBy(e => e.Key, StringComparer.Ordinal).Select(e => (e.Key, e.Value.Files, e.Value.Bytes));
+    }
 
     private static void InsertErrors(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, Counters counts, CancellationToken cancellation)
     {
@@ -312,12 +387,12 @@ internal static class SnapshotImporter
         }
     }
 
-    private static void InsertExtensionTotals(WriterConnection writer, MutationLease lease, long snapshotId, Dictionary<string, (long Files, long Bytes)> extensions)
+    private static void InsertExtensionTotals(WriterConnection writer, MutationLease lease, long snapshotId, ExtensionTotals extensions)
     {
         using var insert = writer.Prepare(lease, ImportSql.InsertExtensionTotal, "$snapshot_id", "$extension_key", "$files", "$bytes");
-        foreach (var (key, total) in extensions.OrderBy(e => e.Key, StringComparer.Ordinal))
+        foreach (var (key, files, bytes) in extensions.Ordered())
         {
-            insert.Set(0, snapshotId).Set(1, Utf16.ToBytes(key)).Set(2, total.Files).Set(3, total.Bytes).ExecuteNonQuery(lease);
+            insert.Set(0, snapshotId).Set(1, Utf16.ToBytes(key)).Set(2, files).Set(3, bytes).ExecuteNonQuery(lease);
         }
     }
 
@@ -345,54 +420,85 @@ internal static class SnapshotImporter
     {
         private readonly WriterStatement _select;
         private readonly WriterStatement _insert;
+        private readonly WriterStatement _insertIfAbsent;
         private readonly MutationLease _lease;
-        private Dictionary<string, long> _young = new(StringComparer.Ordinal);
-        private Dictionary<string, long> _old = new(StringComparer.Ordinal);
+        private double _newRate = 0.25;   // a moving share of the cache misses that turned out to be NEW names
+        private Dictionary<byte[], long> _young = new(ByteArrayComparer.Instance);
+        private Dictionary<byte[], long> _old = new(ByteArrayComparer.Instance);
 
         internal NameCache(WriterConnection writer, MutationLease lease)
         {
             _lease = lease;
             _select = writer.Prepare(lease, ImportSql.SelectNameId, "$utf16");
             _insert = writer.Prepare(lease, ImportSql.InsertName, "$utf16");
+            _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsent, "$utf16");
         }
 
         internal long NewNames { get; private set; }
 
         internal long Intern(byte[] name)
         {
-            var key = Utf16.ToString(name);
-            if (_young.TryGetValue(key, out var id)) return id;
-            if (_old.TryGetValue(key, out id))
+            if (_young.TryGetValue(name, out var id)) return id;
+            if (_old.TryGetValue(name, out id))
             {
-                Remember(key, id);
+                Remember(name, id);
                 return id;
             }
-            var found = _select.Set(0, name).ExecuteScalar(_lease);
-            if (found is not null) id = Convert.ToInt64(found);
+            // A name that is not cached is either already in the dictionary (a later snapshot of a source: look it up) or new (the first
+            // snapshot of a source: insert it). The moving share of new names among the misses chooses the cheaper first statement:
+            // look-up-first costs a probe and, for a new name, an insert; insert-first costs one insert, and a probe more for an old name.
+            bool isNew;
+            if (_newRate > 0.5)
+            {
+                isNew = _insertIfAbsent.Set(0, name).ExecuteInsertIfAbsent(_lease, out id);
+                if (!isNew) id = LookUp(name);
+            }
             else
             {
-                id = Convert.ToInt64(_insert.Set(0, name).ExecuteScalar(_lease));
-                NewNames++;
+                var found = _select.Set(0, name).ExecuteScalar(_lease);
+                isNew = found is null;
+                id = isNew ? _insert.Set(0, name).ExecuteInsert(_lease) : (long)found!;
             }
-            Remember(key, id);
+            if (isNew) NewNames++;
+            _newRate = _newRate * 0.995 + (isNew ? 0.005 : 0);
+            Remember(name, id);
             return id;
         }
 
-        private void Remember(string key, long id)
+        private long LookUp(byte[] name) =>
+            (long?)_select.Set(0, name).ExecuteScalar(_lease) ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A name that conflicted on insert could not be found.");
+
+        private void Remember(byte[] name, long id)
         {
             if (_young.Count >= NameCacheCapacity / 2)
             {
                 _old = _young;
-                _young = new Dictionary<string, long>(StringComparer.Ordinal);
+                _young = new Dictionary<byte[], long>(ByteArrayComparer.Instance);
             }
-            _young[key] = id;
+            _young[name] = id;
         }
 
         public void Dispose()
         {
             _select.Dispose();
             _insert.Dispose();
+            _insertIfAbsent.Dispose();
         }
+    }
+}
+
+/// <summary>Content equality and hashing for exact name bytes (the cache's key), so that no string is made per lookup.</summary>
+internal sealed class ByteArrayComparer : IEqualityComparer<byte[]>
+{
+    internal static readonly ByteArrayComparer Instance = new();
+
+    public bool Equals(byte[]? x, byte[]? y) => x is not null && y is not null && x.AsSpan().SequenceEqual(y);
+
+    public int GetHashCode(byte[] value)
+    {
+        var hash = new HashCode();
+        hash.AddBytes(value);
+        return hash.ToHashCode();
     }
 }
 

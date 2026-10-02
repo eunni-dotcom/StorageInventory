@@ -9,25 +9,15 @@ internal interface IQueryRunner
 {
     object? Scalar(string sql, params (string Name, object? Value)[] parameters);
 
-    void Rows(string sql, Action<SqliteDataReader> each, params (string Name, object? Value)[] parameters);
+    void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters);
 }
 
 /// <summary>The writer's queries inside its transaction, guarded by the lease on every statement (OBS-15).</summary>
 internal sealed class WriterQueryRunner(WriterConnection writer, MutationLease lease) : IQueryRunner
 {
-    public object? Scalar(string sql, params (string Name, object? Value)[] parameters)
-    {
-        using var statement = writer.Prepare(lease, sql, [.. parameters.Select(p => p.Name)]);
-        for (var i = 0; i < parameters.Length; i++) statement.Set(i, parameters[i].Value);
-        return statement.ExecuteScalar(lease);
-    }
+    public object? Scalar(string sql, params (string Name, object? Value)[] parameters) => writer.Scalar(lease, sql, parameters);
 
-    public void Rows(string sql, Action<SqliteDataReader> each, params (string Name, object? Value)[] parameters)
-    {
-        using var statement = writer.Prepare(lease, sql, [.. parameters.Select(p => p.Name)]);
-        for (var i = 0; i < parameters.Length; i++) statement.Set(i, parameters[i].Value);
-        statement.ExecuteReader(lease, reader => { while (reader.Read()) each(reader); });
-    }
+    public void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters) => writer.Rows(lease, sql, each, parameters);
 }
 
 /// <summary>
@@ -51,7 +41,6 @@ internal static class SnapshotVerifier
 
         // 2: closure of paths and folders
         if (Count(q, ImportSql.VerifyFolderPathsOfSource, snapshotAndSource) != 0) return "invariant 2: a folder row does not refer to a folder path of this source";
-        if (Count(q, ImportSql.VerifyFileFolders, snapshot) != 0) return "invariant 2: a file row refers to a folder with no row in this snapshot";
 
         // 3: parent closure
         if (Count(q, ImportSql.VerifyParentClosure, snapshot) != 0) return "invariant 3: a folder has no listed, earlier parent in this snapshot";
@@ -60,8 +49,9 @@ internal static class SnapshotVerifier
         if (Count(q, ImportSql.VerifyFileNames, snapshot) != 0) return "invariant 4: a file name is not in the dictionary";
         if (Count(q, ImportSql.VerifyFolderNames, snapshot) != 0) return "invariant 4: a folder name is not in the dictionary";
 
-        // 5: per-folder direct totals
-        if (Count(q, ImportSql.VerifyDirectTotals, snapshotAndSource) != 0) return "invariant 5: a folder's direct counts differ from the rows stored beneath it";
+        // 2 (b) and 5: the files of every folder against the folders' recorded direct counts, by merging two ordered streams
+        var totalsProblem = CheckFolderTotals(q, snapshot);
+        if (totalsProblem is not null) return totalsProblem;
 
         // 6: sealed totals against the data, and the root's totals
         long measuredFiles = 0, measuredBytes = 0, measuredFolders = 0;
@@ -114,6 +104,53 @@ internal static class SnapshotVerifier
         }, ("$snapshot_id", snapshotId));
         if (!found) return "the snapshot row does not exist";
         return Verify(q, snapshotId, source, files, bytes, folders, errors, completeness == 0);
+    }
+
+    /// <summary>Invariants 2 (b) and 5 without a probe per folder: <c>file_obs</c> grouped by folder and <c>folder_obs</c> both arrive in
+    /// <c>path_id</c> order, so one pass over each is merged here, and the child counts come from one more pass. A folder that holds
+    /// files but has no folder row, or whose recorded direct files, bytes or subfolders differ from what is stored, fails.</summary>
+    private static string? CheckFolderTotals(IQueryRunner q, (string, object?)[] snapshot)
+    {
+        var children = new Dictionary<long, int>();
+        q.Rows(ImportSql.StreamFolderParents, r =>
+        {
+            var parent = r.GetInt64(0);
+            children[parent] = children.GetValueOrDefault(parent) + 1;
+        }, snapshot);
+
+        var groupFolder = new List<long>();
+        var groupFiles = new List<long>();
+        var groupBytes = new List<long>();
+        q.Rows(ImportSql.StreamFileFolderTotals, r =>
+        {
+            groupFolder.Add(r.GetInt64(0));
+            groupFiles.Add(r.GetInt64(1));
+            groupBytes.Add(r.GetInt64(2));
+        }, snapshot);
+
+        var next = 0;
+        string? problem = null;
+        q.Rows(ImportSql.StreamFolderDirects, r =>
+        {
+            if (problem is not null) return;
+            var path = r.GetInt64(0);
+            while (next < groupFolder.Count && groupFolder[next] < path)
+            {
+                problem = $"invariant 2: files are stored in folder {groupFolder[next]}, which has no row in this snapshot";
+                return;
+            }
+            long files = 0, bytes = 0;
+            if (next < groupFolder.Count && groupFolder[next] == path)
+            {
+                files = groupFiles[next];
+                bytes = groupBytes[next];
+                next++;
+            }
+            if (r.GetInt64(1) != files || r.GetInt64(2) != bytes) problem = $"invariant 5: folder {path} records {r.GetInt64(1)} files and {r.GetInt64(2)} bytes but holds {files} files and {bytes} bytes";
+            else if (r.GetInt64(3) != children.GetValueOrDefault(path)) problem = $"invariant 5: folder {path} records {r.GetInt64(3)} subfolders but has {children.GetValueOrDefault(path)}";
+        }, snapshot);
+        if (problem is null && next < groupFolder.Count) problem = $"invariant 2: files are stored in folder {groupFolder[next]}, which has no row in this snapshot";
+        return problem;
     }
 
     private static long Count(IQueryRunner q, string sql, (string, object?)[] parameters) =>

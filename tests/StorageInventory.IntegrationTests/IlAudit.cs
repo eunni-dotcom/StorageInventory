@@ -282,6 +282,8 @@ internal static class IlAudit
         "System.IO.FileStream::.ctor",
         "Microsoft.Data.Sqlite.SqliteConnection::Open",
         "Microsoft.Data.Sqlite.SqliteCommand::ExecuteNonQuery", "Microsoft.Data.Sqlite.SqliteCommand::ExecuteScalar", "Microsoft.Data.Sqlite.SqliteCommand::ExecuteReader",
+        // the engine's own API on the writer's handle (the hot-path statements): stepping or preparing a statement
+        "SQLitePCL.raw::sqlite3_step", "SQLitePCL.raw::sqlite3_prepare_v2", "SQLitePCL.raw::sqlite3_prepare_v3", "SQLitePCL.raw::sqlite3_exec",
     ];
 
     /// <summary>A-25 (d): read-only operations deliberately not covered. <c>ReaderConnection</c> only ever wraps a

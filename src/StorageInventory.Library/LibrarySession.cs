@@ -333,7 +333,7 @@ internal sealed class LibrarySession
                 if (userVersion > LibraryNames.SchemaVersion) return State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {userVersion}).");
                 if (userVersion != LibraryNames.SchemaVersion) return State(LibraryState.NotALibrary, LibraryReason.UnsupportedUserVersion, "The file has an unsupported schema version.");
                 var rows = new List<SchemaRow>();
-                q.Rows(OpenSql.SelectSchemaRows, r => rows.Add(new SchemaRow(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3))));
+                q.Rows(OpenSql.SelectSchemaRows, r => rows.Add(new SchemaRow(r.GetString(0), r.GetString(1), r.GetString(2), r.IsNull(3) ? null : r.GetString(3))));
                 var differences = LibrarySchema.Differences(rows);
                 if (differences.Count > 0) return State(LibraryState.NotALibrary, LibraryReason.SchemaFingerprint, "The Library does not have the expected structure: " + string.Join("; ", differences.Take(3)));
 
@@ -468,8 +468,8 @@ internal sealed class LibrarySession
             long id;
             using (var insert = writer.Prepare(lease, ImportSql.InsertAttempt, "$session_token", "$capture_token", "$source_id", "$root_path", "$report_folder", "$run_id", "$started_utc"))
             {
-                id = Convert.ToInt64(insert.Set(0, SessionToken).Set(1, start.CaptureToken).Set(2, start.SourceId).Set(3, start.RootPathAsEntered)
-                    .Set(4, start.ReportFolder).Set(5, start.RunId).Set(6, start.StartedUtcTicks).ExecuteScalar(lease));
+                id = insert.Set(0, SessionToken).Set(1, start.CaptureToken).Set(2, start.SourceId).Set(3, start.RootPathAsEntered)
+                    .Set(4, start.ReportFolder).Set(5, start.RunId).Set(6, start.StartedUtcTicks).ExecuteInsert(lease);
             }
             writer.Commit(lease);
             return new AttemptRef(id, start.CaptureToken);

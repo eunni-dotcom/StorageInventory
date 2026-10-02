@@ -111,7 +111,16 @@ internal sealed class ImportOptions
 /// <param name="NewNames">Names that were new to the dictionary.</param>
 /// <param name="Elapsed">Duration of the whole transaction, BEGIN to COMMIT.</param>
 /// <param name="PeakJournalBytes">The largest the rollback journal was seen while the transaction ran (sampled).</param>
-internal sealed record ImportResult(long SnapshotId, long SourceId, long Files, long Folders, long ScanErrors, long NewNames, TimeSpan Elapsed, long PeakJournalBytes);
+/// <param name="Phases">Where the transaction's time went.</param>
+internal sealed record ImportResult(long SnapshotId, long SourceId, long Files, long Folders, long ScanErrors, long NewNames, TimeSpan Elapsed, long PeakJournalBytes, ImportPhases? Phases = null);
+
+/// <summary>Where one import transaction spent its time (IMP-03 to IMP-06): interning and inserting folders, interning and inserting
+/// files (names included), the error records and extension totals, the in-transaction verification (IMP-05), and the commit.</summary>
+internal sealed record ImportPhases(TimeSpan Folders, TimeSpan Files, TimeSpan Errors, TimeSpan Verification, TimeSpan Commit)
+{
+    /// <summary>The row-insertion phases alone (names, folders, files, errors): the "import throughput" of PERF-01 without the verification.</summary>
+    internal TimeSpan Insertion => Folders + Files + Errors;
+}
 
 /// <summary>A failed import, classified for T-OUTCOME (SnapshotFailed, §9.4). The transaction has been rolled back.</summary>
 internal sealed class ImportException(CaptureFailureKind kind, string message, Exception? inner = null) : Exception(message, inner)

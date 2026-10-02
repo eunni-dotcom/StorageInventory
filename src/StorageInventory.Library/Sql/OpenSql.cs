@@ -31,8 +31,9 @@ internal static class OpenSql
     internal const string GetUserVersion = "PRAGMA user_version";
 
     // ---- LIB-08 steps 6 and 7 ----
-    /// <summary>Every row of <c>sqlite_schema</c>: the schema fingerprint is computed over these (SEC-17).</summary>
-    internal const string SelectSchemaRows = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
+    /// <summary>Every row of <c>sqlite_schema</c>: the schema fingerprint is computed over these (SEC-17). Unordered on purpose: the
+    /// fingerprint sorts them in .NET, so the query needs no temporary B-tree even over a hostile database (A-24).</summary>
+    internal const string SelectSchemaRows = "SELECT type, name, tbl_name, sql FROM sqlite_schema";
 
     /// <summary>Must be 0: every committed snapshot is Published (SCH-08 #0, D-47).</summary>
     internal const string CountUnpublishedSnapshots = "SELECT count(*) FROM snapshot WHERE state <> 2";

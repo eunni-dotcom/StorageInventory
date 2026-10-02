@@ -32,6 +32,9 @@ internal sealed class LibraryFaultInjection
     /// limit, so the engine itself fails with <c>SQLITE_FULL</c>. The only fixed-size value; there is no way to pass a number to SQL.</summary>
     internal bool LimitDatabaseToTwoThousandPages { get; init; }
 
+    /// <summary>The same with a 20,000-page limit (80 MiB), for the engine benchmark's rollback measurement.</summary>
+    internal bool LimitDatabaseToTwentyThousandPages { get; init; }
+
     /// <summary>Pretends the pinned engine is something else, so that the "unexpected SQLite engine" state can be forced
     /// deterministically (the real engine is the one shipped and cannot be swapped in a test).</summary>
     internal (string Version, string SourceId)? ExpectedEngine { get; init; }
@@ -220,6 +223,12 @@ internal sealed class WriterConnection : IDisposable
             limit.CommandText = FaultSql.LimitToTwoThousandPages;
             limit.ExecuteNonQuery();
         }
+        else if (_faults?.LimitDatabaseToTwentyThousandPages == true)
+        {
+            using var limit = _connection.CreateCommand();
+            limit.CommandText = FaultSql.LimitToTwentyThousandPages;
+            limit.ExecuteNonQuery();
+        }
     }
 
     /// <summary>The OBS-15 check, for the importer's row counter and any other long loop. Faults and throws when not current.</summary>
@@ -261,23 +270,53 @@ internal sealed class WriterConnection : IDisposable
         _inTransaction = false;
     }
 
-    /// <summary>Prepares a constant statement. <paramref name="sql"/> must be one of the <c>*Sql</c> constants (A-05).</summary>
+    /// <summary>Prepares a constant statement. <paramref name="sql"/> must be one of the <c>*Sql</c> constants (A-05). Hot-path statements
+    /// run through SQLitePCLRaw's managed API on the connection's own handle rather than through <c>SqliteCommand</c>: the
+    /// ADO.NET layer costs several microseconds per execution, which TEST-P1 measured as the bottleneck of a multi-million-row
+    /// import (PERF-01). The SQL, the bound parameters, the lease check and the error classification are the same.</summary>
     internal WriterStatement Prepare(MutationLease lease, string sql, params string[] parameterNames)
     {
         Guard(lease, "prepare a statement");
-        var command = _connection.CreateCommand();
-        command.CommandText = sql;
-        var parameters = new SqliteParameter[parameterNames.Length];
+        var db = _connection.Handle ?? throw new InvalidOperationException("The writer connection is not open.");
+        var rc = raw.sqlite3_prepare_v2(db, sql, out var statement);
+        if (rc != raw.SQLITE_OK) throw WriterStatement.Error(db, rc);
+        // no names: positional parameters (?), bound by position 1..n (the batched statements)
+        var indexes = new int[parameterNames.Length == 0 ? raw.sqlite3_bind_parameter_count(statement) : parameterNames.Length];
         for (var i = 0; i < parameterNames.Length; i++)
         {
-            parameters[i] = command.CreateParameter();
-            parameters[i].ParameterName = parameterNames[i];
-            command.Parameters.Add(parameters[i]);
+            indexes[i] = raw.sqlite3_bind_parameter_index(statement, parameterNames[i]);
+            if (indexes[i] == 0)
+            {
+                statement.Dispose();
+                throw new InvalidOperationException($"The statement has no parameter {parameterNames[i]}.");
+            }
         }
-        return new WriterStatement(command, parameters, this);
+        if (parameterNames.Length == 0) for (var i = 0; i < indexes.Length; i++) indexes[i] = i + 1;
+        return new WriterStatement(db, statement, indexes, this);
     }
 
-    internal void Guard(MutationLease lease, string what) => lease.Owner?.Require(lease, $"{_operation}: {what}", _allowed);
+    /// <summary>Runs a constant query on the writer and returns its first value (used inside a transaction for the checks, which
+    /// must see the transaction's own uncommitted rows). The lease is checked first.</summary>
+    internal object? Scalar(MutationLease lease, string sql, params (string Name, object? Value)[] parameters)
+    {
+        Guard(lease, "query");
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        var result = command.ExecuteScalar();
+        return result is DBNull ? null : result;
+    }
+
+    /// <summary>Runs a constant query on the writer and passes each row to <paramref name="each"/>, through the engine's own API (the
+    /// verification streams millions of rows). The lease is checked first.</summary>
+    internal void Rows(MutationLease lease, string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters)
+    {
+        using var statement = Prepare(lease, sql, [.. parameters.Select(p => p.Name)]);
+        for (var i = 0; i < parameters.Length; i++) statement.Set(i, parameters[i].Value);
+        statement.ExecuteRows(lease, each);
+    }
+
+    internal void Guard(MutationLease lease, string what) => lease.Owner?.Require(lease, _operation, what, _allowed);
 
     /// <summary>Sets a pragma from its constant and asserts it by reading it back (A-22).</summary>
     private static void SetAndReadBack(SqliteConnection connection, string setSql, string getSql, string expected, string name)
@@ -315,55 +354,169 @@ internal sealed class WriterConnection : IDisposable
     }
 }
 
-/// <summary>A prepared constant statement on the writer. Executing it needs a current lease of an allowed kind (OBS-15).</summary>
+/// <summary>A prepared constant statement on the writer, executed through SQLitePCLRaw's managed API on the connection's handle.
+/// Executing it needs a current lease of an allowed kind, checked before the statement runs (OBS-15). Values are bound by type:
+/// nothing is ever spliced into the SQL text (SEC-04), and an empty byte array is an empty BLOB, never NULL.</summary>
 internal sealed class WriterStatement : IDisposable
 {
-    private readonly SqliteCommand _command;
-    private readonly SqliteParameter[] _parameters;
+    private readonly sqlite3 _db;
+    private readonly sqlite3_stmt _statement;
+    private readonly int[] _indexes;
     private readonly WriterConnection _owner;
 
-    internal WriterStatement(SqliteCommand command, SqliteParameter[] parameters, WriterConnection owner)
+    internal WriterStatement(sqlite3 db, sqlite3_stmt statement, int[] indexes, WriterConnection owner)
     {
-        _command = command;
-        _parameters = parameters;
+        _db = db;
+        _statement = statement;
+        _indexes = indexes;
         _owner = owner;
     }
 
-    /// <summary>Binds a value by position. Always a bound parameter: nothing is ever spliced into the SQL text (SEC-04).</summary>
+    /// <summary>The engine's own error as a <see cref="SqliteException"/>, so that classification (<c>LibraryDatabase.Classify</c>)
+    /// is the same whichever API ran the statement.</summary>
+    internal static SqliteException Error(sqlite3 db, int resultCode) =>
+        new(raw.sqlite3_errmsg(db).utf8_to_string(), resultCode, raw.sqlite3_extended_errcode(db));
+
+    internal WriterStatement Set(int index, long value) => Check(raw.sqlite3_bind_int64(_statement, _indexes[index], value));
+
+    internal WriterStatement Set(int index, long? value) => value is { } v ? Set(index, v) : Check(raw.sqlite3_bind_null(_statement, _indexes[index]));
+
+    internal WriterStatement Set(int index, byte[]? value) =>
+        value is null ? Check(raw.sqlite3_bind_null(_statement, _indexes[index]))
+        : Check(value.Length == 0 ? raw.sqlite3_bind_zeroblob(_statement, _indexes[index], 0) : raw.sqlite3_bind_blob(_statement, _indexes[index], value));
+
+    internal WriterStatement Set(int index, string? value) =>
+        value is null ? Check(raw.sqlite3_bind_null(_statement, _indexes[index])) : Check(raw.sqlite3_bind_text(_statement, _indexes[index], value));
+
+    private WriterStatement Check(int rc)
+    {
+        if (rc != raw.SQLITE_OK) throw Error(_db, rc);
+        return this;
+    }
+
+    /// <summary>Binds a value by position.</summary>
     internal WriterStatement Set(int index, object? value)
     {
-        _parameters[index].Value = value ?? DBNull.Value;
+        var position = _indexes[index];
+        int rc;
+        switch (value)
+        {
+            case null:
+            case DBNull:
+                rc = raw.sqlite3_bind_null(_statement, position);
+                break;
+            case long l:
+                rc = raw.sqlite3_bind_int64(_statement, position, l);
+                break;
+            case int i:
+                rc = raw.sqlite3_bind_int64(_statement, position, i);
+                break;
+            case byte[] bytes:
+                rc = bytes.Length == 0 ? raw.sqlite3_bind_zeroblob(_statement, position, 0) : raw.sqlite3_bind_blob(_statement, position, bytes);
+                break;
+            case string text:
+                rc = raw.sqlite3_bind_text(_statement, position, text);
+                break;
+            case bool flag:
+                rc = raw.sqlite3_bind_int64(_statement, position, flag ? 1 : 0);
+                break;
+            default:
+                throw new ArgumentException($"A value of type {value.GetType().Name} cannot be bound.", nameof(value));
+        }
+        if (rc != raw.SQLITE_OK) throw Error(_db, rc);
         return this;
     }
 
     internal int ExecuteNonQuery(MutationLease lease) => ExecuteNonQuery(lease, CancellationToken.None);
 
-    /// <summary>Executes the statement; cancelling the token interrupts it (<c>SqliteCommand.Cancel</c>), which rolls the
-    /// statement back and surfaces as <see cref="OperationCanceledException"/>.</summary>
+    /// <summary>Executes the statement to completion (a <c>RETURNING</c> statement's rows are consumed) and returns the rows it
+    /// changed; cancelling the token interrupts it (<c>sqlite3_interrupt</c>), which rolls the statement back and surfaces as
+    /// <see cref="OperationCanceledException"/>.</summary>
     internal int ExecuteNonQuery(MutationLease lease, CancellationToken cancellation)
     {
         _owner.Guard(lease, "execute");
-        using var registration = cancellation.CanBeCanceled ? cancellation.Register(_command.Cancel) : default;
-        try { return _command.ExecuteNonQuery(); }
-        catch (SqliteException) when (cancellation.IsCancellationRequested) { throw new OperationCanceledException(cancellation); }
+        using var registration = cancellation.CanBeCanceled ? cancellation.Register(static state => raw.sqlite3_interrupt((sqlite3)state!), _db) : default;
+        var rc = raw.sqlite3_step(_statement);
+        while (rc == raw.SQLITE_ROW) rc = raw.sqlite3_step(_statement);
+        return Finish(rc, cancellation) ? raw.sqlite3_changes(_db) : 0;
     }
 
+    /// <summary>Executes a constant query and passes each row to <paramref name="each"/>. The lease is checked once, before the first step.</summary>
+    internal void ExecuteRows(MutationLease lease, Action<IRowReader> each)
+    {
+        _owner.Guard(lease, "execute");
+        var reader = new RawRowReader(_statement);
+        var rc = raw.sqlite3_step(_statement);
+        while (rc == raw.SQLITE_ROW)
+        {
+            each(reader);
+            rc = raw.sqlite3_step(_statement);
+        }
+        Finish(rc, CancellationToken.None);
+    }
+
+    /// <summary>Executes an <c>INSERT ... ON CONFLICT DO NOTHING</c>: returns true and the new rowid when a row was inserted, false
+    /// (and no row) on a conflict.</summary>
+    internal bool ExecuteInsertIfAbsent(MutationLease lease, out long rowId)
+    {
+        _owner.Guard(lease, "execute");
+        var rc = raw.sqlite3_step(_statement);
+        while (rc == raw.SQLITE_ROW) rc = raw.sqlite3_step(_statement);
+        Finish(rc, CancellationToken.None);
+        var inserted = raw.sqlite3_changes(_db) == 1;
+        rowId = inserted ? raw.sqlite3_last_insert_rowid(_db) : 0;
+        return inserted;
+    }
+
+    /// <summary>Executes an <c>INSERT</c> and returns the rowid it created (<c>sqlite3_last_insert_rowid</c>).</summary>
+    internal long ExecuteInsert(MutationLease lease)
+    {
+        _owner.Guard(lease, "execute");
+        var rc = raw.sqlite3_step(_statement);
+        while (rc == raw.SQLITE_ROW) rc = raw.sqlite3_step(_statement);
+        Finish(rc, CancellationToken.None);
+        return raw.sqlite3_last_insert_rowid(_db);
+    }
+
+    /// <summary>Executes the statement and returns the first column of its first row (null when there is none), then runs it to
+    /// completion.</summary>
     internal object? ExecuteScalar(MutationLease lease)
     {
         _owner.Guard(lease, "execute");
-        var value = _command.ExecuteScalar();
-        return value is DBNull ? null : value;
+        var rc = raw.sqlite3_step(_statement);
+        object? result = null;
+        if (rc == raw.SQLITE_ROW)
+        {
+            result = raw.sqlite3_column_type(_statement, 0) switch
+            {
+                raw.SQLITE_INTEGER => raw.sqlite3_column_int64(_statement, 0),
+                raw.SQLITE_FLOAT => raw.sqlite3_column_double(_statement, 0),
+                raw.SQLITE_TEXT => raw.sqlite3_column_text(_statement, 0).utf8_to_string(),
+                raw.SQLITE_BLOB => raw.sqlite3_column_blob(_statement, 0).ToArray(),
+                _ => null,
+            };
+            rc = raw.sqlite3_step(_statement);
+            while (rc == raw.SQLITE_ROW) rc = raw.sqlite3_step(_statement);
+        }
+        Finish(rc, CancellationToken.None);
+        return result;
     }
 
-    /// <summary>Executes a constant SELECT and hands the reader to <paramref name="read"/>. The lease is checked first.</summary>
-    internal void ExecuteReader(MutationLease lease, Action<SqliteDataReader> read)
+    /// <summary>Resets the statement for reuse and turns a failure into an exception.</summary>
+    private bool Finish(int resultCode, CancellationToken cancellation)
     {
-        _owner.Guard(lease, "execute");
-        using var reader = _command.ExecuteReader();
-        read(reader);
+        if (resultCode == raw.SQLITE_DONE)
+        {
+            raw.sqlite3_reset(_statement);
+            return true;
+        }
+        var error = Error(_db, resultCode);
+        raw.sqlite3_reset(_statement);
+        if (cancellation.IsCancellationRequested) throw new OperationCanceledException(cancellation);
+        throw error;
     }
 
-    public void Dispose() => _command.Dispose();
+    public void Dispose() => _statement.Dispose();
 }
 
 /// <summary>A separate <c>Mode=ReadOnly</c> connection (CONC-05). It opens, reads and closes without writing any file (OBS-03, Q-21).</summary>
@@ -422,7 +575,7 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
         Rows(sql, reader =>
         {
             var row = new object?[reader.FieldCount];
-            for (var i = 0; i < row.Length; i++) row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            for (var i = 0; i < row.Length; i++) row[i] = reader.GetValue(i);
             rows.Add(row);
         }, parameters);
         return rows;
@@ -431,14 +584,15 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
     internal long Long(string sql, params (string Name, object? Value)[] parameters) => Convert.ToInt64(Scalar(sql, parameters) ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>Executes a constant query and passes each row to <paramref name="each"/>.</summary>
-    public void Rows(string sql, Action<SqliteDataReader> each, params (string Name, object? Value)[] parameters)
+    public void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters)
     {
         using var command = Build(sql, parameters);
         using var registration = Token.CanBeCanceled ? Token.Register(command.Cancel) : default;
         try
         {
             using var reader = command.ExecuteReader();
-            while (reader.Read()) each(reader);
+            var row = new AdoRowReader(reader);
+            while (reader.Read()) each(row);
         }
         catch (SqliteException) when (Token.IsCancellationRequested) { throw new OperationCanceledException(Token); }
     }
