@@ -75,6 +75,30 @@ host unpacks them on first run to **`%TEMP%\.net\StorageInventory\<hash>\`**, an
 A deployment that must avoid it can publish without `IncludeNativeLibrariesForSelfExtract`. That gives the exe plus a
 few native DLLs alongside it, at the cost of no longer being a single file.
 
+## v1.1 (C4): what the Inventory Library adds to the build
+
+Gate C4 adds the first third-party code to the product: the SQLite store behind the Inventory Library. The figures below were
+measured on the C4 branch (not a release: C4 ships no user-visible feature, and the v1.0.0 table above is unchanged).
+
+| Item | Value |
+|---|---|
+| New packages | Exactly four, all in `src\StorageInventory.Library` only, each `PrivateAssets="compile"`: `Microsoft.Data.Sqlite.Core` 10.0.12, `SQLitePCLRaw.core` 2.1.12, `SQLitePCLRaw.provider.e_sqlite3` 2.1.12, `SQLitePCLRaw.lib.e_sqlite3` 2.1.12 |
+| Packages downloaded by a restore from an empty cache | Six: those four and the two runtime packs. Nothing else (no `System.Memory`, no `SQLitePCLRaw.bundle_*`, no `SQLitePCLRaw.provider.dynamic_cdecl`) |
+| SQLite engine | 3.53.3, `sqlite_source_id()` `2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62`, asserted at start-up before any file is opened |
+| Native DLL | `e_sqlite3.dll`, 1,978,880 bytes, SHA-256 `B7385D722C83FB52142A00477A726723745916D22A555711EE89834C1111FB2E`; imports only `KERNEL32.dll` (statically linked C runtime) |
+| Native set of the publish output | The five WPF natives plus `e_sqlite3.dll`, extracted by the .NET host to `%TEMP%\.net\StorageInventory\<hash>\`, byte-identical to the package (`tests\smoke\Test-NativeFileSet.ps1`, also a CI step) |
+| Published exe | 133,620,553 bytes (+2,672,992 bytes over v1.0.0's 130,947,561), SHA-256 `4F781F962EF2268B81C0F5EE9619261085457CEF7CEA94AB1456D9B9DD684D58` |
+| Loading | The provider is set explicitly, once (`SQLite3Provider_e_sqlite3`), with no `Batteries_V2.Init()` and no native resolver. `tests\smoke\Invoke-NativeLoadExperiments.ps1` (18/18): the DLL loads from the extraction directory; a dummy and a byte-identical copy of `e_sqlite3.dll` planted beside the exe are not loaded; a deleted extraction is re-extracted; a planted `SQLitePCLRaw.batteries_v2.dll` is not loaded |
+
+**Lock policy.** Every project has a committed `packages.lock.json` (`RestorePackagesWithLockFile`, `RuntimeIdentifiers=win-x64`).
+`build.ps1 -Target Publish` restores and publishes with `RestoreLockedMode`; CI sets it for every restore (`CI=true`). A package
+or version that is not in the lock file fails with NU1004, and `nuget.config` source mapping lists exactly the six package ids.
+A change to a package version is a reviewed change to a lock file.
+
+**Reproducibility (Q-08, TEST-R1).** Three independent publishes gave the same SHA-256 above: two fresh clones of the C4 commit
+(each with an empty package cache, the SDK shared by junction) and the development tree. The hosted-runner build is recorded in
+[v1.1-c4-implementation-evidence.md](v1.1-c4-implementation-evidence.md).
+
 ## Smoke test
 
 `tests\smoke\Invoke-ReleaseSmokeTest.ps1` copies the exe **outside the repository**, starts it with **no

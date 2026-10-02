@@ -171,6 +171,8 @@ internal sealed class Child : IDisposable
             RedirectStandardError = true,
             RedirectStandardOutput = true,
         };
+        // started as "dotnet <dll>" (dotnet run, dotnet test): the child needs the same host and the same assembly
+        if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase)) info.ArgumentList.Add(System.Reflection.Assembly.GetEntryAssembly()!.Location);
         info.ArgumentList.Add("--child");
         info.ArgumentList.Add(scenario);
         foreach (var arg in args) info.ArgumentList.Add(arg);

@@ -67,7 +67,7 @@ try {
         'Build' { Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false' }
         'Test' {
             Invoke-Dotnet build $sln -c $Configuration '-nodeReuse:false'
-            foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.History.Tests', 'StorageInventory.IntegrationTests')) {
+            foreach ($testProject in @('StorageInventory.Core.Tests', 'StorageInventory.History.Tests', 'StorageInventory.Library.Tests', 'StorageInventory.IntegrationTests')) {
                 $dir = Join-Path $repo "tests\$testProject"
                 if (Test-Path -LiteralPath $dir) { Invoke-Dotnet run --no-build -c $Configuration --project $dir -- @TestArgs }
             }
