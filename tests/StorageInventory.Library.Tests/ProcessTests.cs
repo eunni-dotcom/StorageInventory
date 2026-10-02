@@ -47,6 +47,23 @@ public static class ProcessTests
     }
 
     [Test]
+    public static void A_second_process_gets_In_use_when_the_holder_opened_an_existing_Library()
+    {
+        // the holder does not create the lock file here: it opens the one a previous process left (the other lock-taking path)
+        var world = World.Create();
+        var first = world.CreatedSession();
+        LibraryStateTests.ImportOne(first, new SyntheticSnapshot(20));
+        first.TestOnlyShutdown();
+        using var owner = Child.Start(world, "hold", Args(world, Flag(world, "ready"), Flag(world, "stop"), "open"));
+        Assert.True(owner.WaitFor(Flag(world, "ready")).StartsWith("Available", StringComparison.Ordinal), "the holder opened the existing Library");
+        var b = world.NewSession();
+        Assert.Equal(LibraryState.InUse, b.RunStartupOpen().State, "the lock taken on an existing lock file excludes a second process");
+        b.TestOnlyShutdown();
+        File.WriteAllText(Flag(world, "stop"), "");
+        Assert.True(owner.WaitForExit());
+    }
+
+    [Test]
     public static void Two_processes_racing_to_create_the_Library_produce_exactly_one_Library_and_one_In_use_never_Leftover_files()
     {
         for (var round = 0; round < 6; round++)

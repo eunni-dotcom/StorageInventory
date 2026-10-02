@@ -90,6 +90,21 @@ public static class ReadsTests
     }));
 
     [Test]
+    public static void A_reader_connection_cannot_write_anything()
+    {
+        var world = World.Create();
+        var session = world.CreatedSession();
+        LibraryStateTests.ImportOne(session, new SyntheticSnapshot(10));
+        session.TestOnlyShutdown();
+        var reader = world.OpenedSession();
+        var before = world.ContentHashes();
+        Assert.Throws<Exception>(() => reader.Read(r => r.Query("CREATE TABLE intruder (a INTEGER)")));
+        Assert.Throws<Exception>(() => reader.Read(r => r.Query("UPDATE snapshot SET files = 0")));
+        Assert.SequenceEqual(before.OrderBy(p => p.Key).Select(p => p.Key + p.Value), world.ContentHashes().OrderBy(p => p.Key).Select(p => p.Key + p.Value), "nothing changed");
+        reader.TestOnlyShutdown();
+    }
+
+    [Test]
     public static void The_commit_generation_advances_with_every_commit_and_never_with_a_read()
     {
         var world = World.Create();

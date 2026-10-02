@@ -73,6 +73,39 @@ public static class LeaseValidityTests
     }
 
     [Test]
+    public static void A_stale_lease_of_the_same_kind_is_refused_while_a_newer_lease_is_current()
+    {
+        // a lease that ended is not revived by the next lease being of the same kind: only the id tells them apart (ids are never reused)
+        var world = World.Create();
+        var session = world.CreatedSession();
+        var stale = World.Lease(session, MutationKind.Delete);
+        stale.Dispose();
+        using var current = World.Lease(session, MutationKind.Delete);
+        Assert.True(session.Interlock.IsCurrent(current), "the new lease is current");
+        Assert.False(session.Interlock.IsCurrent(stale), "the old lease is not, although the interlock is Mutating(Delete) again");
+        RefusedBeforeIo(world, session, () => session.DeleteSnapshotAsync(stale, 1).GetAwaiter().GetResult(), true, "T-DELETE with the stale lease of an earlier Delete");
+        session.TestOnlyShutdown();
+    }
+
+    [Test]
+    public static void A_lease_of_another_session_is_refused_even_when_its_id_equals_the_current_one()
+    {
+        // two sessions that did the same things hold leases with the same id and kind: only the owner tells them apart
+        var worldA = World.Create("same-a");
+        var worldB = World.Create("same-b");
+        var a = worldA.CreatedSession();
+        var b = worldB.CreatedSession();
+        var foreign = World.Lease(a, MutationKind.Delete);
+        using var own = World.Lease(b, MutationKind.Delete);
+        Assert.Equal(own.Id, foreign.Id, "the premise: equal ids");
+        Assert.False(b.Interlock.IsCurrent(foreign), "B's interlock does not accept A's lease");
+        RefusedBeforeIo(worldB, b, () => b.DeleteSnapshotAsync(foreign, 1).GetAwaiter().GetResult(), true, "B's T-DELETE with A's lease of the same id");
+        foreign.Dispose();
+        a.TestOnlyShutdown();
+        b.TestOnlyShutdown();
+    }
+
+    [Test]
     public static void A_best_effort_T_OUTCOME_continuation_after_its_Save_lease_ended_is_refused()
     {
         var world = World.Create();
