@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- History (D-41): pure, package-free semantics. In v1.1 C3 it holds only the identity matching rules (§7). It has no
+  <!-- History (D-41): pure, package-free semantics. In v1.1 C3 it held only the identity matching rules (§7); C4 adds the Library path rules (§6.4). It has no
        UI, no database and no package reference; the SQLite adapter will live in StorageInventory.Library, never here (A-12).
        It references Core for the identity evidence types, which Core shares with it as internals (A-13). -->
   <PropertyGroup>
@@ -11,9 +11,12 @@
     <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
-  <!-- Nothing here is public in C3: the identity matching types stay internal until a later gate needs a wider surface. -->
+  <!-- Nothing here is public: the identity matching types and the Library path rules stay internal until a later gate needs a
+       wider surface. C4 adds the Library (which applies the path rules) and its tests as friends. -->
   <ItemGroup>
     <InternalsVisibleTo Include="StorageInventory.History.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.Library" />
+    <InternalsVisibleTo Include="StorageInventory.Library.Tests" />
     <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
   </ItemGroup>
 

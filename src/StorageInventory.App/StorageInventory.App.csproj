@@ -17,6 +17,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\StorageInventory.Core\StorageInventory.Core.csproj" />
+    <!-- BLD-01: the App receives the Library's RUNTIME assets (the SQLite managed assemblies and e_sqlite3.dll, which the single-file
+         publish bundles and extracts), but no compile-time access to SQLite: the Library's package references are
+         PrivateAssets="compile" (A-12). C4 wires nothing to the Library yet; that is C5. -->
+    <ProjectReference Include="..\StorageInventory.Library\StorageInventory.Library.csproj" />
   </ItemGroup>
 
   <!-- Self-contained publish: DisableTransitiveFrameworkReferenceDownloads (Directory.Build.props) stops the SDK from

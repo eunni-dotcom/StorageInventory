@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Library (D-33, D-41): the SQLite adapter. The ONLY first-party project that references the SQLite packages; Core and
+       History stay package-free and the App gets this project's RUNTIME assets only (PrivateAssets="compile" below), so no
+       other first-party assembly can compile against SQLite. No UI, no process, no network (A-12). Everything is internal in
+       C4: the App-facing surface arrives with the capture wiring in C5. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>StorageInventory.Library</RootNamespace>
+    <AssemblyName>StorageInventory.Library</AssemblyName>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <!-- The approved package set, exactly (ADR-001, §5.5, A-11): four IDs at exact versions, none floating, no bundle, and no
+       System.Memory (the .NET 10 SDK prunes it; if it ever appears in packages.lock.json that is a C4 stop condition). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.12" PrivateAssets="compile" />
+    <PackageReference Include="SQLitePCLRaw.core" Version="2.1.12" PrivateAssets="compile" />
+    <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="2.1.12" PrivateAssets="compile" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" PrivateAssets="compile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StorageInventory.Core\StorageInventory.Core.csproj" />
+    <ProjectReference Include="..\StorageInventory.History\StorageInventory.History.csproj" />
+  </ItemGroup>
+
+  <!-- Nothing here is public in C4; the test assemblies see the internals (and nothing else does). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="StorageInventory.Library.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

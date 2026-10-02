@@ -10,12 +10,14 @@
   </PropertyGroup>
 
   <!-- A-13: the only assemblies that may see Core's internals (the observer, spool and identity layers are not public).
-       The list grows to History, Library and their test projects exactly as those projects appear; v1.1 C3 adds History
-       and its tests. -->
+       From v1.1 C4 the list is exactly History, Library and the test projects: Core.Tests, History.Tests, Library.Tests and
+       IntegrationTests. -->
   <ItemGroup>
     <InternalsVisibleTo Include="StorageInventory.Core.Tests" />
     <InternalsVisibleTo Include="StorageInventory.History" />
     <InternalsVisibleTo Include="StorageInventory.History.Tests" />
+    <InternalsVisibleTo Include="StorageInventory.Library" />
+    <InternalsVisibleTo Include="StorageInventory.Library.Tests" />
     <InternalsVisibleTo Include="StorageInventory.IntegrationTests" />
   </ItemGroup>
 

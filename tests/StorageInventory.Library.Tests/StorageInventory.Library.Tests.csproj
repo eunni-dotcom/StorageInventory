@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tests of the Library (v1.1 C4): the interlock, leases, states, schema, import, deletion and the real-process and real-SQLite
+       behaviour on Windows. The project references the Library, so the SQLite packages' RUNTIME assets reach its output, but it
+       has no compile-time access to SQLite (PrivateAssets="compile"): the tests drive the Library's own internal API (through
+       InternalsVisibleTo) and read files and bytes directly. Child processes are this same executable. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>StorageInventory.Library.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\StorageInventory.Core\StorageInventory.Core.csproj" />
+    <ProjectReference Include="..\..\src\StorageInventory.History\StorageInventory.History.csproj" />
+    <ProjectReference Include="..\..\src\StorageInventory.Library\StorageInventory.Library.csproj" />
+  </ItemGroup>
+
+</Project>

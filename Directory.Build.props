@@ -18,10 +18,18 @@
     <Deterministic>true</Deterministic>
     <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))=/_/</PathMap>
 
-    <!-- No package references anywhere: everything builds offline with the SDK alone. The only packages ever
-         restored are Microsoft's runtime packs for a self-contained publish (see nuget.config). -->
+    <!-- Packages (v1.1 C4, ADR-001): exactly four, referenced only by src/StorageInventory.Library (see nuget.config, which
+         refuses everything else). Everything still builds offline once the packages are in the repo-local cache. -->
     <DisableImplicitNuGetFallbackFolder>true</DisableImplicitNuGetFallbackFolder>
     <!-- Don't pre-fetch runtime packs for frameworks we never use (e.g. ASP.NET Core) during a self-contained publish. -->
     <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+
+    <!-- BLD-02 / BLD-17: every project has a committed packages.lock.json (content hashes), and every project restores for the
+         plain target AND for win-x64, so a locked restore agrees with a locked "-r win-x64" publish (no NU1004, Q-12). A project
+         that restores no package gets a lock file with no package in it, which makes a stray dependency show up in review.
+         RestoreLockedMode is on in CI and in build.ps1 -Target Publish (which passes it explicitly). -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RestoreLockedMode Condition="'$(RestoreLockedMode)' == '' and '$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 </Project>
