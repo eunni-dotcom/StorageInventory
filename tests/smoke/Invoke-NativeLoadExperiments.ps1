@@ -56,6 +56,8 @@ try {
     $publish = Join-Path $Work 'publish'
     & $build -Target Dotnet -DotnetArgs @('publish', (Join-Path $repo 'tests\StorageInventory.Library.Tests\StorageInventory.Library.Tests.csproj'), '-c', 'Release', '-r', 'win-x64',
         '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=none', '-p:EnableSingleFileAnalyzer=false', '-o', $publish, '-nodeReuse:false') | Out-Null
+    # the control uses the plain (framework-dependent) build of the probe; a publish step before this script may have cleaned it
+    & $build -Target Dotnet -DotnetArgs @('build', (Join-Path $repo 'tests\StorageInventory.Library.Tests\StorageInventory.Library.Tests.csproj'), '-c', 'Release', '-nodeReuse:false') | Out-Null
     $decoyOut = Join-Path $Work 'decoy'
     & $build -Target Dotnet -DotnetArgs @('build', (Join-Path $repo 'tests\smoke\PlantedBatteries\PlantedBatteries.csproj'), '-c', 'Release', '-o', $decoyOut, '-nodeReuse:false') | Out-Null
     $decoy = Join-Path $decoyOut 'SQLitePCLRaw.batteries_v2.dll'

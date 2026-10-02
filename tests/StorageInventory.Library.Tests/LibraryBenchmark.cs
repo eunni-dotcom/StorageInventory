@@ -246,8 +246,10 @@ internal static class LibraryBenchmark
                 reopened.RunStartupOpen();
                 var snapshots = reopened.Read(r => r.Long("SELECT count(*) FROM snapshot"));
                 intact = snapshots == 3 && Enumerable.Range(1, 3).All(id => reopened.Read(r => SnapshotVerifier.VerifyPublished(r, id)) is null);
-                Console.WriteLine($"after the failure: {snapshots} snapshots, older snapshots intact: {intact}, database {dbAfter / 1048576.0:0.0} MB (was {dbBefore / 1048576.0:0.0} MB)");
                 reopened.TestOnlyShutdown();
+                // directory metadata on NTFS can lag a truncation: ask through a handle for the size the file really has now
+                using (var handle = new FileStream(main, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) dbAfter = handle.Length;
+                Console.WriteLine($"after the failure: {snapshots} snapshots, older snapshots intact: {intact}, database {dbAfter / 1048576.0:0.0} MB (was {dbBefore / 1048576.0:0.0} MB)");
             }
             else
             {
