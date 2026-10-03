@@ -12,8 +12,10 @@ public static class QueryPlanTests
 
     private static readonly string[] ObservationTables = ["file_obs", "folder_obs", "scan_error", "snapshot_extension_total"];
 
-    private static IEnumerable<(string Name, string Sql)> Statements() => typeof(OpenSql).Assembly.GetTypes()
-        .Where(t => t.Name.EndsWith("Sql", StringComparison.Ordinal) && t.IsAbstract && t.IsSealed && t.Namespace == "StorageInventory.Library")
+    /// <summary>Every DML statement of every <c>*Sql</c> class (C4-M13: not only static classes, so that a class that is not abstract and
+    /// sealed cannot hold statements the plan check does not see; <c>SqlCoverageTests</c> shows the set is complete).</summary>
+    internal static IEnumerable<(string Name, string Sql)> Statements() => typeof(OpenSql).Assembly.GetTypes()
+        .Where(t => t.Name.EndsWith("Sql", StringComparison.Ordinal) && t.Namespace == "StorageInventory.Library")
         .SelectMany(t => t.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Where(f => f.IsLiteral && f.FieldType == typeof(string))
             .Select(f => ($"{t.Name}.{f.Name}", ((string)f.GetRawConstantValue()!).Trim())))
         .Where(x => x.Item2.StartsWith("SELECT", StringComparison.Ordinal) || x.Item2.StartsWith("INSERT", StringComparison.Ordinal)
