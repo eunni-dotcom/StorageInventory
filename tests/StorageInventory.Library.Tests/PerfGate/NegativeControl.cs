@@ -25,7 +25,31 @@ internal static class NegativeControl
         ) STRICT
         """;
 
-    internal static string[] Ddl() => SchemaSql.CreateAll.Select(sql => sql == SchemaSql.CreateName ? GlobalName : sql).ToArray();
+    // the creation statements in the order LibrarySession.CreateDatabase runs them (the product keeps no list), the name table replaced
+    internal static string[] Ddl() =>
+    [
+
+        SchemaSql.SetApplicationId,
+        SchemaSql.SetUserVersion,
+        SchemaSql.CreateLibraryInfo,
+        SchemaSql.CreateVolume,
+        SchemaSql.CreateVolumeBySerial,
+        SchemaSql.CreateSource,
+        SchemaSql.CreateSourceLocalKey,
+        SchemaSql.CreateSourceNetworkKey,
+        SchemaSql.CreateScanAttempt,
+        SchemaSql.CreateScanAttemptBySource,
+        SchemaSql.CreateSnapshot,
+        SchemaSql.CreateSnapshotBySource,
+        GlobalName,
+        SchemaSql.CreateFolderPath,
+        SchemaSql.CreateFolderPathChild,
+        SchemaSql.CreateFolderPathRoot,
+        SchemaSql.CreateFolderObs,
+        SchemaSql.CreateFileObs,
+        SchemaSql.CreateScanError,
+        SchemaSql.CreateSnapshotExtensionTotal
+    ];
 
     private static DbCommand Command(DbConnection c, string sql, params (string Name, object? Value)[] parameters)
     {
