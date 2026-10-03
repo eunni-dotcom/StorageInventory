@@ -1,6 +1,12 @@
-# Library engine benchmark (v1.1 C4, TEST-P1, Q-07, Q-17)
+# Library engine benchmark of the blocked C4 implementation (v1.1 C4, TEST-P1, Q-07, Q-17)
 
-Raw per-run tables: [library-raw.md](library-raw.md) (written by `StorageInventory.Library.Tests.exe --benchmark all`; the console
+> **Historical record of the BLOCKED C4 implementation (`523260b`), kept unedited in substance.** The independent review
+> (`docs/v1.1-c4-review.md`) found that its figures measured an append-shaped special case (C4-B01) and that its statements of
+> PERF-01 and PERF-15 were not supported (C4-H02). It is superseded by `docs/benchmarks/library.md` (the repaired implementation,
+> measured by §15.4's method) and `docs/v1.1-c4-repair.md`. It was moved from `docs/benchmarks/library.md` / `library-raw.md` so
+> that the specification's output path names the repaired benchmark.
+
+Raw per-run tables: [library-c4-blocked-raw.md](library-c4-blocked-raw.md) (written by `StorageInventory.Library.Tests.exe --benchmark all`; the console
 log of the same run is the source of the phase timings quoted here).
 
 ## Method

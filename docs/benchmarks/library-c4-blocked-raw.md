@@ -1,3 +1,5 @@
+> Raw tables of the BLOCKED C4 implementation (moved from `library-raw.md`); see the banner of [library-c4-blocked.md](library-c4-blocked.md).
+
 | Run | File rows | Folder rows | Import (BEGIN to COMMIT) | File rows/s | Peak journal | Journal / snapshot growth | DB before | DB after | Growth per file row | Peak working set above the baseline |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | import 1M (run 1) | 999,111 | 250,000 | 7.85 s | 127,333 | 0.19 MB | 0.142% | 93.6 MB | 227.1 MB | 140.1 B | 121 MB |
