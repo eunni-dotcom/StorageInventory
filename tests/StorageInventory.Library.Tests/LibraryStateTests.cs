@@ -416,7 +416,8 @@ public static class LibraryStateTests
             CorruptPage(world.Main, root);
             var status = OpenAndRelease(world);
             AssertState(LibraryState.Damaged, status, "corrupt " + table);
-            Assert.True(status.Reason is LibraryReason.Corrupt or LibraryReason.NotPublishedSnapshot or LibraryReason.SchemaFingerprint, status.Reason);
+            Assert.Equal(LibraryReason.Corrupt, status.Reason, $"corrupt {table}: the engine's own corruption error, confirmed by quick_check (not a fingerprint or committed-state reason)");
+            Assert.True(File.Exists(world.Main) && File.Exists(world.Lock), "corrupt " + table + ": nothing was deleted");
         }
 
         // (c) a page of an observation table the open does not read: Available at open, Damaged at the first read that touches it
