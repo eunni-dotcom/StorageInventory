@@ -290,7 +290,7 @@ public static class LibrarySecurityAuditTests
         Console.WriteLine($"A-09: {provider.Count} P/Invoke declarations in SQLitePCLRaw.provider.e_sqlite3 (lib/net6.0-windows7.0), all into 'e_sqlite3', {distinct} distinct entry points");
         Assert.True(provider.Count > 100 && provider.All(p => p.Split('|')[1] == "e_sqlite3"), "every provider import targets the one module e_sqlite3");
         Assert.Equal(imports.Count, provider.Count, "no other approved assembly declares a native import");
-        Assert.Equal(150, provider.Count, "the provider's P/Invoke declarations, as measured in C4 (the specification's 164 was a count of the same module taken differently: see the evidence document)");
+        Assert.Equal(150, provider.Count, "the provider's P/Invoke declarations, as measured in C4 (the specification's 164 is a count of distinct sqlite3_ string tokens in the provider file, not of entry points: see docs/v1.1-c4-repair.md, section 5)");
         Assert.Equal(141, distinct, "distinct entry points");
     }
 
