@@ -1,94 +1,6 @@
-using System.Text.RegularExpressions;
 using StorageInventory.Testing;
 
 namespace StorageInventory.Library.Tests;
-
-/// <summary>A-26 as a helper: a directory watcher and a names-only listing taken at every interlock transition (through the
-/// interlock's test hook), so that every create, delete and rename in the Library directory is attributed to the interlock state
-/// in which it happened. Names in a directory index change at once; only sizes and times can lag, so listings use names only.</summary>
-internal sealed class SideFileAudit : IDisposable
-{
-    internal sealed record Transition(long Tick, InterlockSnapshot State, List<string> Names);
-
-    private readonly World _world;
-    private readonly FileSystemWatcher _watcher;
-    private readonly List<(long Tick, string Event)> _events = [];
-    private readonly object _lock = new();
-
-    internal List<Transition> Transitions { get; } = [];
-
-    internal SideFileAudit(World world, LibrarySession session)
-    {
-        _world = world;
-        _watcher = new FileSystemWatcher(world.AppData) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName, InternalBufferSize = 64 * 1024 };
-        void Record(string verb, string? name) { lock (_lock) _events.Add((Environment.TickCount64, verb + " " + Normalise(name))); }
-        _watcher.Created += (_, e) => Record("Created", e.Name);
-        _watcher.Deleted += (_, e) => Record("Deleted", e.Name);
-        _watcher.Renamed += (_, e) => Record("Renamed", Normalise(e.OldName) + " -> " + Normalise(e.Name));
-        _watcher.EnableRaisingEvents = true;
-        session.Interlock.TransitionHook = state =>
-        {
-            var tick = Environment.TickCount64;
-            lock (_lock) Transitions.Add(new Transition(tick, state, world.Names()));
-        };
-        // the construction state itself (OBS-14) is the first "transition"
-        lock (_lock) Transitions.Add(new Transition(Environment.TickCount64, session.Interlock.Snapshot, world.Names()));
-    }
-
-    private static string Normalise(string? name) => (name ?? "").Replace("Library\\", "", StringComparison.Ordinal);
-
-    /// <summary>Waits for the watcher to deliver what it has, then returns the events.</summary>
-    internal List<(long Tick, string Event)> Events(int settleMilliseconds = 400)
-    {
-        Thread.Sleep(settleMilliseconds);
-        lock (_lock) return [.. _events];
-    }
-
-    private static readonly Regex Allowed = new(
-        @"^(Created (Library|library\.lock|library\.sqlite3|library\.sqlite3-journal)|Deleted library\.sqlite3-journal|Renamed library\.(sqlite3|sqlite3-journal) -> library\.damaged-\d{8}_\d{6}-[0-9a-f]{6}\.sqlite3(-journal)?)$",
-        RegexOptions.CultureInvariant);
-
-    /// <summary>The A-26 rule: every event is one the product permits, and none happens while the interlock is Idle, Observing or
-    /// Faulted (judged both by the names-only listings at the transitions and by the watcher, with a margin for event delivery).</summary>
-    internal List<string> Violations(int idleMarginMilliseconds = 250)
-    {
-        var events = Events();
-        List<Transition> transitions;
-        lock (_lock) transitions = [.. Transitions];
-        var problems = new List<string>();
-        foreach (var (_, text) in events)
-        {
-            if (!Allowed.IsMatch(text)) problems.Add("an event the product never causes: " + text);
-        }
-        for (var i = 0; i < transitions.Count; i++)
-        {
-            var state = transitions[i].State;
-            var start = transitions[i].Tick;
-            var end = i + 1 < transitions.Count ? transitions[i + 1].Tick : long.MaxValue;
-            if (state.Kind is InterlockStateKind.Mutating) continue;
-            // names-only listing: nothing may appear or disappear between this transition and the next
-            if (i + 1 < transitions.Count && !transitions[i].Names.SequenceEqual(transitions[i + 1].Names))
-            {
-                problems.Add($"transition {i} ({state.Kind}): the names changed from [{string.Join(",", transitions[i].Names)}] to [{string.Join(",", transitions[i + 1].Names)}]");
-            }
-            foreach (var (tick, text) in events)
-            {
-                if (tick >= start + idleMarginMilliseconds && tick < end) problems.Add($"transition {i} ({state.Kind}): event during the window: {text}");
-            }
-        }
-        // A-23: the Library directory holds only the owned members
-        foreach (var name in _world.Names())
-        {
-            if (!(name is LibraryNames.LockFile or LibraryNames.MainFile or LibraryNames.JournalFile || name.StartsWith(LibraryNames.QuarantinePrefix, StringComparison.Ordinal)))
-            {
-                problems.Add("a file outside the owned set: " + name);
-            }
-        }
-        return problems;
-    }
-
-    public void Dispose() => _watcher.Dispose();
-}
 
 /// <summary>TEST-L4 (the owned file set after lifecycle scenarios, A-23), the lifecycle audit of A-26, TEST-L7 (a recovery that
 /// cannot complete) and the "pause inside every mutation kind" half of TEST-W2.</summary>
@@ -103,56 +15,49 @@ public static class LifecycleTests
         using var audit = new SideFileAudit(world, session);
 
         Assert.Equal(LibraryState.NotCreated, session.RunStartupOpen().State);
-        Thread.Sleep(300);   // Idle
 
         using (var create = World.Lease(session, MutationKind.Create))
         {
             Assert.Equal(LibraryState.Available, session.CreateLibrary(create).State);
         }
-        Thread.Sleep(300);   // Idle
 
         // a capture: Prepare (T0) → window (reads only) → Save (import, outcome) → Idle
         var captureId = session.NewCaptureId();
         var prepare = World.Lease(session, MutationKind.Prepare, captureId);
         var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes(@"D:\Media"), null, "audit", 1)).GetAwaiter().GetResult();
         var observation = prepare.HandOffToObservation();
-        for (var i = 0; i < 5; i++) session.Read(r => r.Long("SELECT count(*) FROM scan_attempt"));
-        Thread.Sleep(400);   // Observing
+        for (var i = 0; i < 5; i++) session.Read(r => r.Long("SELECT count(*) FROM scan_attempt"));   // judged like every other event: no margin is ignored
         var save = observation.HandOffToSave(out _);
         var snapshot = new SyntheticSnapshot(400);
         session.ImportSnapshotAsync(save, attempt, SyntheticSnapshot.NewSource(), snapshot.Header("audit"), snapshot).GetAwaiter().GetResult();
         save.Dispose();
-        Thread.Sleep(300);   // Idle
 
         // a rolled-back import: no event may leave the owned set
         var failing = new SyntheticSnapshot(100, mutation: SyntheticSnapshot.Mutation.WrongSealedFileCount);
         Assert.Throws<ImportException>(() => LibraryStateTests.ImportOne(session, failing, "audit-2", new ImportSourceSpec.Existing(1)));
-        Thread.Sleep(300);
 
         using (var delete = World.Lease(session, MutationKind.Delete))
         {
             session.DeleteSnapshotAsync(delete, 1).GetAwaiter().GetResult();
         }
-        Thread.Sleep(300);
 
         using (var aside = World.Lease(session, MutationKind.SetAside))
         {
             Assert.True(session.SetAsideAsync(aside).GetAwaiter().GetResult().Quarantine!.Complete);
         }
-        Thread.Sleep(300);
 
         using (var create = World.Lease(session, MutationKind.Create))
         {
             Assert.Equal(LibraryState.Available, session.CreateLibrary(create).State, "a new Library beside the set-aside files");
         }
-        Thread.Sleep(300);
 
         var events = audit.Events();
-        Console.WriteLine("A-26 events: " + string.Join("; ", events.Select(e => e.Event)));
-        Assert.True(events.Any(e => e.Event == "Created library.lock"), "the watcher works: the lock file's creation was seen");
-        Assert.True(events.Any(e => e.Event == "Created library.sqlite3"), "main file creation by LibraryStore");
-        Assert.True(events.Any(e => e.Event == "Created library.sqlite3-journal"), "the journal is created natively by SQLite at T-CREATE");
-        Assert.True(events.Any(e => e.Event.StartsWith("Renamed library.sqlite3 -> library.damaged-", StringComparison.Ordinal)), "the set-aside rename");
+        Console.WriteLine("A-26 events: " + string.Join("; ", events));
+        Assert.True(events.Any(e => e == "Created library.lock"), "the watcher works: the lock file's creation was seen");
+        Assert.True(events.Any(e => e == "Created library.sqlite3"), "main file creation by LibraryStore");
+        Assert.True(events.Any(e => e == "Created library.sqlite3-journal"), "the journal is created natively by SQLite at T-CREATE");
+        Assert.True(events.Any(e => e.StartsWith("Renamed library.sqlite3 -> library.damaged-", StringComparison.Ordinal)), "the set-aside rename");
+        Assert.True(audit.Transitions.Any(t => t.State.Kind == InterlockStateKind.Observing), "the audit saw the observation window");
         var problems = audit.Violations();
         Assert.Equal(0, problems.Count, string.Join(Environment.NewLine, problems));
         session.TestOnlyShutdown();
@@ -207,19 +112,97 @@ public static class LifecycleTests
     }
 
     [Test]
-    public static void The_side_file_audit_catches_a_planted_violation()
+    public static void The_side_file_audit_catches_a_planted_violation_in_every_state_with_no_margin()
     {
-        // negative self-test (A-21) of the A-26 helper: a file created while the interlock is Idle is reported
+        // negative self-test (A-21) of the A-26 helper, against the real watcher: an event nobody may cause, and an event whose NAME is
+        // allowed but whose STATE is not
+        foreach (var (name, plant, expected) in new (string, Action<World>, string)[]
+        {
+            ("a -wal file while Idle", w => File.WriteAllBytes(w.Member("library.sqlite3-wal"), [1]), "library.sqlite3-wal"),
+            ("a journal file created while Idle (an allowed name in a state that allows nothing)", w => File.WriteAllBytes(w.Journal, []), "library.sqlite3-journal"),
+        })
+        {
+            var world = World.Create();
+            Directory.CreateDirectory(world.LibraryDirectory);
+            var session = world.NewSession();
+            using var audit = new SideFileAudit(world, session);
+            session.RunStartupOpen();
+            plant(world);
+            var problems = audit.Violations();
+            Assert.True(problems.Any(p => p.Contains(expected, StringComparison.Ordinal)), $"{name}: caught: {string.Join("; ", problems)}");
+            session.TestOnlyShutdown();
+        }
+
+        // and during an Observing window, immediately: the five reads of a window are not in an ignored margin
+        {
+            var world = World.Create();
+            var session = world.CreatedSession();
+            using var audit = new SideFileAudit(world, session);
+            var captureId = session.NewCaptureId();
+            var prepare = World.Lease(session, MutationKind.Prepare, captureId);
+            var observation = prepare.HandOffToObservation();
+            File.WriteAllBytes(world.Member("stray.tmp"), [1]);   // inside the window, at once
+            observation.Dispose();
+            var problems = audit.Violations();
+            Assert.True(problems.Any(p => p.Contains("stray.tmp", StringComparison.Ordinal) && p.Contains("Observing", StringComparison.Ordinal)), "caught in the Observing segment: " + string.Join("; ", problems));
+            session.TestOnlyShutdown();
+        }
+    }
+
+    [Test]
+    public static void The_side_file_audit_judges_events_by_their_lease_kind()
+    {
+        // the rule as a pure function: violations the product cannot be made to commit are fed to it directly
+        InterlockSnapshot State(InterlockStateKind kind, MutationKind? mutation = null) => new(kind, mutation, 0, 1, "", 1);
+        List<string> Judge(MutationKind kind, params string[] events) =>
+            SideFileAudit.Evaluate(events, [new SideFileAudit.Transition(0, State(InterlockStateKind.Mutating, kind), [])], [], []);
+
+        Assert.Equal(0, Judge(MutationKind.Open, "Deleted library.sqlite3-journal").Count, "a hot journal rolled back while opening");
+        Assert.Equal(0, Judge(MutationKind.Prepare, "Deleted library.sqlite3-journal", "Created library.sqlite3-journal").Count, "LIB-07 step 4 opens an existing Library under the Prepare lease");
+        foreach (var kind in new[] { MutationKind.Save, MutationKind.Delete, MutationKind.SetAside })
+        {
+            Assert.Equal(1, Judge(kind, "Deleted library.sqlite3-journal").Count, $"a journal deleted inside a {kind} lease is a violation: SQLite deletes it only while opening a Library");
+        }
+        foreach (var kind in new[] { MutationKind.Open, MutationKind.Create, MutationKind.Prepare, MutationKind.Save, MutationKind.Delete })
+        {
+            Assert.Equal(1, Judge(kind, "Renamed library.sqlite3 -> library.damaged-20260101_000000-abcdef.sqlite3").Count, $"a rename inside a {kind} lease is a violation: only SetAside renames");
+        }
+        Assert.Equal(0, Judge(MutationKind.SetAside, "Renamed library.sqlite3 -> library.damaged-20260101_000000-abcdef.sqlite3", "Renamed library.sqlite3-journal -> library.damaged-20260101_000000-abcdef.sqlite3-journal",
+            "Renamed library.sqlite3-wal -> library.damaged-20260101_000000-abcdef.sqlite3-wal", "Renamed library.sqlite3-shm -> library.damaged-20260101_000000-abcdef.sqlite3-shm").Count, "set-aside renames all four members, -wal and -shm included");
+        Assert.Equal(1, Judge(MutationKind.SetAside, "Renamed library.sqlite3 -> somewhere-else.sqlite3").Count, "a rename to anything but library.damaged-*");
+        Assert.Equal(1, Judge(MutationKind.Save, "Created library.sqlite3").Count, "the main file is created only by creation");
+        Assert.Equal(1, Judge(MutationKind.Open, "Created Library").Count, "an open creates no directory");
+        Assert.Equal(1, Judge(MutationKind.SetAside, "Created library.sqlite3-journal").Count, "a set-aside opens no database");
+        Assert.Equal(1, Judge(MutationKind.Delete, "Deleted library.lock").Count, "the lock file is never deleted");
+        Assert.True(SideFileAudit.Evaluate([], [new SideFileAudit.Transition(0, State(InterlockStateKind.Idle), [])], ["the watcher lost events: buffer overflow"], []).Count == 1, "a watcher error is a violation: an audit that may have missed events proves nothing");
+        Assert.Equal(1, SideFileAudit.Evaluate(["Created library.lock"], [new SideFileAudit.Transition(0, State(InterlockStateKind.Faulted), [])], [], []).Count, "no event while Faulted");
+    }
+
+    [Test]
+    public static void A_set_aside_of_a_Library_with_wal_and_shm_files_renames_all_four_members_and_deletes_nothing()
+    {
         var world = World.Create();
-        Directory.CreateDirectory(world.LibraryDirectory);
+        world.CreatedSession().TestOnlyShutdown();
+        File.WriteAllBytes(world.Member(LibraryNames.WalFile), [1, 2, 3]);   // another program opened the file in WAL mode
+        File.WriteAllBytes(world.Member(LibraryNames.ShmFile), [4, 5, 6]);
         var session = world.NewSession();
         using var audit = new SideFileAudit(world, session);
-        session.RunStartupOpen();
-        Thread.Sleep(300);
-        File.WriteAllBytes(world.Member("library.sqlite3-wal"), [1]);   // an event nobody may cause
-        Thread.Sleep(300);
+        var status = session.RunStartupOpen();
+        Assert.Equal(LibraryState.NotALibrary, status.State, status.Message);
+        Assert.Equal(LibraryReason.WalOrShmPresent, status.Reason);
+        QuarantineResult? quarantine;
+        using (var aside = World.Lease(session, MutationKind.SetAside)) quarantine = session.SetAsideAsync(aside).GetAwaiter().GetResult().Quarantine;
+        Assert.True(quarantine!.Complete, quarantine.Failure ?? "complete");
+        Assert.Equal(4, quarantine.Moved.Count, "main, journal, -wal and -shm");
+        Assert.SequenceEqual(new[] { LibraryNames.MainFile, LibraryNames.JournalFile, LibraryNames.WalFile, LibraryNames.ShmFile }, quarantine.Moved, "the main file first, then the journal, wal and shm");
+        var names = world.Names();
+        Assert.Equal(5, names.Count, "the lock file and the four set-aside members: " + string.Join(", ", names));
+        Assert.Equal(3L, World.Length(world.Member(quarantine.Stem + LibraryNames.QuarantineWalSuffix)), "the -wal bytes are intact");
+        var events = audit.Events();
+        Assert.Equal(4, events.Count(e => e.StartsWith("Renamed ", StringComparison.Ordinal)), "four renames: " + string.Join("; ", events));
+        Assert.False(events.Any(e => e.StartsWith("Deleted ", StringComparison.Ordinal)), "nothing was deleted");
         var problems = audit.Violations();
-        Assert.True(problems.Any(p => p.Contains("library.sqlite3-wal", StringComparison.Ordinal)), "the planted -wal file was caught: " + string.Join("; ", problems));
+        Assert.Equal(0, problems.Count, string.Join(Environment.NewLine, problems));
         session.TestOnlyShutdown();
     }
 
@@ -237,9 +220,9 @@ public static class LifecycleTests
         var session = world.NewSession();
         using var audit = new SideFileAudit(world, session);
         Assert.Equal(LibraryState.Available, session.RunStartupOpen().State);
-        Thread.Sleep(300);
         var events = audit.Events();
-        Assert.True(events.Any(e => e.Event == "Deleted " + LibraryNames.JournalFile), "the hot journal was deleted by SQLite during the Open lease");
+        Assert.True(events.Any(e => e == "Deleted " + LibraryNames.JournalFile), "the hot journal was deleted by SQLite during the Open lease");
+        Assert.Equal(MutationKind.Open, audit.Transitions[0].State.Mutation, "and the start-up lease was an Open lease");
         var problems = audit.Violations();
         Assert.Equal(0, problems.Count, string.Join(Environment.NewLine, problems));
         session.TestOnlyShutdown();
