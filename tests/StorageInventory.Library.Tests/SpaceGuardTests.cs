@@ -125,7 +125,9 @@ public static class SpaceGuardTests
         var (world, session, sourceId) = WithOlderSnapshot();
         using var cancel = new CancellationTokenSource();
         var guard = new RecordingGuard((c, n) => { if (n == 2) cancel.Cancel(); return true; });
-        var snapshot = new SyntheticSnapshot(1500, seed: 2, label: "t");
+        // about 13,000 rows: BEGIN, three row checks, final. The guard cancels at the 2nd check; only the NEXT check's own look at the
+        // token can stop the import before the guard is asked again (the explicit check after the rows comes later)
+        var snapshot = new SyntheticSnapshot(2500, seed: 2, label: "t");
         var (failure, result, before, attemptBefore) = AttemptImport(world, session, snapshot, snapshot.Header("second"), "second", new ImportSourceSpec.Existing(sourceId), new ImportOptions { SpaceGuard = guard }, cancel.Token);
         Assert.Null(result);
         Assert.True(failure is OperationCanceledException, "a cancellation, not LibraryFull: " + failure);
