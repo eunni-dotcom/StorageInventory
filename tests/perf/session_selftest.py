@@ -897,7 +897,10 @@ def test_flow_negative_control():
               ev['budgets']['PERF-15 (a)']['outcome'] == 'TEST-P1 FAILED' and ev['budgets']['PERF-15 (a)']['blocksAcceptance'] and session['evaluation']['budgets']['PERF-15 (a)']['outcome'] == 'TEST-P1 FAILED', str(ev['budgets']['PERF-15 (a)']))
         check('M04: ...the outcome command says so and exits 1', outcome[0] == perf_session.EXIT_FAILED and 'TEST-P1 FAILED' in outcome[1], f'{outcome[0]} {outcome[1][-300:]}')
         check('M04: ...the report says so: status, PERF-15 (a) outcome, the control table and its verdict; it does not say complete or MET',
-              'TEST-P1 FAILED' in report and 'Status: **complete**' not in report and '| PERF-15 (a) | TEST-P1 FAILED' in report and '| new | 1 | PASS' in report, [l for l in report.splitlines() if 'Status' in l or 'PERF-15 (a) |' in l])
+              'TEST-P1 FAILED' in report and 'Status: **complete**' not in report and '| PERF-15 (a) | TEST-P1 FAILED' in report and '| new | 1 | PASS' in report
+              and '**TEST-P1 FAILED**: the new-source control PASSED' in report, [l for l in report.splitlines() if 'Status' in l or 'PERF-15 (a) |' in l])
+        att = {x['id']: x for x in perf_session.attempts(f.evidence)}
+        check('M04: ...and attempts lists the session as TEST-P1 FAILED, not complete', att.get('G1', {}).get('status', '').startswith('TEST-P1 FAILED'), str(att))
         check('M04: ...the control is persisted and never replaced by another control run: one attempt of the variant in the raw judgements and one control child',
               len([c for c in controls if c['variant'] == 'new']) == 1 and [c for c in f.control_calls if c[0] == 'new'] == [('new', 'control-new-a1')], str(f.control_calls))
         check('M04: ...a session whose checker is defective is invalidated by the rules: it can be superseded', f.declare('G2', supersedes='G1', reason='the negative control passed: the checker is defective')[0] == 0)
