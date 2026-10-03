@@ -1,0 +1,59 @@
+{
+ "cpu": {
+  "model": "12th Gen Intel(R) Core(TM) i7-1270P",
+  "packages": 1,
+  "cores": 12,
+  "logicalProcessorsWmi": 16
+ },
+ "ramBytes": 34010619904,
+ "os": {
+  "caption": "Microsoft Windows 11 Pro",
+  "version": "10.0.26200",
+  "build": "26200"
+ },
+ "volume": {
+  "fileSystem": "NTFS",
+  "clusterBytes": 4096,
+  "capacityBytes": 510986809344,
+  "freeBytes": 136756539392
+ },
+ "storage": {
+  "model": "SKHynix_HFS512GDE9X081N",
+  "busType": "NVMe",
+  "mediaType": "SSD",
+  "partitionStyle": "GPT"
+ },
+ "powerPlan": "Balanced",
+ "defender": {
+  "realTimeProtectionEnabled": true,
+  "antivirusEnabled": true,
+  "engineVersion": "1.1.26080.3",
+  "serviceVersion": "4.18.26080.4",
+  "antivirusSignatureVersion": "1.459.532.0"
+ },
+ "defenderExclusions": "unavailable: exclusions are not readable without elevation",
+ "logicalProcessors": 16,
+ "processorGroups": 1,
+ "powerSource": {
+  "source": "AC power",
+  "batteryPercent": 57,
+  "noBattery": false
+ },
+ "benchmarkDrive": "C:",
+ "python": "3.14.3",
+ "engine": {
+  "engine": "3.53.3",
+  "pageSize": 4096,
+  "importCacheKiB": 65536,
+  "generatorVersion": 4,
+  "runtime": "10.0.12"
+ },
+ "binary": {
+  "commit": "f2a5d2e3ffad3cd22269eaaeeabb09b98b206b06",
+  "dirty": false,
+  "outputHash": "392cc3625c05ef58592f494fbc11cb6e6dabe51d1987fe3ba66fd48b98a6008d",
+  "engine": "3.53.3"
+ },
+ "runtimeTuningVariablesRemoved": [],
+ "perProcessCountersSeeDefenderEngine": true
+}

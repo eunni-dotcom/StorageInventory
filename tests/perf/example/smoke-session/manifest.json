@@ -1,0 +1,185 @@
+{
+ "schema": 1,
+ "id": "20261003-110913-f2a5d2e3-nongate",
+ "declaredUtc": "2026-10-03T11:09:13.986687Z",
+ "declaredStartUtc": "2026-10-03T11:09:13.986740Z",
+ "gate": false,
+ "supersedes": null,
+ "reason": null,
+ "notGateBecause": [
+  "scale 0.025 (a scaled cell gates nothing)",
+  "not the whole matrix",
+  "2 rounds, not five",
+  "--no-load-validity"
+ ],
+ "binary": {
+  "commit": "f2a5d2e3ffad3cd22269eaaeeabb09b98b206b06",
+  "dirty": false,
+  "outputHash": "392cc3625c05ef58592f494fbc11cb6e6dabe51d1987fe3ba66fd48b98a6008d",
+  "engine": "3.53.3"
+ },
+ "scale": 0.025,
+ "generatorVersion": 4,
+ "cells": [
+  "F-2M-25-system",
+  "R-2M-25-system-1-05-05"
+ ],
+ "rounds": 2,
+ "runOrder": "round-robin: run 1 of every cell, then run 2, and so on",
+ "plannedRounds": [
+  {
+   "round": 1,
+   "cells": [
+    "F-2M-25-system",
+    "R-2M-25-system-1-05-05"
+   ]
+  },
+  {
+   "round": 2,
+   "cells": [
+    "F-2M-25-system",
+    "R-2M-25-system-1-05-05"
+   ]
+  }
+ ],
+ "blocksAfterRounds": [
+  "attribution",
+  "cancel:1",
+  "cancel:2",
+  "cancel:3",
+  "cancel:4",
+  "crash",
+  "cancel-after-final",
+  "delete",
+  "control"
+ ],
+ "kindsOfCell": {
+  "F-2M-25-system": [
+   "timed",
+   "attribution",
+   "cancel:1",
+   "cancel:2",
+   "cancel:3",
+   "cancel:4",
+   "crash",
+   "cancel-after-final",
+   "delete"
+  ],
+  "R-2M-25-system-1-05-05": [
+   "timed",
+   "attribution",
+   "cancel:1",
+   "cancel:2",
+   "cancel:3",
+   "cancel:4",
+   "crash"
+  ]
+ },
+ "loadValidity": false,
+ "quietCheck": {
+  "seconds": 60,
+  "collections": 120,
+  "meanMax": 5.0,
+  "p95Max": 15.0,
+  "when": "before the session and after every round and block"
+ },
+ "runRule": {
+  "meanMax": 10.0,
+  "p95Max": 25.0,
+  "window": "collections wholly inside the measured operation; none inside is INVALID"
+ },
+ "replacement": {
+  "maxExtraAttempts": 5,
+  "statistic": "median of the first five valid runs in run order, with minimum and maximum"
+ },
+ "plan": {
+  "cells": [
+   {
+    "id": "F-2M-25-system",
+    "label": "F(2M, 25%, system)",
+    "class": "Representative",
+    "statedClass": "Representative",
+    "nominal": {
+     "kind": "FirstSave",
+     "files": 2000000,
+     "d": 25,
+     "model": "system",
+     "rho": 0,
+     "delta": 0,
+     "alpha": 0,
+     "family": null,
+     "intoNewSource": false,
+     "familyRescan": false
+    },
+    "library": "L2",
+    "runFamily": "obj",
+    "targetFiles": 50000,
+    "prefillPerSnapshot": 50000,
+    "newSource": true,
+    "generatorParameters": "d=0.25;model=system",
+    "churn": 0,
+    "prefillKey": "g4-obj-50000-d-0.25_model-system_beta-13.501_omega-0.25-persource-bf2a5d2e3ffad-392cc3625c05ef58",
+    "budgets": {
+     "perf01": true,
+     "perf14Target": true,
+     "perf14StopSeconds": 67.5,
+     "perf15a": true,
+     "perf15cSeconds": 1.75,
+     "recovery": true
+    },
+    "kinds": [
+     "timed",
+     "attribution",
+     "cancel:1",
+     "cancel:2",
+     "cancel:3",
+     "cancel:4",
+     "crash"
+    ]
+   },
+   {
+    "id": "R-2M-25-system-1-05-05",
+    "label": "R(2M, 25%, system; 1%, 0.5%, 0.5%)",
+    "class": "Representative",
+    "statedClass": "Representative",
+    "nominal": {
+     "kind": "Rescan",
+     "files": 2000000,
+     "d": 25,
+     "model": "system",
+     "rho": 1,
+     "delta": 0.5,
+     "alpha": 0.5,
+     "family": null,
+     "intoNewSource": false,
+     "familyRescan": false
+    },
+    "library": "L2",
+    "runFamily": "objrescan",
+    "targetFiles": 50000,
+    "prefillPerSnapshot": 50000,
+    "newSource": false,
+    "generatorParameters": "d=0.25;model=system;rho=0.01;delta=0.005;alpha=0.005",
+    "churn": 0,
+    "prefillKey": "g4-obj-50000-d-0.25_model-system_beta-13.501_omega-0.25-persource-bf2a5d2e3ffad-392cc3625c05ef58",
+    "budgets": {
+     "perf01": true,
+     "perf14Target": true,
+     "perf14StopSeconds": 67.5,
+     "perf15a": true,
+     "perf15cSeconds": 1.75,
+     "recovery": true
+    },
+    "kinds": [
+     "timed",
+     "attribution",
+     "cancel:1",
+     "cancel:2",
+     "cancel:3",
+     "cancel:4",
+     "crash"
+    ]
+   }
+  ]
+ }
+}

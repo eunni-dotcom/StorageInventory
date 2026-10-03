@@ -1,0 +1,149 @@
+{
+ "verdict": "FAIL",
+ "reasons": [
+  "REMOTE pages 0, levels over the SHARED cap 2"
+ ],
+ "record": {
+  "label": "control-existing-a1",
+  "kind": "control"
+ },
+ "checker": {
+  "file": "journal_ranges.py (vendored, reference)",
+  "sha256": "df179422b1c4ba34edf86ee7228d41103fea1c94b9ea36fb4c67141dc847d0ef"
+ },
+ "details": {
+  "layout_declared": "global",
+  "new_source": false,
+  "database_pages": 1560,
+  "page_size": 4096,
+  "copy_change_counter": 3,
+  "target_source": 1,
+  "journal_bytes": 2622968,
+  "segments": 1,
+  "synced_segments": 0,
+  "integrity": {
+   "records": 639,
+   "checksum_failures": 0,
+   "repeats": 0,
+   "page_zero_or_beyond_original_size": 0,
+   "image_mismatch": 0
+  },
+  "dictionary_layout": "Library-wide (name only)",
+  "remote_pages": 0,
+  "levels_over_shared_cap": [
+   [
+    "sqlite_autoindex_name_1",
+    2,
+    609
+   ],
+   [
+    "sqlite_autoindex_name_1",
+    1,
+    15
+   ]
+  ],
+  "in_runs": {
+   "folder_path_child level 0": [
+    0,
+    0,
+    1
+   ],
+   "folder_path_root level 0": [
+    0,
+    0,
+    1
+   ],
+   "sqlite_autoindex_name_1 level 0": [
+    0,
+    0,
+    1
+   ],
+   "sqlite_autoindex_name_1 level 1": [
+    0,
+    14,
+    15
+   ],
+   "sqlite_autoindex_name_1 level 2": [
+    0,
+    610,
+    611
+   ]
+  },
+  "by_tree": {
+   "file_obs": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "1": {
+     "journalled": 2,
+     "ADJACENT": 1,
+     "IN": 1
+    },
+    "2": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "IN": 1
+    }
+   },
+   "name": {
+    "1": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "2": {
+     "journalled": 1,
+     "IN": 1
+    }
+   },
+   "page 1": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "scan_attempt": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "scan_attempt_by_source": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "snapshot": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "snapshot_by_source": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "sqlite_autoindex_name_1": {
+    "0": {
+     "journalled": 1,
+     "IN": 1,
+     "SHARED": 1
+    },
+    "1": {
+     "journalled": 15,
+     "IN": 15,
+     "SHARED": 15
+    },
+    "2": {
+     "journalled": 609,
+     "IN": 609,
+     "SHARED": 609
+    }
+   },
+   "sqlite_autoindex_snapshot_1": {
+    "-": {
+     "allowed": 1
+    }
+   }
+  },
+  "remote_examples": []
+ }
+}

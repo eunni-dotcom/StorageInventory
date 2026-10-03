@@ -1,0 +1,45 @@
+2026-10-03T11:09:14.610746Z session 20261003-110913-f2a5d2e3-nongate (not a gate session) started
+2026-10-03T11:09:23.138392Z building prefill g4-obj-50000-d-0.25_model-system_beta-13.501_omega-0.25-persource-bf2a5d2e3ffad-392cc3625c05ef58
+2026-10-03T11:09:26.970094Z warm-up of F-2M-25-system (logged, not recorded)
+2026-10-03T11:09:28.625622Z   warm-up: Published, 0.87 s, 57,506 rows/s (not recorded)
+2026-10-03T11:09:28.627727Z run F-2M-25-system-timed-a1-round1
+2026-10-03T11:09:30.601169Z   -> ok (53,037 rows/s, T-IMPORT 0.95 s)
+2026-10-03T11:09:30.603504Z run R-2M-25-system-1-05-05-timed-a1-round1
+2026-10-03T11:09:32.541089Z   -> ok (51,505 rows/s, T-IMPORT 0.98 s)
+2026-10-03T11:09:32.544591Z run F-2M-25-system-timed-a2-round2
+2026-10-03T11:09:34.292147Z   -> ok (62,864 rows/s, T-IMPORT 0.80 s)
+2026-10-03T11:09:34.293341Z run R-2M-25-system-1-05-05-timed-a2-round2
+2026-10-03T11:09:36.128200Z   -> ok (54,048 rows/s, T-IMPORT 0.93 s)
+2026-10-03T11:09:36.133026Z run F-2M-25-system-attribution-a1-block-attribution
+2026-10-03T11:09:44.620539Z   attribution PASS
+2026-10-03T11:09:44.627494Z   -> ok (attribution PASS)
+2026-10-03T11:09:44.628886Z run R-2M-25-system-1-05-05-attribution-a1-block-attribution
+2026-10-03T11:09:52.209709Z   attribution PASS
+2026-10-03T11:09:52.217217Z   -> ok (attribution PASS)
+2026-10-03T11:09:52.221573Z run F-2M-25-system-cancel1-a1-block-cancel1
+2026-10-03T11:09:54.203580Z   -> ok (cancel-to-return 0.034 s)
+2026-10-03T11:09:54.204930Z run R-2M-25-system-1-05-05-cancel1-a1-block-cancel1
+2026-10-03T11:09:56.283050Z   -> ok (cancel-to-return 0.027 s)
+2026-10-03T11:09:56.287578Z run F-2M-25-system-cancel2-a1-block-cancel2
+2026-10-03T11:09:58.133122Z   -> ok (cancel-to-return 0.012 s)
+2026-10-03T11:09:58.134528Z run R-2M-25-system-1-05-05-cancel2-a1-block-cancel2
+2026-10-03T11:10:00.136832Z   -> ok (cancel-to-return 0.012 s)
+2026-10-03T11:10:00.140841Z run F-2M-25-system-cancel3-a1-block-cancel3
+2026-10-03T11:10:02.440466Z   -> ok (cancel-to-return 0.010 s)
+2026-10-03T11:10:02.442194Z run R-2M-25-system-1-05-05-cancel3-a1-block-cancel3
+2026-10-03T11:10:04.973344Z   -> ok (cancel-to-return 0.014 s)
+2026-10-03T11:10:04.977293Z run F-2M-25-system-cancel4-a1-block-cancel4
+2026-10-03T11:10:07.089750Z   -> ok (cancel-to-return 0.008 s)
+2026-10-03T11:10:07.091130Z run R-2M-25-system-1-05-05-cancel4-a1-block-cancel4
+2026-10-03T11:10:09.211352Z   -> ok (cancel-to-return 0.014 s)
+2026-10-03T11:10:09.215073Z run F-2M-25-system-crash-a1-block-crash
+2026-10-03T11:10:12.023331Z   -> ok (recovery open 0.244 s)
+2026-10-03T11:10:12.024459Z run R-2M-25-system-1-05-05-crash-a1-block-crash
+2026-10-03T11:10:14.754594Z   -> ok (recovery open 0.210 s)
+2026-10-03T11:10:14.759758Z run F-2M-25-system-cancel-after-final-a1-block-cancel-after-final
+2026-10-03T11:10:16.339110Z   -> ok 
+2026-10-03T11:10:16.343380Z run F-2M-25-system-delete-a1-block-delete
+2026-10-03T11:10:18.124296Z   -> ok (69,960 rows/s, T-IMPORT 0.72 s)
+2026-10-03T11:10:18.126987Z negative control: the same check on a Library whose name index is keyed by the name alone
+2026-10-03T11:10:24.203904Z   control new attempt 1: FAIL
+2026-10-03T11:10:29.257480Z   control existing attempt 1: FAIL

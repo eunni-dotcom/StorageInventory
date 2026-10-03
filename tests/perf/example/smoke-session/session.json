@@ -1,0 +1,746 @@
+{
+ "schema": 1,
+ "id": "20261003-110913-f2a5d2e3-nongate",
+ "status": "complete",
+ "gate": false,
+ "manifest": "manifest.json",
+ "finishedUtc": "2026-10-03T11:10:29.288933Z",
+ "quietChecks": [
+  {
+   "name": "before the session",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after round1",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after round2",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-attribution",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-cancel1",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-cancel2",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-cancel3",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-cancel4",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-crash",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-cancel-after-final",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  },
+  {
+   "name": "after block-delete",
+   "skipped": true,
+   "reason": "--no-load-validity",
+   "verdict": "SKIPPED"
+  }
+ ],
+ "negativeControl": [
+  {
+   "variant": "new",
+   "attempt": 1,
+   "verdict": "FAIL",
+   "reasons": [
+    "REMOTE pages 625, levels over the SHARED cap 2"
+   ],
+   "runId": "control-new-a1",
+   "remotePages": 625,
+   "levelsOverSharedCap": 2
+  },
+  {
+   "variant": "existing",
+   "attempt": 1,
+   "verdict": "FAIL",
+   "reasons": [
+    "REMOTE pages 0, levels over the SHARED cap 2"
+   ],
+   "runId": "control-existing-a1",
+   "remotePages": 0,
+   "levelsOverSharedCap": 2
+  }
+ ],
+ "runs": [
+  {
+   "runId": "F-2M-25-system-timed-a1-round1",
+   "cell": "F-2M-25-system",
+   "kind": "timed",
+   "attempt": 1,
+   "round": "round1",
+   "order": 1,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.1020308,
+    "filesPerSecond": 53037.19701328845,
+    "importSeconds": 0.9468072,
+    "files": 50216,
+    "newNames": 13552,
+    "peakJournalBytes": 172880,
+    "peakWorkingSet": 68345856,
+    "libraryGrowthBytes": 5509120,
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true,
+     "intervalsOverAllowance": 0,
+     "largestIntervalOverAllowance": 0.0033959613762352373
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-timed-a1-round1",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "timed",
+   "attempt": 1,
+   "round": "round1",
+   "order": 2,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.0899426,
+    "filesPerSecond": 51504.62217297249,
+    "importSeconds": 0.9778734,
+    "files": 50365,
+    "newNames": 533,
+    "peakJournalBytes": 858248,
+    "peakWorkingSet": 68612096,
+    "libraryGrowthBytes": 3584000,
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true,
+     "intervalsOverAllowance": 0,
+     "largestIntervalOverAllowance": 0.007610372656064562
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-timed-a2-round2",
+   "cell": "F-2M-25-system",
+   "kind": "timed",
+   "attempt": 2,
+   "round": "round2",
+   "order": 3,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.0852277,
+    "filesPerSecond": 62863.564557898855,
+    "importSeconds": 0.7988093,
+    "files": 50216,
+    "newNames": 13552,
+    "peakJournalBytes": 172880,
+    "peakWorkingSet": 68677632,
+    "libraryGrowthBytes": 5509120,
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true,
+     "intervalsOverAllowance": 0,
+     "largestIntervalOverAllowance": 0.0033959613762352373
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-timed-a2-round2",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "timed",
+   "attempt": 2,
+   "round": "round2",
+   "order": 4,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.1114667,
+    "filesPerSecond": 54047.783541873105,
+    "importSeconds": 0.9318606,
+    "files": 50365,
+    "newNames": 533,
+    "peakJournalBytes": 858248,
+    "peakWorkingSet": 68956160,
+    "libraryGrowthBytes": 3584000,
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true,
+     "intervalsOverAllowance": 0,
+     "largestIntervalOverAllowance": 0.007610372656064562
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-attribution-a1-block-attribution",
+   "cell": "F-2M-25-system",
+   "kind": "attribution",
+   "attempt": 1,
+   "round": "block-attribution",
+   "order": 5,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.0911929,
+    "attribution": "PASS",
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-attribution-a1-block-attribution",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "attribution",
+   "attempt": 1,
+   "round": "block-attribution",
+   "order": 6,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.1136783,
+    "attribution": "PASS",
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true
+    }
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-cancel1-a1-block-cancel1",
+   "cell": "F-2M-25-system",
+   "kind": "cancel:1",
+   "attempt": 1,
+   "round": "block-cancel1",
+   "order": 7,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0339076,
+    "journalAtCancelBytes": 156464,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-cancel1-a1-block-cancel1",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "cancel:1",
+   "attempt": 1,
+   "round": "block-cancel1",
+   "order": 8,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0265131,
+    "journalAtCancelBytes": 837728,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-cancel2-a1-block-cancel2",
+   "cell": "F-2M-25-system",
+   "kind": "cancel:2",
+   "attempt": 1,
+   "round": "block-cancel2",
+   "order": 9,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.012497,
+    "journalAtCancelBytes": 160568,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-cancel2-a1-block-cancel2",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "cancel:2",
+   "attempt": 1,
+   "round": "block-cancel2",
+   "order": 10,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0123235,
+    "journalAtCancelBytes": 845936,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-cancel3-a1-block-cancel3",
+   "cell": "F-2M-25-system",
+   "kind": "cancel:3",
+   "attempt": 1,
+   "round": "block-cancel3",
+   "order": 11,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0101567,
+    "journalAtCancelBytes": 160568,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-cancel3-a1-block-cancel3",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "cancel:3",
+   "attempt": 1,
+   "round": "block-cancel3",
+   "order": 12,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.01439,
+    "journalAtCancelBytes": 845936,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-cancel4-a1-block-cancel4",
+   "cell": "F-2M-25-system",
+   "kind": "cancel:4",
+   "attempt": 1,
+   "round": "block-cancel4",
+   "order": 13,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0075804,
+    "journalAtCancelBytes": 160568,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-cancel4-a1-block-cancel4",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "cancel:4",
+   "attempt": 1,
+   "round": "block-cancel4",
+   "order": 14,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0,
+    "cancelSeconds": 0.0135617,
+    "journalAtCancelBytes": 845936,
+    "rowsAtCancel": 61444
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-crash-a1-block-crash",
+   "cell": "F-2M-25-system",
+   "kind": "crash",
+   "attempt": 1,
+   "round": "block-crash",
+   "order": 15,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "recoverySeconds": 0.2440473,
+    "hotJournalBytes": 160568
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "R-2M-25-system-1-05-05-crash-a1-block-crash",
+   "cell": "R-2M-25-system-1-05-05",
+   "kind": "crash",
+   "attempt": 1,
+   "round": "block-crash",
+   "order": 16,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "recoverySeconds": 0.210216,
+    "hotJournalBytes": 845936
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-cancel-after-final-a1-block-cancel-after-final",
+   "cell": "F-2M-25-system",
+   "kind": "cancel-after-final",
+   "attempt": 1,
+   "round": "block-cancel-after-final",
+   "order": 17,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.1083328,
+    "publishedAfterCancel": true
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  },
+  {
+   "runId": "F-2M-25-system-delete-a1-block-delete",
+   "cell": "F-2M-25-system",
+   "kind": "delete",
+   "attempt": 1,
+   "round": "block-delete",
+   "order": 18,
+   "status": "ok",
+   "reasons": [],
+   "metrics": {
+    "tokenGapSeconds": 0.0746317,
+    "filesPerSecond": 69960.45707238557,
+    "importSeconds": 0.7177769,
+    "files": 50216,
+    "newNames": 13552,
+    "peakJournalBytes": 172880,
+    "peakWorkingSet": 68280320,
+    "libraryGrowthBytes": 5509120,
+    "imp11": {
+     "checks": 17,
+     "commitEqualsFinalPending": true,
+     "intervalsOverAllowance": 0,
+     "largestIntervalOverAllowance": 0.0033959613762352373
+    },
+    "deleteSeconds": 0.0516033
+   },
+   "load": {
+    "verdict": "NOT ASSESSED",
+    "reason": "--no-load-validity"
+   }
+  }
+ ],
+ "evaluation": {
+  "cells": {
+   "F-2M-25-system": {
+    "class": "Representative",
+    "budgets": {
+     "PERF-01": [
+      "MISSED",
+      "median 57,950 rows/s is below the target 100,000"
+     ],
+     "PERF-14": [
+      "MET",
+      "median 0.9 s"
+     ],
+     "PERF-15 (a)": [
+      "MET",
+      "PASS"
+     ],
+     "PERF-15 (c) cancel": [
+      "MET",
+      "point 1 0.03 s; point 2 0.01 s; point 3 0.01 s; point 4 0.01 s"
+     ],
+     "PERF-16 engine part": [
+      "MET",
+      "the cancel figure against PERF-15 (c)'s 1.75 s (PERF-16: 2 s less 0.25 s reserved for C5)"
+     ],
+     "PERF-15 (c) recovery": [
+      "MET",
+      "start-up open 0.24 s"
+     ]
+    },
+    "timed": {
+     "valid": 2,
+     "attempts": 2,
+     "rowsPerSecond": {
+      "median": 57950.380785593654,
+      "min": 53037.19701328845,
+      "max": 62863.564557898855,
+      "values": [
+       53037.19701328845,
+       62863.564557898855
+      ],
+      "failed": false
+     },
+     "importSeconds": {
+      "median": 0.8728082500000001,
+      "min": 0.7988093,
+      "max": 0.9468072,
+      "values": [
+       0.9468072,
+       0.7988093
+      ],
+      "failed": false
+     }
+    },
+    "cancelSeconds": 0.0339076,
+    "recoverySeconds": 0.2440473
+   },
+   "R-2M-25-system-1-05-05": {
+    "class": "Representative",
+    "budgets": {
+     "PERF-01": [
+      "MISSED",
+      "median 52,776 rows/s is below the target 100,000"
+     ],
+     "PERF-14": [
+      "MET",
+      "median 1.0 s"
+     ],
+     "PERF-15 (a)": [
+      "MET",
+      "PASS"
+     ],
+     "PERF-15 (c) cancel": [
+      "MET",
+      "point 1 0.03 s; point 2 0.01 s; point 3 0.01 s; point 4 0.01 s"
+     ],
+     "PERF-16 engine part": [
+      "MET",
+      "the cancel figure against PERF-15 (c)'s 1.75 s (PERF-16: 2 s less 0.25 s reserved for C5)"
+     ],
+     "PERF-15 (c) recovery": [
+      "MET",
+      "start-up open 0.21 s"
+     ]
+    },
+    "timed": {
+     "valid": 2,
+     "attempts": 2,
+     "rowsPerSecond": {
+      "median": 52776.2028574228,
+      "min": 51504.62217297249,
+      "max": 54047.783541873105,
+      "values": [
+       51504.62217297249,
+       54047.783541873105
+      ],
+      "failed": false
+     },
+     "importSeconds": {
+      "median": 0.954867,
+      "min": 0.9318606,
+      "max": 0.9778734,
+      "values": [
+       0.9778734,
+       0.9318606
+      ],
+      "failed": false
+     }
+    },
+    "cancelSeconds": 0.0265131,
+    "recoverySeconds": 0.210216
+   }
+  },
+  "budgets": {
+   "PERF-01": {
+    "outcome": "NOT JUDGED",
+    "wouldBe": "MISSED",
+    "blocksAcceptance": false,
+    "cells": [
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-01",
+      "outcome": "MISSED",
+      "why": "median 57,950 rows/s is below the target 100,000"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-01",
+      "outcome": "MISSED",
+      "why": "median 52,776 rows/s is below the target 100,000"
+     }
+    ]
+   },
+   "PERF-14": {
+    "outcome": "NOT JUDGED",
+    "wouldBe": "MET",
+    "blocksAcceptance": false,
+    "cells": [
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-14",
+      "outcome": "MET",
+      "why": "median 0.9 s"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-14",
+      "outcome": "MET",
+      "why": "median 1.0 s"
+     }
+    ]
+   },
+   "PERF-15 (a)": {
+    "outcome": "NOT JUDGED",
+    "wouldBe": "MET",
+    "blocksAcceptance": false,
+    "cells": [
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-15 (a)",
+      "outcome": "MET",
+      "why": "PASS"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-15 (a)",
+      "outcome": "MET",
+      "why": "PASS"
+     }
+    ]
+   },
+   "PERF-15 (c)": {
+    "outcome": "NOT JUDGED",
+    "wouldBe": "MET",
+    "blocksAcceptance": false,
+    "cells": [
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-15 (c) cancel",
+      "outcome": "MET",
+      "why": "point 1 0.03 s; point 2 0.01 s; point 3 0.01 s; point 4 0.01 s"
+     },
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-15 (c) recovery",
+      "outcome": "MET",
+      "why": "start-up open 0.24 s"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-15 (c) cancel",
+      "outcome": "MET",
+      "why": "point 1 0.03 s; point 2 0.01 s; point 3 0.01 s; point 4 0.01 s"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-15 (c) recovery",
+      "outcome": "MET",
+      "why": "start-up open 0.21 s"
+     }
+    ]
+   },
+   "PERF-16 engine part": {
+    "outcome": "NOT JUDGED",
+    "wouldBe": "MET",
+    "blocksAcceptance": false,
+    "cells": [
+     {
+      "cell": "F-2M-25-system",
+      "part": "PERF-16 engine part",
+      "outcome": "MET",
+      "why": "the cancel figure against PERF-15 (c)'s 1.75 s (PERF-16: 2 s less 0.25 s reserved for C5)"
+     },
+     {
+      "cell": "R-2M-25-system-1-05-05",
+      "part": "PERF-16 engine part",
+      "outcome": "MET",
+      "why": "the cancel figure against PERF-15 (c)'s 1.75 s (PERF-16: 2 s less 0.25 s reserved for C5)"
+     }
+    ]
+   }
+  },
+  "tokenInterval": {
+   "largestGapSeconds": 0.1136783,
+   "runs": 16,
+   "outcome": "NOT JUDGED"
+  },
+  "cancelAfterFinalCheck": {
+   "runs": 1,
+   "outcome": "NOT JUDGED"
+  },
+  "judged": false
+ },
+ "loadValidity": false,
+ "scale": 0.025
+}

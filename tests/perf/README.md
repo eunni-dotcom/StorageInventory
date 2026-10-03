@@ -30,7 +30,7 @@ python tests\perf\perf_session.py declare --gate --evidence docs\evidence\c4-gat
 # 2. run it: prefills (once per cell's prefill parameters, in a separate process of the same binary), the QUIET CHECK before the session (60 s; a
 #    failure refuses the session and records the refusal), one logged warm-up, five rounds round-robin over the cells with a quiet check after each,
 #    the attribution run of every cell, the four cancel points of every non-informational cell, the kill at the journal's peak with the timed
-#    start-up open, the deletion of a 2M snapshot, the negative control, replacement runs for every invalidated run, and the outcomes.
+#    start-up open, a cancellation after the final check (CAN-01e: it publishes), the deletion of a 2M snapshot, the negative control, replacement runs for every invalidated run, and the outcomes.
 python tests\perf\perf_session.py run --session docs\evidence\c4-gate\<id> --exe $exe --bench-root D:\gate-scratch
 
 # (declare and run in one step:  perf_session.py go --gate --evidence ... --exe $exe)
@@ -51,6 +51,10 @@ did not FAIL (the checker is defective: TEST-P1 fails), 2 refused to declare or 
 runs one first save and one re-scan at about 50,000 files, two rounds, through the real path. `--no-load-validity` skips the quiet checks and the run
 rule and marks the session NOT a gate session (every budget is reported NOT JUDGED). `--scale s` and `--cells a,b` scale and subset the matrix; a class
 is always decided by the cell's NOMINAL parameters, never by the size run or by a result. The C# test `SmokeGateTests` runs this end to end.
+
+`example/smoke-session/` is the output of one such smoke session (small; no path or name of the machine; `report.md` is `perf_report.py`'s rendering of
+it) and `example/load-regression-quick.json` is one `load_regression.py --quick` run. They are examples of the file formats, not results: the budgets
+of the smoke session are NOT JUDGED.
 
 ## What the session decides, and by what
 

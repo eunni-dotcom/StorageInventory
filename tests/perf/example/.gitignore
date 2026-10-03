@@ -1,0 +1,2 @@
+# the example session keeps its event log (the repository ignores *.log elsewhere)
+!*.log

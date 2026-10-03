@@ -1,0 +1,413 @@
+{
+ "experiments": [
+  {
+   "experiment": "sustained",
+   "cpus": 16,
+   "blocks_analysed": 3,
+   "injected_machine_percent": 19.74,
+   "change": {
+    "whole": {
+     "mean": 13.94,
+     "range": [
+      10.67,
+      16.53
+     ]
+    },
+    "own": {
+     "mean": -0.01,
+     "range": [
+      -0.08,
+      0.04
+     ]
+    },
+    "U": {
+     "mean": 13.95,
+     "range": [
+      10.63,
+      16.53
+     ]
+    },
+    "external_counted": {
+     "mean": 18.98,
+     "range": [
+      17.88,
+      20.87
+     ]
+    },
+    "induced_counted": {
+     "mean": -0.64,
+     "range": [
+      -2.49,
+      0.8
+     ]
+    },
+    "unattributed": {
+     "mean": -4.38,
+     "range": [
+      -5.95,
+      -2.14
+     ]
+    },
+    "gap_whole": {
+     "mean": 78.31,
+     "range": [
+      74.79,
+      80.88
+     ]
+    }
+   },
+   "diag": {
+    "renumbered_instance_samples_discarded": 135,
+    "new_process_samples_without_rate": 372,
+    "misaligned_collections": 0,
+    "defender_engine_visible": true,
+    "diagnostic_errors": 0
+   },
+   "per_block": [
+    {
+     "whole": 16.53,
+     "own": -0.0,
+     "U": 16.53,
+     "external_counted": 17.88,
+     "induced_counted": 0.8,
+     "unattributed": -2.14,
+     "gap_whole": 74.79
+    },
+    {
+     "whole": 14.61,
+     "own": -0.08,
+     "U": 14.69,
+     "external_counted": 20.87,
+     "induced_counted": -0.22,
+     "unattributed": -5.95,
+     "gap_whole": 79.26
+    },
+    {
+     "whole": 10.67,
+     "own": 0.04,
+     "U": 10.63,
+     "external_counted": 18.18,
+     "induced_counted": -2.49,
+     "unattributed": -5.06,
+     "gap_whole": 80.88
+    }
+   ]
+  },
+  {
+   "experiment": "churn",
+   "cpus": 16,
+   "blocks_analysed": 3,
+   "injected_machine_percent": 18.24,
+   "change": {
+    "whole": {
+     "mean": 16.65,
+     "range": [
+      13.84,
+      21.29
+     ]
+    },
+    "own": {
+     "mean": 0.03,
+     "range": [
+      -0.02,
+      0.09
+     ]
+    },
+    "U": {
+     "mean": 16.61,
+     "range": [
+      13.82,
+      21.19
+     ]
+    },
+    "external_counted": {
+     "mean": 8.07,
+     "range": [
+      6.43,
+      9.97
+     ]
+    },
+    "induced_counted": {
+     "mean": 1.86,
+     "range": [
+      0.2,
+      3.58
+     ]
+    },
+    "unattributed": {
+     "mean": 6.68,
+     "range": [
+      2.04,
+      14.56
+     ]
+    },
+    "gap_whole": {
+     "mean": 77.2,
+     "range": [
+      71.17,
+      83.62
+     ]
+    }
+   },
+   "diag": {
+    "renumbered_instance_samples_discarded": 302,
+    "new_process_samples_without_rate": 464,
+    "misaligned_collections": 0,
+    "defender_engine_visible": true,
+    "diagnostic_errors": 0
+   },
+   "per_block": [
+    {
+     "whole": 21.29,
+     "own": 0.09,
+     "U": 21.19,
+     "external_counted": 6.43,
+     "induced_counted": 0.2,
+     "unattributed": 14.56,
+     "gap_whole": 71.17
+    },
+    {
+     "whole": 13.84,
+     "own": 0.02,
+     "U": 13.82,
+     "external_counted": 9.97,
+     "induced_counted": 1.81,
+     "unattributed": 2.04,
+     "gap_whole": 76.82
+    },
+    {
+     "whole": 14.81,
+     "own": -0.02,
+     "U": 14.82,
+     "external_counted": 7.8,
+     "induced_counted": 3.58,
+     "unattributed": 3.44,
+     "gap_whole": 83.62
+    }
+   ]
+  },
+  {
+   "experiment": "bench",
+   "cpus": 16,
+   "blocks_analysed": 3,
+   "injected_machine_percent": null,
+   "change": {
+    "whole": {
+     "mean": 0.12,
+     "range": [
+      -9.13,
+      10.23
+     ]
+    },
+    "own": {
+     "mean": 5.04,
+     "range": [
+      4.73,
+      5.23
+     ]
+    },
+    "U": {
+     "mean": -4.91,
+     "range": [
+      -14.36,
+      5.5
+     ]
+    },
+    "external_counted": {
+     "mean": -7.09,
+     "range": [
+      -13.61,
+      4.54
+     ]
+    },
+    "induced_counted": {
+     "mean": -0.16,
+     "range": [
+      -1.28,
+      1.6
+     ]
+    },
+    "unattributed": {
+     "mean": 2.33,
+     "range": [
+      0.53,
+      4.7
+     ]
+    },
+    "gap_whole": {
+     "mean": 84.87,
+     "range": [
+      79.8,
+      88.25
+     ]
+    }
+   },
+   "diag": {
+    "renumbered_instance_samples_discarded": 136,
+    "new_process_samples_without_rate": 328,
+    "misaligned_collections": 0,
+    "defender_engine_visible": true,
+    "diagnostic_errors": 0
+   },
+   "per_block": [
+    {
+     "whole": -9.13,
+     "own": 5.23,
+     "U": -14.36,
+     "external_counted": -13.61,
+     "induced_counted": -1.28,
+     "unattributed": 0.53,
+     "gap_whole": 88.25
+    },
+    {
+     "whole": -0.73,
+     "own": 5.15,
+     "U": -5.88,
+     "external_counted": -12.19,
+     "induced_counted": 1.6,
+     "unattributed": 4.7,
+     "gap_whole": 86.55
+    },
+    {
+     "whole": 10.23,
+     "own": 4.73,
+     "U": 5.5,
+     "external_counted": 4.54,
+     "induced_counted": -0.8,
+     "unattributed": 1.76,
+     "gap_whole": 79.8
+    }
+   ]
+  },
+  {
+   "experiment": "bench+churn",
+   "cpus": 16,
+   "blocks_analysed": 3,
+   "injected_machine_percent": 19.02,
+   "change": {
+    "whole": {
+     "mean": 15.23,
+     "range": [
+      13.55,
+      16.44
+     ]
+    },
+    "own": {
+     "mean": -0.36,
+     "range": [
+      -0.6,
+      -0.19
+     ]
+    },
+    "U": {
+     "mean": 15.59,
+     "range": [
+      13.74,
+      17.04
+     ]
+    },
+    "external_counted": {
+     "mean": 0.08,
+     "range": [
+      -5.14,
+      4.47
+     ]
+    },
+    "induced_counted": {
+     "mean": 1.55,
+     "range": [
+      0.89,
+      1.92
+     ]
+    },
+    "unattributed": {
+     "mean": 13.96,
+     "range": [
+      10.72,
+      16.95
+     ]
+    },
+    "gap_whole": {
+     "mean": 76.26,
+     "range": [
+      72.06,
+      79.54
+     ]
+    }
+   },
+   "diag": {
+    "renumbered_instance_samples_discarded": 224,
+    "new_process_samples_without_rate": 315,
+    "misaligned_collections": 0,
+    "defender_engine_visible": true,
+    "diagnostic_errors": 0
+   },
+   "per_block": [
+    {
+     "whole": 16.44,
+     "own": -0.6,
+     "U": 17.04,
+     "external_counted": 4.47,
+     "induced_counted": 1.85,
+     "unattributed": 10.72,
+     "gap_whole": 79.54
+    },
+    {
+     "whole": 13.55,
+     "own": -0.19,
+     "U": 13.74,
+     "external_counted": -5.14,
+     "induced_counted": 1.92,
+     "unattributed": 16.95,
+     "gap_whole": 77.19
+    },
+    {
+     "whole": 15.7,
+     "own": -0.29,
+     "U": 15.99,
+     "external_counted": 0.91,
+     "induced_counted": 0.89,
+     "unattributed": 14.2,
+     "gap_whole": 72.06
+    }
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "check": "sustained external CPU is seen by U",
+   "ok": true,
+   "detail": "U rose 13.9 points for 19.7 injected (71%; the machine had 22 points of room; need at least 9.9)"
+  },
+  {
+   "check": "a storm of short-lived processes is seen by U",
+   "ok": true,
+   "detail": "U rose 16.6 points for 18.2 injected (91%; the machine had 23 points of room; need at least 9.1)"
+  },
+  {
+   "check": "NEGATIVE CONTROL (informational, decides nothing): the old per-process sum",
+   "ok": true,
+   "detail": "the summed external per-process counters rose 8.1 points for 18.2 injected (44% of it; U saw 91%)"
+  },
+  {
+   "check": "the benchmark's own CPU is measured (own rises by about one logical processor)",
+   "ok": true,
+   "detail": "own rose 5.0 points (one processor is 6.2)"
+  },
+  {
+   "check": "the benchmark's own CPU is subtracted (U does not follow it)",
+   "ok": true,
+   "detail": "U changed -4.9 points while own rose 5.0"
+  },
+  {
+   "check": "with the benchmark busy, the storm is still seen by U",
+   "ok": true,
+   "detail": "U rose 15.6 points for 19.0 injected (82%; the machine had 24 points of room; need at least 9.5)"
+  },
+  {
+   "check": "...and the benchmark's own share does not change with the storm",
+   "ok": true,
+   "detail": "own changed -0.4 points"
+  }
+ ]
+}

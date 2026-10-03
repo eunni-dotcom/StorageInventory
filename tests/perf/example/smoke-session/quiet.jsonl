@@ -1,0 +1,11 @@
+{"name":"before the session","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after round1","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after round2","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-attribution","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-cancel1","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-cancel2","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-cancel3","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-cancel4","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-crash","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-cancel-after-final","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}
+{"name":"after block-delete","skipped":true,"reason":"--no-load-validity","verdict":"SKIPPED"}

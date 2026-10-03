@@ -10,7 +10,7 @@ namespace StorageInventory.Library.Tests.PerfGate;
 // Ported LITERALLY from docs/evidence/c4-design-review/harness.patch (the reference implementation named by §15.4): the objective
 // generator (ObjParams, ObjNames, ObjSnapshot) and the C4 design review's name families (DrSnapshot: N1 "append", N2 "hash",
 // N3 "mixed", and the N2 re-scan "rescan"). The names must stay byte-identical to the reference for the same parameters:
-// GeneratorPinTests pins them. The real-vocabulary families of the reference ("real", "rescanreal") need a harvested names file and
+// GeneratorTests pins them. The real-vocabulary families of the reference ("real", "rescanreal") need a harvested names file and
 // are not part of TEST-P1's matrix; they are not ported. Changing anything in this file changes a prefill's content, so
 // GateConstants.GeneratorVersion must be bumped with it (the prefill cache key carries it).
 

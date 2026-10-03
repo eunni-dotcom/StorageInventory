@@ -15,8 +15,8 @@ Experiments and what each must show
   churn        four concurrent short-lived (0.3 s) external processes, replaced at once, in blocks: the change of U is at least HALF of the injected
                share (the reference measured 110% of it). NEGATIVE CONTROL: the summed per-process 'external' counters (the old method) are recorded
                beside it and are expected to see only a fraction (the reference: 15 to 25%); that figure decides nothing
-  bench        a busy benchmark stand-in INSIDE the job in blocks, no external load: the own share rises by about one logical processor's worth and the
-               change of U stays within a few points of zero                                                                (own CPU is subtracted)
+  bench        a busy benchmark stand-in INSIDE the job in blocks, no external load: the own share rises by about one logical processor's worth and U does
+               not rise with it (on a machine with little room it falls: the benchmark displaces other work)                                                                (own CPU is subtracted)
   bench+churn  the stand-in busy throughout, the storm in blocks: U still rises by at least half of the injected share, own does not change
 
 On a machine that is busy for other reasons the per-block figures scatter; the verdict uses the mean over the blocks and says so. Exit code 0 when
@@ -198,7 +198,8 @@ def verdicts(results):
     if r:
         one_cpu = 100.0 / r['cpus']
         out.append(("the benchmark's own CPU is measured (own rises by about one logical processor)", seen(r, 'own') >= 0.5 * one_cpu, f'own rose {seen(r, "own"):.1f} points (one processor is {one_cpu:.1f})'))
-        out.append(("the benchmark's own CPU is subtracted (U does not follow it)", abs(seen(r, 'U')) <= 5.0, f'U changed {seen(r, "U"):+.1f} points while own rose {seen(r, "own"):.1f}'))
+        out.append(("the benchmark's own CPU is subtracted (U does not rise with it)", seen(r, 'U') <= 0.5 * one_cpu,
+                    f'U changed {seen(r, "U"):+.1f} points while own rose {seen(r, "own"):.1f} (on a machine with little room the benchmark displaces other work, so whole stays and U falls; it must not rise)'))
     r = by.get('bench+churn')
     if r:
         rise('with the benchmark busy, the storm is still seen by U', r, r['injected_machine_percent'])

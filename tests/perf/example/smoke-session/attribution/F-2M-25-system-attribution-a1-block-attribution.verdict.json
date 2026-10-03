@@ -1,0 +1,220 @@
+{
+ "verdict": "PASS",
+ "reasons": [],
+ "record": {
+  "label": "F-2M-25-system-attribution-a1-block-attribution",
+  "kind": "attribution"
+ },
+ "checker": {
+  "file": "journal_ranges.py (vendored, reference)",
+  "sha256": "df179422b1c4ba34edf86ee7228d41103fea1c94b9ea36fb4c67141dc847d0ef"
+ },
+ "details": {
+  "layout_declared": "persource",
+  "new_source": true,
+  "database_pages": 3512,
+  "page_size": 4096,
+  "copy_change_counter": 8,
+  "target_source": 3,
+  "journal_bytes": 172880,
+  "segments": 1,
+  "synced_segments": 0,
+  "integrity": {
+   "records": 42,
+   "checksum_failures": 0,
+   "repeats": 0,
+   "page_zero_or_beyond_original_size": 0,
+   "image_mismatch": 0
+  },
+  "dictionary_layout": "per source (source_id first)",
+  "remote_pages": 0,
+  "levels_over_shared_cap": [],
+  "in_runs": {
+   "folder_path_child level 0": [
+    0,
+    0,
+    1
+   ],
+   "folder_path_child level 1": [
+    99,
+    99,
+    100
+   ],
+   "folder_path_root level 0": [
+    0,
+    0,
+    1
+   ],
+   "sqlite_autoindex_name_1 level 0": [
+    0,
+    0,
+    1
+   ],
+   "sqlite_autoindex_name_1 level 1": [
+    9,
+    9,
+    10
+   ],
+   "sqlite_autoindex_name_1 level 2": [
+    378,
+    378,
+    379
+   ]
+  },
+  "by_tree": {
+   "file_obs": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "1": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "IN": 1
+    },
+    "2": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "IN": 1
+    }
+   },
+   "folder_obs": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "1": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "IN": 1
+    },
+    "2": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "IN": 1
+    }
+   },
+   "folder_path": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "1": {
+     "journalled": 1,
+     "IN": 1
+    }
+   },
+   "folder_path_child": {
+    "0": {
+     "journalled": 1,
+     "IN": 1,
+     "SHARED": 1
+    },
+    "1": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "SHARED": 3,
+     "IN": 1
+    }
+   },
+   "folder_path_root": {
+    "0": {
+     "journalled": 1,
+     "IN": 1,
+     "SHARED": 1
+    }
+   },
+   "library_info": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "name": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    },
+    "1": {
+     "journalled": 1,
+     "IN": 1
+    }
+   },
+   "page 1": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "scan_attempt": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "scan_attempt_by_source": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "snapshot": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "snapshot_by_source": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "snapshot_extension_total": {
+    "0": {
+     "journalled": 1,
+     "IN": 1
+    }
+   },
+   "source": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "source_local_key": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "sqlite_autoindex_name_1": {
+    "0": {
+     "journalled": 1,
+     "IN": 1,
+     "SHARED": 1
+    },
+    "1": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "SHARED": 3,
+     "IN": 1
+    },
+    "2": {
+     "journalled": 3,
+     "ADJACENT": 2,
+     "SHARED": 3,
+     "IN": 1
+    }
+   },
+   "sqlite_autoindex_snapshot_1": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "volume": {
+    "-": {
+     "allowed": 1
+    }
+   },
+   "volume_by_serial": {
+    "-": {
+     "allowed": 1
+    }
+   }
+  },
+  "remote_examples": []
+ }
+}
