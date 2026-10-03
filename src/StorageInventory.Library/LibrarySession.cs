@@ -156,9 +156,13 @@ internal sealed class LibrarySession
             lease.ClassCFailure(ex);
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UnexpectedEngineException or EngineConfigurationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UnexpectedEngineException or EngineConfigurationException
+            or DllNotFoundException or BadImageFormatException or EntryPointNotFoundException or TypeInitializationException)
         {
-            result = Fail(ex is UnexpectedEngineException ? LibraryReason.UnexpectedEngine : ex is UnauthorizedAccessException ? LibraryReason.AccessDenied : LibraryReason.IoError, ex.Message);
+            // an engine that cannot be loaded at all (the native library missing or damaged, a wrong architecture) is the same state as
+            // an unexpected engine: Unavailable, with nothing written (C4-O08)
+            var engine = ex is UnexpectedEngineException or DllNotFoundException or BadImageFormatException or EntryPointNotFoundException or TypeInitializationException;
+            result = Fail(engine ? LibraryReason.UnexpectedEngine : ex is UnauthorizedAccessException ? LibraryReason.AccessDenied : LibraryReason.IoError, ex.Message);
         }
         Publish(result);
         return result;
@@ -486,16 +490,20 @@ internal sealed class LibrarySession
 
             // Close every connection of this process: the gate takes the writer side, cancelling in-flight reads; each reader
             // disposes its connection when it stops. The writer exists only inside a lease, and this lease holds none.
-            using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
-            var quarantine = Store.QuarantineSet(lease);
-
-            var members = Store.InspectMembersUnderLock();
+            QuarantineResult quarantine;
             LibraryStatus status;
-            if (members.Main.Exists) status = Status.State == LibraryState.Unavailable ? Fail(LibraryReason.IoError, quarantine.Failure ?? "The set-aside did not move the database.") : Status;
-            else if (members.Journal.NonEmpty) status = State(LibraryState.LeftoverFiles, LibraryReason.JournalWithoutMain, "Files from an interrupted Library remain here.");
-            else if (members.Wal.Exists || members.Shm.Exists) status = State(LibraryState.NotALibrary, LibraryReason.WalOrShmPresent, "Side files remain.");
-            else status = State(LibraryState.Missing, LibraryReason.MainFileMissingLockExisted, "The Library was set aside. A new, empty Library can be created.");
+            using (await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false))
+            {
+                quarantine = Store.QuarantineSet(lease);
+                var members = Store.InspectMembersUnderLock();
+                if (members.Main.Exists) status = Status.State == LibraryState.Unavailable ? Fail(LibraryReason.IoError, quarantine.Failure ?? "The set-aside did not move the database.") : Status;
+                else if (members.Journal.NonEmpty) status = State(LibraryState.LeftoverFiles, LibraryReason.JournalWithoutMain, "Files from an interrupted Library remain here.");
+                else if (members.Wal.Exists || members.Shm.Exists) status = State(LibraryState.NotALibrary, LibraryReason.WalOrShmPresent, "Side files remain.");
+                else status = State(LibraryState.Missing, LibraryReason.MainFileMissingLockExisted, "The Library was set aside. A new, empty Library can be created.");
+            }
             _everHadLibrary = true;
+            // published only now, with the gate released: a state handler that reads synchronously must not wait for a writer ticket
+            // that this very method still holds (C4-O07)
             return new SetAsideResult(quarantine, Publish(status));
         }
         catch (Exception ex) when (LibraryInterlock.IsClassC(ex))

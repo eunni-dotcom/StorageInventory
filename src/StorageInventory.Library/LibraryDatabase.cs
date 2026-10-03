@@ -50,6 +50,11 @@ internal sealed class LibraryFaultInjection
      /// partial deletion is tested where it matters (C4-M12).</summary>
     internal Action<string>? AfterDeleteStep { get; init; }
 
+    /// <summary>Thrown by the engine assertion before anything is touched, as the runtime would throw it if the native library could
+    /// not be loaded at all (a <c>DllNotFoundException</c>, a <c>BadImageFormatException</c>): the Library must then be Unavailable
+    /// with nothing created (C4-O08).</summary>
+    internal Exception? EngineLoadFailure { get; init; }
+
     /// <summary>Called when the writer connection is released, inside the step whose failure ends the lease in Faulted (OBS-13): a
     /// hook that throws shows that a writer that cannot be closed faults the interlock (TEST-W2).</summary>
     internal Action? OnWriterRelease { get; init; }
@@ -140,6 +145,7 @@ internal static class LibraryDatabase
     /// before the first file of a new Library is created: an unexpected engine must leave nothing written (BLD-15, §5.6).</summary>
     internal static void AssertEngineLoaded(LibraryFaultInjection? faults = null)
     {
+        if (faults?.EngineLoadFailure is { } loadFailure) throw loadFailure;
         EnsureProvider();
         var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
         var version = raw.sqlite3_libversion().utf8_to_string();

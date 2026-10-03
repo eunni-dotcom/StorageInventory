@@ -298,10 +298,10 @@ internal sealed class LibraryInterlock
     }
 
     /// <summary>Observing → Idle, on a clean end (a Save-off scan, OBS-10). Disposing the lease does the same.</summary>
-    internal void EndObservation(ObservationLease lease) => End(lease.Id, observation: true);
+    internal void EndObservation(ObservationLease lease) => End(lease.Owner == this ? lease.Id : 0, observation: true);
 
     /// <summary>Mutating → Idle, on a clean end; otherwise Faulted. Disposing the lease does the same.</summary>
-    internal void EndMutation(MutationLease lease) => End(lease.Id, observation: false);
+    internal void EndMutation(MutationLease lease) => End(lease.Owner == this ? lease.Id : 0, observation: false);   // a lease of another interlock (or a default value) ends nothing here
 
     private void End(long leaseId, bool observation)
     {
