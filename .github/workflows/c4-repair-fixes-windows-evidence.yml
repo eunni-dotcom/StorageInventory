@@ -1,0 +1,143 @@
+# TEMPORARY, hosted evidence for the v1.1 C4 repair-fixes (the focused repair of C4R-M01 to C4R-M05) only. Not part of C4 and never merged into
+# v1.1/c4-repair-fixes. Two jobs on hosted Windows runners (a SECOND environment: a hosted figure never meets or misses a target, §15.4 "Hosted CI"):
+#   regression  the repository's own CI steps (locked restore, all four suites, locked publish, native file set check), the native-load
+#               experiments (Q-11, Q-22 with their controls), the publish hash (Q-08, TEST-R1) and the Python self-tests of the TEST-P1 tooling
+#               (which the earlier hosted runs never ran).
+#   volume      SQLITE_FULL on a REAL full volume: a small VHDX formatted NTFS, filled by an import (Q-17, TEST-L9). The TEST-P1 matrix is NOT run
+#               here (D-R6's hosted matrix leg stays pending: it needs a naturally quiet machine, and a hosted figure decides nothing).
+name: C4 repair-fixes Windows evidence (temporary)
+
+on:
+  push:
+    branches: ['v1.1/c4-repair-fixes-windows-evidence']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Regression, publish, native set and native-load experiments
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+
+      - name: Build and test (Release), locked restore
+        shell: powershell
+        run: |
+          "CI=$env:CI"
+          .\build.ps1 -Target Test -Configuration Release
+
+      - name: Publish self-contained executable (locked)
+        shell: powershell
+        run: |
+          .\build.ps1 -Target Publish
+          $f = Get-Item .\dist\StorageInventory.exe
+          "SIZE=$($f.Length)"
+          "SHA256=$((Get-FileHash $f.FullName -Algorithm SHA256).Hash)"
+          Get-ChildItem .\packages -Directory | ForEach-Object { "package: $($_.Name) $((Get-ChildItem $_.FullName -Directory | Select-Object -First 1).Name)" }
+
+      - name: Check the native file set of the publish output
+        shell: powershell
+        run: .\tests\smoke\Test-NativeFileSet.ps1
+
+      - name: Native-load experiments (Q-11, Q-22, with their controls)
+        shell: powershell
+        run: .\tests\smoke\Invoke-NativeLoadExperiments.ps1
+
+      - name: Python self-tests of the TEST-P1 tooling
+        shell: powershell
+        run: |
+          python --version
+          foreach ($t in 'session_selftest.py','load_selftest.py','attribute_run_selftest.py') {
+            "== $t"
+            python (Join-Path tests\perf $t)
+            if ($LASTEXITCODE -ne 0) { throw "$t failed with exit code $LASTEXITCODE" }
+          }
+
+      - name: Upload executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: StorageInventory-win-x64
+          path: dist/StorageInventory.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  volume:
+    name: A really full volume (SQLITE_FULL)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache repo-local toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/dotnet
+            tools/pwsh
+            tools/psmodules
+          key: tools-${{ runner.os }}-${{ hashFiles('tools/fetch-tools.ps1') }}
+
+      - name: Fetch toolchain
+        shell: powershell
+        run: .\tools\fetch-tools.ps1
+
+      - name: Build the benchmark (Release)
+        shell: powershell
+        run: .\build.ps1 -Target Dotnet -DotnetArgs @('build','tests\StorageInventory.Library.Tests\StorageInventory.Library.Tests.csproj','-c','Release','-nodeReuse:false')
+
+      - name: Gate tooling at smoke scale
+        shell: powershell
+        run: |
+          $env:DOTNET_ROOT = (Resolve-Path .\tools\dotnet).Path
+          $exe = (Get-ChildItem tests\StorageInventory.Library.Tests\bin\Release -Recurse -Filter StorageInventory.Library.Tests.exe | Select-Object -First 1).FullName
+          & $exe GateSmoke WorkloadClass PerfGate
+
+      - name: SQLITE_FULL on a really full volume (a 200 MB VHDX formatted NTFS)
+        shell: powershell
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'si-full.vhdx'
+          @"
+          create vdisk file="$vhd" maximum=200 type=fixed
+          select vdisk file="$vhd"
+          attach vdisk
+          create partition primary
+          format fs=ntfs quick label=SIFULL
+          assign letter=V
+          "@ | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'si-diskpart.txt') -Encoding ascii
+          diskpart /s (Join-Path $env:RUNNER_TEMP 'si-diskpart.txt')
+          Get-PSDrive V | Format-Table Name, Used, Free
+          $env:DOTNET_ROOT = (Resolve-Path .\tools\dotnet).Path
+          $env:SI_BENCH_ROOT = 'V:\'
+          $exe = (Get-ChildItem tests\StorageInventory.Library.Tests\bin\Release -Recurse -Filter StorageInventory.Library.Tests.exe | Select-Object -First 1).FullName
+          & $exe --benchmark volume "$env:RUNNER_TEMP\library-volume.md"
+          Get-Content "$env:RUNNER_TEMP\library-volume.md"
+          Get-PSDrive V | Format-Table Name, Used, Free
+
+      - name: Upload the benchmark tables
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: c4-repair-fixes-benchmarks
+          path: |
+            ${{ runner.temp }}/library-*.md
+          retention-days: 14
