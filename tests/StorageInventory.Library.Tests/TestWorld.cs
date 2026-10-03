@@ -17,6 +17,14 @@ internal sealed class World
         Directory.CreateDirectory(parent);
         foreach (var stale in Directory.EnumerateDirectories(parent))
         {
+            // only the folders of runs that are over: a run's folder is named run-<pid>-..., and a live process's is not touched
+            // (parallel test processes must not delete each other's worlds)
+            var parts = Path.GetFileName(stale).Split('-');
+            if (parts.Length > 2 && int.TryParse(parts[1], out var pid) && pid != Environment.ProcessId)
+            {
+                try { if (!System.Diagnostics.Process.GetProcessById(pid).HasExited) continue; }
+                catch (ArgumentException) { /* no such process: the run is over */ }
+            }
             try { Directory.Delete(stale, recursive: true); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* held by a still-running process */ }
         }
