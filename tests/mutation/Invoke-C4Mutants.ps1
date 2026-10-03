@@ -16,9 +16,16 @@
     C4F-* (tests\mutation\C4FixMutants.ps1: the cadence inside one big folder and TEST-L9's inputs). -Set Original runs only the first,
     -Set Repair only the second, -Set Fixes only the third.
 
+    A mutant may also carry Intended (test-name fragments): it is then KILLED only when one of those tests fails (KILLED (UNINTENDED)
+    when only others do), and Equivalent = $true marks a CONTROL, a variation the audit must ACCEPT (it is EQUIVALENT when no test of
+    the filter fails, and REJECTED when one does: a false positive; Tolerated names tests that may fail for a control by design). Both are
+    used by the C4R-M05 mutants.
+
     The scratch copy holds git-tracked files only, so the NuGet cache and the SDK are not in it: the script uses -Source's own
     tools\dotnet and packages (restore finds everything in the cache; the committed lock files are part of the copy).
 .PARAMETER Source      The git working tree to mutate (default: this repository).
+.PARAMETER ToolRoot    A checkout that holds tools\dotnet and packages (default: the main working tree of -Source's repository, found
+                       from git's common directory, so that a short-path worktree needs no copy of the SDK).
 .PARAMETER Work        Scratch folder, created fresh and removed at the end.
 .PARAMETER Only        Run only these mutant ids.
 .PARAMETER Out         Write the results as Markdown to this file (must not exist).
@@ -26,6 +33,7 @@
 #>
 param(
     [string] $Source = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string] $ToolRoot,
     [string] $Work = (Join-Path ([IO.Path]::GetTempPath()) ('SiC4Mutants_' + [guid]::NewGuid().ToString('N').Substring(0, 8))),
     [string[]] $Only,
     [ValidateSet('All', 'Original', 'Repair', 'Fixes')] [string] $Set = 'All',
@@ -36,15 +44,27 @@ $ErrorActionPreference = 'Stop'
 $Source = (Resolve-Path -LiteralPath $Source).Path
 if (Test-Path -LiteralPath $Work) { throw "-Work '$Work' already exists; the script only deletes a folder it made itself." }
 if ($Out -and (Test-Path -LiteralPath $Out)) { throw "-Out '$Out' already exists; the script does not overwrite files." }
-$Dotnet = Join-Path $Source 'tools\dotnet\dotnet.exe'
-if (-not (Test-Path -LiteralPath $Dotnet)) { throw 'tools\dotnet is missing in -Source: run tools\fetch-tools.ps1.' }
-$state = Join-Path $Source 'tools\dotnet-state'
+function Invoke-Native([string] $File, [string[]] $Arguments, [string] $In) {
+    Push-Location $In
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under 'Stop'
+    try { $output = & $File @Arguments 2>&1 | Out-String; return @{ Code = $LASTEXITCODE; Output = $output } }
+    finally { $ErrorActionPreference = $saved; Pop-Location }
+}
+if (-not $ToolRoot) {
+    $common = (Invoke-Native 'git' @('rev-parse', '--path-format=absolute', '--git-common-dir') $Source).Output.Trim()
+    $ToolRoot = if ($common) { Split-Path -Parent $common } else { $Source }
+    if (-not (Test-Path -LiteralPath (Join-Path $ToolRoot 'tools\dotnet\dotnet.exe'))) { $ToolRoot = $Source }
+}
+$Dotnet = Join-Path $ToolRoot 'tools\dotnet\dotnet.exe'
+if (-not (Test-Path -LiteralPath $Dotnet)) { throw "tools\dotnet is missing in '$ToolRoot': run tools\fetch-tools.ps1 there, or pass -ToolRoot." }
+$state = Join-Path $ToolRoot 'tools\dotnet-state'
 $env:DOTNET_CLI_HOME = Join-Path $state 'home'
 $env:APPDATA = Join-Path $state 'appdata'
-$env:NUGET_PACKAGES = Join-Path $Source 'packages'
+$env:NUGET_PACKAGES = Join-Path $ToolRoot 'packages'
 $env:NUGET_HTTP_CACHE_PATH = Join-Path $state 'nuget-http'
 $env:NUGET_PLUGINS_CACHE_PATH = Join-Path $state 'nuget-plugins'
-$env:DOTNET_ROOT = Join-Path $Source 'tools\dotnet'
+$env:DOTNET_ROOT = Join-Path $ToolRoot 'tools\dotnet'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_NOLOGO = '1'; $env:DOTNET_MULTILEVEL_LOOKUP = '0'
 $env:MSBUILDDISABLENODEREUSE = '1'; $env:DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER = '1'
 $BuildArgs = @('-nodeReuse:false')
@@ -104,14 +124,6 @@ if ($Set -eq 'Original') { } elseif ($Set -eq 'Repair') { $mutants = @($repairMu
 if ($Only) { $mutants = @($mutants | Where-Object { $Only -contains $_.Id }) }
 
 # ---------------------------------------------------------------- the scratch copy
-function Invoke-Native([string] $File, [string[]] $Arguments, [string] $In) {
-    Push-Location $In
-    $saved = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under 'Stop'
-    try { $output = & $File @Arguments 2>&1 | Out-String; return @{ Code = $LASTEXITCODE; Output = $output } }
-    finally { $ErrorActionPreference = $saved; Pop-Location }
-}
-
 if (-not (Test-Path -LiteralPath (Join-Path $Source '.git'))) { throw "-Source '$Source' is not a git working tree (the copy is taken from 'git ls-files')." }
 $files = (Invoke-Native 'git' @('ls-files', '--cached', '--others', '--exclude-standard') $Source).Output -split "`r?`n" | Where-Object { $_ }
 New-Item -ItemType Directory -Path $Work | Out-Null
@@ -126,8 +138,8 @@ foreach ($file in $files) {
 }
 
 # the audits read the package cache by its repository-relative path (A-20 hashes the native DLL there): give the copy a junction to
-# -Source's packages folder (removing a junction deletes the link only, never the target)
-if (Test-Path -LiteralPath (Join-Path $Source 'packages')) { New-Item -ItemType Junction -Path (Join-Path $copy 'packages') -Target (Join-Path $Source 'packages') | Out-Null }
+# the tool root's packages folder (removing a junction deletes the link only, never the target)
+if (Test-Path -LiteralPath (Join-Path $ToolRoot 'packages')) { New-Item -ItemType Junction -Path (Join-Path $copy 'packages') -Target (Join-Path $ToolRoot 'packages') | Out-Null }
 
 $suites = @{
     Library = @{ Project = 'tests/StorageInventory.Library.Tests'; Dll = 'StorageInventory.Library.Tests.dll'; Filter = @() }
@@ -185,7 +197,12 @@ try {
             if (-not $r.Compiled) { $verdict = 'NOT COMPILED'; $killers = @(); $detail = $r.Summary }
             else {
                 $killers = @($r.Failed | Where-Object { $baseline[(Key $m)].Failed -notcontains $_ })
-                $verdict = if ($killers.Count -gt 0) { 'KILLED' } else { 'SURVIVED' }
+                $intended = if ($m.Intended) { @($killers | Where-Object { $name = $_; @($m.Intended | Where-Object { $name -like "*$_*" }).Count -gt 0 }) } else { $killers }
+                if ($m.Equivalent) {
+                    $unexpected = @($killers | Where-Object { $name = $_; @($m.Tolerated | Where-Object { $name -like "*$_*" }).Count -eq 0 })
+                    $verdict = if ($unexpected.Count -eq 0) { 'EQUIVALENT' } else { 'REJECTED (false positive)' }
+                }
+                else { $verdict = if ($intended.Count -gt 0) { 'KILLED' } elseif ($killers.Count -gt 0) { 'KILLED (UNINTENDED)' } else { 'SURVIVED' } }
                 $detail = $r.Summary
             }
         }
@@ -209,6 +226,6 @@ foreach ($r in $results) {
 }
 $md | ForEach-Object { Write-Host $_ }
 if ($Out) { Set-Content -LiteralPath $Out -Value ($md -join "`n") -Encoding UTF8 }
-$notKilled = @($results | Where-Object { $_.Verdict -ne 'KILLED' })
-Write-Host ("{0} mutants, {1} killed, {2} survived, {3} not compiled" -f $results.Count, @($results | Where-Object Verdict -eq 'KILLED').Count, @($results | Where-Object Verdict -eq 'SURVIVED').Count, @($results | Where-Object Verdict -eq 'NOT COMPILED').Count)
+$notKilled = @($results | Where-Object { $_.Verdict -notin @('KILLED', 'EQUIVALENT') })
+Write-Host ("{0} mutants, {1} killed, {2} equivalent (controls accepted), {3} survived, {4} killed for another reason, {5} rejected controls, {6} not compiled" -f $results.Count, @($results | Where-Object Verdict -eq 'KILLED').Count, @($results | Where-Object Verdict -eq 'EQUIVALENT').Count, @($results | Where-Object Verdict -eq 'SURVIVED').Count, @($results | Where-Object Verdict -eq 'KILLED (UNINTENDED)').Count, @($results | Where-Object Verdict -like 'REJECTED*').Count, @($results | Where-Object Verdict -eq 'NOT COMPILED').Count)
 exit $(if ($notKilled.Count -eq 0) { 0 } else { 1 })

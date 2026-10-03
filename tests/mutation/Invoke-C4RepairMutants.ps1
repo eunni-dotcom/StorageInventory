@@ -87,9 +87,9 @@ $mutants = @(
         (Edit $A 'if (!call.Dispatches) yield break;' 'if (!call.Dispatches || call.Dispatches) yield break;'))),
     (Mutant 'RA-08' 'Audit' 'a private helper may be called from a method of another type that takes a lease (the "own type" clause is dropped)' @('LeaseAuditTests.A_25_part_a_rejects_every_violating_fixture') @(
         (Edit $A 'return who.All(c => c.Type == unit.Type && c.TakesLease);' 'return who.All(c => c.TakesLease);'))),
+    # (C4R-M05 moved both keys into IlAudit.MethodKey, so the one edit below is the same defect as the two it replaced)
     (Mutant 'RA-09' 'Audit' 'callees are matched by name only (overloads hide behind each other)' @('LeaseAuditTests.A_25_part_a_rejects_every_violating_fixture', 'LeaseAuditTests.A_25_part_a_accepts_the_compliant_fixtures') @(
-        (Edit $A 'internal string Key => $"{Type}::{Name}({string.Join(",", Parameters)})";' 'internal string Key => $"{Type}::{Name}";'),
-        (Edit $A 'public string Key => $"{Type}::{Name}({string.Join(",", ParameterTypes)})";' 'public string Key => $"{Type}::{Name}";'))),
+        (Edit $A '        $"{type}::{name}{(genericArity > 0 ? "`" + genericArity : "")}({string.Join(",", parameters)}){(name is "op_Implicit" or "op_Explicit" ? "->" + returnType : "")}";' '        $"{type}::{name}";'))),
     (Mutant 'RA-10' 'Audit' 'the lock-first ordering check never fires (offsets are not compared)' @('LeaseAuditTests.C4_M17_lock_first_rule_rejects') @(
         (Edit $A 'else if (call.Offset < lockAt)' 'else if (call.Offset < -1)'))),
     # ---- the production lease guards ----

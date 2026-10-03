@@ -89,3 +89,259 @@ $repairMutants = @(
     @{ Id = 'C4R-D03'; Suite = 'Library'; Filter = $dFilter; What = 'a new name is inserted under source 1 whatever the import''s source'; Edits = @(Replace-One $S 'id = isNew ? _insert.Set(0, _sourceId).Set(1, name).ExecuteInsert(lease)' 'id = isNew ? _insert.Set(0, 1L).Set(1, name).ExecuteInsert(lease)') },
     @{ Id = 'C4R-D04'; Suite = 'Library'; Filter = $dFilter; What = 'a name is bound as TEXT instead of an exact UTF-16 BLOB'; Edits = @(Replace-One $D ': raw.sqlite3_bind_blob(_statement, _indexes[index], value));' ': raw.sqlite3_bind_text(_statement, _indexes[index], System.Text.Encoding.Unicode.GetString(value)));') }
 )
+
+# ---- C4R-M05: the A-25 audit must reject a method that differs from a leased helper only by generic arity, and a delegate that
+# borrows its host's lease and escapes the host. Suite 'Audit' (the Library builds, the audit tests run), each mutant with an Intended list:
+# a mutant counts as KILLED only when one of those tests fails. A-xx are genuine violations (production edits), E-xx are CONTROLS the audit
+# must ACCEPT (Equivalent: no test may fail), S-xx are defects in the audit itself (IlAudit.cs, IlClosures.cs) that its own fixtures must catch.
+# SQL text in an edit is always an OpenSql constant, so that no unrelated A-05 rule fires.
+$m05Filter = @('LeaseAuditTests', 'SecurityAuditTests', 'LibrarySecurityAuditTests')
+$m05Primary = @('LeaseAuditTests.A_25_every_mutation_in_every_first_party_assembly_needs_a_lease_part_a')
+$m05Fixtures = @('LeaseAuditTests.A_25_part_a_rejects_every_violating_fixture', 'LeaseAuditTests.A_25_the_frozen_wording_alone', 'LeaseAuditTests.A_25_overloads_that_differ')
+$m05Anchor = '    internal bool InTransaction => _inTransaction;'
+$m05Configure = '        Guard(lease, "configure the connection");'
+$m05Audit = 'tests/StorageInventory.IntegrationTests/IlAudit.cs'
+$m05Closures = 'tests/StorageInventory.IntegrationTests/IlClosures.cs'
+
+# A control adds a delegate that borrows authority to the product, which changes the audited SET of such delegates (the four of
+# SnapshotImporter.Execute and LibrarySession.CheckIdentity, pinned by A_25_the_real_assemblies_have_unambiguous_methods...): that test
+# is expected to fail for a control, and is Tolerated; no other test of the filter (in particular the one that asserts that the audit
+# of the product finds no violation, A_25_every_mutation_in_every_first_party_assembly...) may.
+$m05Pin = @('LeaseAuditTests.A_25_the_real_assemblies_have_unambiguous_methods')
+
+function M05([string] $Id, [string] $What, [object[]] $Edits, [string[]] $Intended = $m05Primary, [bool] $Equivalent = $false, [string[]] $Tolerated = @()) {
+    @{ Id = $Id; Suite = 'Audit'; Filter = $m05Filter; What = $What; Intended = $Intended; Equivalent = $Equivalent; Tolerated = $Tolerated; Edits = $Edits }
+}
+# members added to WriterConnection, and statements added at the start of WriterConnection.Configure (which takes the lease)
+function Members([string] $Text) { Replace-One $D $m05Anchor ($m05Anchor + "`n`n" + $Text.TrimEnd()) }
+function InConfigure([string] $Text) { Replace-One $D $m05Configure ($m05Configure + "`n" + $Text.TrimEnd()) }
+
+$m05Retained = @'
+    private Func<string, object?>? _retained;
+
+    internal object? Poke(string sql) => _retained!(sql);
+'@
+$m05AcquireHead = @'
+    private Func<bool>? _retainedCreate;
+
+    internal bool PokeCreate() => _retainedCreate!();
+
+    internal WriterLockResult AcquireWriterLock(MutationLease lease)
+'@
+$m05AcquireBody = @'
+        _interlock.Require(lease, "acquire the writer lock", MutationKind.Open, MutationKind.Create, MutationKind.Prepare, MutationKind.SetAside);
+        _retainedCreate = () => CreateEmptyDatabase(lease);
+'@
+$m05KeptRunner = @'
+    internal long NewCaptureId() => Interlocked.Increment(ref _captureCounter);
+
+    private DelegateQueryRunner? _keptRunner;
+
+    internal object? PokeRunner() => _keptRunner!.Scalar(OpenSql.GetApplicationId);
+'@
+
+$repairMutants += @(
+    # ---- (1) generic arity: the reviewer's mutant and its variants
+    (M05 'C4R-M05-A01' 'the reviewer''s arity mutant: a private generic RvH<T> that Configure calls, then an internal NON-generic RvH(string) that runs a command on the writer without a lease' @(
+        (Members @'
+    private T? RvH<T>(string sql) where T : class => null;
+
+    internal object? RvH(string sql)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+'@),
+        (InConfigure '        _ = RvH<object>(OpenSql.SelectEngine);'))),
+    (M05 'C4R-M05-A02' 'the same with the order reversed: a private non-generic RvH(string) that Configure calls, then an internal GENERIC RvH<T>(string) that runs a command without a lease' @(
+        (Members @'
+    private object? RvH(string sql) => sql;
+
+    internal object? RvH<T>(string sql) where T : class
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+'@),
+        (InConfigure '        _ = RvH(OpenSql.SelectEngine);'))),
+    (M05 'C4R-M05-A03' 'overloads that differ only by HOW MANY type parameters: a private RvH<T> that Configure calls, an internal RvH<T, U> that runs a command without a lease' @(
+        (Members @'
+    private T? RvH<T>(string sql) where T : class => null;
+
+    internal object? RvH<T, U>(string sql) where T : class where U : class
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+'@),
+        (InConfigure '        _ = RvH<object>(OpenSql.SelectEngine);'))),
+    (M05 'C4R-M05-A04' 'a lease-less WriterConnection.Poke runs a command through a private generic helper that is called only under a lease, while an internal method reaches the primitive only through the generic overload' @(
+        (Members @'
+    private void Helper(string sql) => _ = sql;
+
+    internal object? Poke(string sql) => Helper<object>(sql);
+
+    private object? Helper<T>(string sql)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+'@),
+        (InConfigure '        Helper(OpenSql.SelectEngine);'))),
+
+    # ---- (2) a lease captured in a delegate that escapes the host
+    (M05 'C4R-M05-A05' 'the reviewer''s retained-delegate mutant: Configure stores sql => Scalar(lease, sql) in a field, the lease-less Poke runs it' @(
+        (Members $m05Retained),
+        (InConfigure '        _retained = sql => Scalar(lease, sql);'))),
+    (M05 'C4R-M05-A06' 'the same with LibraryStore.CreateEmptyDatabase(lease) retained by AcquireWriterLock and run by a lease-less PokeCreate' @(
+        (Replace-One $T '    internal WriterLockResult AcquireWriterLock(MutationLease lease)' $m05AcquireHead),
+        (Replace-One $T '        _interlock.Require(lease, "acquire the writer lock", MutationKind.Open, MutationKind.Create, MutationKind.Prepare, MutationKind.SetAside);' $m05AcquireBody))),
+    (M05 'C4R-M05-A07' 'the delegate is stored in a STATIC field' @(
+        (Members @'
+    private static Func<string, object?>? _retainedStatic;
+
+    internal static object? PokeStatic(string sql) => _retainedStatic!(sql);
+'@),
+        (InConfigure '        _retainedStatic = sql => Scalar(lease, sql);'))),
+    (M05 'C4R-M05-A08' 'a lease-taking method RETURNS the closure it built (Detach); any caller can run it after the lease ended' @(
+        (Members '    internal Func<object?> Detach(MutationLease lease, string sql) => () => Scalar(lease, sql);'))),
+    (M05 'C4R-M05-A09' 'a lease-LESS method returns a closure that uses the lease the writer kept (the earlier audit rejected this by its host rule)' @(
+        (Members '    internal Func<object?> Leak(string sql) => () => Scalar(_openedBy, sql);')) @('LeaseAuditTests.A_25_every_mutation_in_every_first_party_assembly_needs_a_lease_part_a')),
+    (M05 'C4R-M05-A10' 'the closure is handed to another lease-less method that keeps it (Keep)' @(
+        (Members @'
+    private Func<string, object?>? _retained;
+
+    internal object? Poke(string sql) => _retained!(sql);
+
+    private void Keep(Func<string, object?> action) => _retained = action;
+'@),
+        (InConfigure '        Keep(sql => Scalar(lease, sql));'))),
+    (M05 'C4R-M05-A11' 'a LOCAL FUNCTION that captures the lease is converted to a delegate and stored' @(
+        (Members $m05Retained),
+        (InConfigure @'
+        Func<string, object?> armed = Local;
+        _retained = armed;
+
+        object? Local(string sql) => Scalar(lease, sql);
+'@))),
+    (M05 'C4R-M05-A12' 'a lambda in a lease-less PRIVATE host (called only by Configure, so the frozen wording accepts it) stores a closure that uses the writer''s kept lease' @(
+        (Members @'
+    private Func<string, object?>? _retained;
+
+    internal object? Poke(string sql) => _retained!(sql);
+
+    private void Arm() => _retained = sql => Scalar(_openedBy, sql);
+'@),
+        (InConfigure '        Arm();'))),
+    (M05 'C4R-M05-A13' 'the runner built from lease-capturing closures is kept in a field by CheckIdentity and used by a lease-less method' @(
+        (Replace-One $N '    internal long NewCaptureId() => Interlocked.Increment(ref _captureCounter);' $m05KeptRunner),
+        (Replace-One $N "            (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));`n        if (Convert.ToInt64(q.Scalar(OpenSql.GetApplicationId)) != LibraryNames.ApplicationId)" "            (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));`n        _keptRunner = q;`n        if (Convert.ToInt64(q.Scalar(OpenSql.GetApplicationId)) != LibraryNames.ApplicationId)"))),
+    (M05 'C4R-M05-A14' 'the verifier keeps the query runner it is handed in a static (the importer''s runner, built from lease-capturing closures, now outlives the import)' @(
+        (Replace-One $V '    internal const int CheckpointRows = 65_536;' "    internal const int CheckpointRows = 65_536;`n`n    internal static IQueryRunner? Kept;"),
+        (Replace-One $V '        (string, object?)[] snapshot = [("$snapshot_id", snapshotId)];' "        Kept = q;`n        (string, object?)[] snapshot = [(`"`$snapshot_id`", snapshotId)];"))),
+    (M05 'C4R-M05-A15' 'an ITERATOR that holds the lease and mutates when somebody enumerates it, possibly after the lease ended' @(
+        (Members @'
+    internal IEnumerable<object?> Lazy(MutationLease lease, string sql)
+    {
+        yield return Scalar(lease, sql);
+    }
+'@))),
+    (M05 'C4R-M05-A16' 'a delegate that takes a lease is invoked by a lease-less method with the lease the writer kept' @(
+        (Members @'
+    private Func<WriterConnection, MutationLease, object?>? _leasedOperation;
+
+    internal object? PokeOperation() => _leasedOperation!(this, _openedBy);
+'@),
+        (InConfigure '        _leasedOperation = static (writer, held) => writer.PageSize(held);'))),
+    (M05 'C4R-M05-A17' 'the closure is subscribed to an event' @(
+        (Members @'
+    internal event Func<string, object?>? Hook;
+
+    internal object? Raise(string sql) => Hook?.Invoke(sql);
+'@),
+        (InConfigure '        Hook += sql => Scalar(lease, sql);'))),
+    (M05 'C4R-M05-A18' 'the closure is handed to the thread pool' @(
+        (InConfigure '        _ = Task.Run(() => Scalar(lease, OpenSql.SelectEngine));'))),
+    (M05 'C4R-M05-A19' 'an ASYNC lambda that captures the lease is stored (its work is in a state machine)' @(
+        (Members @'
+    private Func<string, Task<object?>>? _retainedAsync;
+
+    internal Task<object?> PokeAsync(string sql) => _retainedAsync!(sql);
+'@),
+        (InConfigure @'
+        _retainedAsync = async sql =>
+        {
+            await Task.Yield();
+            return Scalar(lease, sql);
+        };
+'@))),
+    (M05 'C4R-M05-A20' 'the closure is put in an array' @(
+        (Members @'
+    private Func<string, object?>[]? _retainedArray;
+
+    internal object? PokeArray(string sql) => _retainedArray![0](sql);
+'@),
+        (InConfigure '        _retainedArray = [sql => Scalar(lease, sql)];'))),
+
+    # ---- controls: shapes the audit must ACCEPT (an EQUIVALENT result is the expected one; a failing test is a false positive)
+    (M05 'C4R-M05-E01' 'CONTROL: the closure is handed to a helper that only runs it' @(
+        (Members '    private object? Apply(Func<string, object?> action) => action(OpenSql.SelectEngine);'),
+        (InConfigure '        _ = Apply(sql => Scalar(lease, sql));')) @('LeaseAuditTests') $true $m05Pin),
+    (M05 'C4R-M05-E02' 'CONTROL: the closure is built and run inside the host' @(
+        (InConfigure @'
+        Func<string, object?> run = sql => Scalar(lease, sql);
+        _ = run(OpenSql.SelectEngine);
+'@)) @('LeaseAuditTests') $true $m05Pin),
+    (M05 'C4R-M05-E03' 'CONTROL: overloads that differ by generic arity, all private and called only under the lease' @(
+        (Members @'
+    private void Same(string text) => _ = text;
+
+    private void Same<T>(string text) where T : class => _ = text;
+'@),
+        (InConfigure @'
+        Same("a");
+        Same<object>("b");
+'@)) @('LeaseAuditTests') $true $m05Pin),
+    (M05 'C4R-M05-E04' 'CONTROL: a lambda that takes the lease itself is stored and run by a method that takes one' @(
+        (Members '    private Func<WriterConnection, MutationLease, object?>? _operation3;'),
+        (InConfigure @'
+        _operation3 = static (writer, held) => writer.PageSize(held);
+        _ = _operation3(this, lease);
+'@)) @('LeaseAuditTests') $true $m05Pin),
+
+    # ---- defects in the audit itself: its own fixtures must catch each
+    (M05 'C4R-M05-S01' 'the audit''s method key drops the generic arity again' @(
+        (Replace-One $m05Audit '        $"{type}::{name}{(genericArity > 0 ? "`" + genericArity : "")}({string.Join(",", parameters)}){(name is "op_Implicit" or "op_Explicit" ? "->" + returnType : "")}";' '        $"{type}::{name}({string.Join(",", parameters)}){(name is "op_Implicit" or "op_Explicit" ? "->" + returnType : "")}";')) $m05Fixtures),
+    (M05 'C4R-M05-S02' 'two methods with one identity are not rejected' @(
+        (Replace-One $m05Audit '            .Where(g => g.Count() > 1).Select(g => (g.Key, g.ToList())).ToList();' '            .Where(g => g.Count() > 1 && g.Key.Length < 0).Select(g => (g.Key, g.ToList())).ToList();')) $m05Fixtures),
+    (M05 'C4R-M05-S03' 'the closure rule is not run' @(
+        (Replace-One $m05Audit '        violations.AddRange(IlClosures.Violations(model, inScope, leasedOperations, allow));' '        _ = IlClosures.Violations(model, inScope, leasedOperations, allow);')) $m05Fixtures),
+    (M05 'C4R-M05-S04' 'a store to an instance field is no longer a sink' @(
+        (Replace-One $m05Closures '                else Report("field", $"is stored in the field {field?.Owner}::{field?.Name}{(obj.Tag == Tag.This ? " of the instance (outside a constructor)" : "")}, where it outlives the call", value.Taint);' '                else _ = field;')) $m05Fixtures),
+    (M05 'C4R-M05-S05' 'a store to a static field is no longer a sink' @(
+        (Replace-One $m05Closures '                Report("static", $"is stored in the static field {field?.Owner}::{field?.Name}", value.Taint);' '                _ = field;')) $m05Fixtures),
+    (M05 'C4R-M05-S06' 'a store to an array element is no longer a sink' @(
+        (Replace-One $m05Closures '                Report("array", "is stored in an array element", value.Taint);' '                _ = value;')) $m05Fixtures),
+    (M05 'C4R-M05-S07' 'a returned delegate is no longer a sink' @(
+        (Replace-One $m05Closures '                if (returnsValue) Report("return", "is returned to the caller", Pop().Taint);' '                if (returnsValue) _ = Pop();')) $m05Fixtures),
+    (M05 'C4R-M05-S08' 'a call into code the audit cannot read is no longer a sink' @(
+        (Replace-One $m05Closures '            if (!benign) Report("external",' '            if (!benign && callees.Count < 0) Report("external",')) $m05Fixtures),
+    (M05 'C4R-M05-S09' 'a callee whose summary lets the parameter escape is ignored' @(
+        (Replace-One $m05Closures '                if (s.Escape) Report("call", $"is passed to {callee.Type}::{callee.Name} (parameter {a}), which {s.Reason}", args[a].Taint);' '                if (s.Escape && a < 0) Report("call", $"is passed to {callee.Type}::{callee.Name} (parameter {a}), which {s.Reason}", args[a].Taint);')) $m05Fixtures),
+    (M05 'C4R-M05-S10' 'an object built from a delegate by a constructor no longer carries it (the constructor''s stores are forgotten)' @(
+        (Replace-One $m05Closures '                    if (isNew) result = result.Union(held);' '                    if (isNew && field.Length < 0) result = result.Union(held);')) $m05Fixtures),
+    (M05 'C4R-M05-S11' 'the arguments of a delegate invocation are not judged against the targets of that delegate type' @(
+        (Replace-One $m05Closures '                    if (s.Escape) Report("call", $"is passed to {call.Short}, which can run {target.Name} ({target.Type}), and that {s.Reason}", args[a].Taint);' '                    if (s.Escape && a < 0) Report("call", $"is passed to {call.Short}, which can run {target.Name} ({target.Type}), and that {s.Reason}", args[a].Taint);')) $m05Fixtures),
+    (M05 'C4R-M05-S12' 'no method counts as an authority closure' @(
+        (Replace-One $m05Closures '    private bool IsAuthorityTarget(IlAudit.Physical target) => !target.TakesLease && !_allow.Contains(target.Key) && Reaches(target);' '    private bool IsAuthorityTarget(IlAudit.Physical target) => !target.TakesLease && !_allow.Contains(target.Key) && Reaches(target) && target.Name.Length < 0;')) $m05Fixtures),
+    (M05 'C4R-M05-S13' 'the work of an async lambda (its state machine) is not part of what the lambda reaches' @(
+        (Replace-One $m05Closures '        if (_stateMachines.TryGetValue((method.Type, method.Name), out var machines)) foreach (var body in machines) yield return body;' '        if (_stateMachines.TryGetValue((method.Type, method.Name), out var machines) && machines.Count < 0) foreach (var body in machines) yield return body;')) $m05Fixtures),
+    (M05 'C4R-M05-S14' 'an iterator that reaches a mutation is accepted' @(
+        (Replace-One $m05Closures '            if (!Reaches(body)) continue;' '            if (!Reaches(body) || body.Name.Length > 0) continue;')) $m05Fixtures),
+    (M05 'C4R-M05-S15' 'the invocation of a delegate that takes a lease is not a leased operation' @(
+        (Replace-One $m05Audit '        if (c.Name != "Invoke" || !c.HasThis || !IsDelegateType(model, c.Type)) return false;' '        if (c.Name != "Invoke" || !c.HasThis || !IsDelegateType(model, c.Type) || c.Name.Length > 0) return false;')) ($m05Fixtures + @('LeaseAuditTests.A_25_the_real_assemblies_have_unambiguous_methods')))
+)
