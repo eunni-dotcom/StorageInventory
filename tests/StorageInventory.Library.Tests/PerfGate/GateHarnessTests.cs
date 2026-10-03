@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using StorageInventory.Testing;
 
@@ -141,6 +142,7 @@ public static class GateHarnessTests
             var r = Run("cancel:" + point, "test-cancel-" + point);
             var c = r.Cancel!;
             Assert.Equal(point, c.Point, "the point");
+            Assert.True(c.Requested, $"point {point}: the cancellation was requested");
             Assert.Equal("Cancelled (rolled back)", c.Outcome, $"point {point} ({c.PointName}): the import observed the cancellation");
             Assert.True(c.CancelToReturnSeconds > 0 && c.CancelToReturnSeconds < 5, $"point {point} timed from the cancellation to the return: {c.CancelToReturnSeconds}");
             var rb = c.Rollback!;
@@ -155,6 +157,154 @@ public static class GateHarnessTests
             before = r.Library.BeforeBytes;
             Assert.Equal(0, RecordJson.Validate(RecordJson.Serialize(r)).Count, "the cancel record is fit: " + string.Join("; ", RecordJson.Validate(RecordJson.Serialize(r))));
         }
+    }
+
+    // ------------------------------------------------------------------------------------------------------------ C4R-M03: a run's result is never a reason to refuse its record
+    // The orchestrator replaces a run only when it is INVALID (the load rule, or an environmental failure of the harness). A cancellation the
+    // product did not honour (the save published) and a save that failed early are MEASURED results: the child must write their records and
+    // exit 0, so that the orchestrator judges them (MISSED or STOP) and never replaces them. Exit 3 is for a record that cannot be interpreted.
+
+    private static T With<T>(GateRunner.CancelBehaviour behaviour, ISpaceGuard? guard, Func<T> body)
+    {
+        (GateRunner.TestCancelBehaviour, GateRunner.TestSpaceGuard) = (behaviour, guard);
+        try { return body(); }
+        finally { (GateRunner.TestCancelBehaviour, GateRunner.TestSpaceGuard) = (GateRunner.CancelBehaviour.Cancel, null); }
+    }
+
+    /// <summary>The child as the orchestrator starts it (<c>--benchmark gate run</c>), in this process: its exit code and what it wrote to stderr.</summary>
+    private static (int Code, string Error) RunChild(string mode, string label, string? analysisDir = null)
+    {
+        GateRunner.RaisePriority = false;
+        GateRunner.Quiet = true;
+        var original = Console.Error;
+        var error = new StringWriter();
+        Console.SetError(error);
+        try
+        {
+            string[] args = ["run", "--cell", CellId, "--mode", mode, "--scale", Scale.ToString(CultureInfo.InvariantCulture), "--prefill-from", PrefillFile.Value,
+                "--analysis-dir", analysisDir ?? Path.Combine(World.RunRoot, "analysis"), "--label", label, "--binary-commit", "test"];
+            return (GateBenchmark.Run(args), error.ToString());
+        }
+        finally
+        {
+            Console.SetError(original);
+        }
+    }
+
+    private sealed class RefuseAtBegin : ISpaceGuard
+    {
+        public bool Permit(in SpaceCheck check) => check.Kind != SpaceCheckKind.Begin;
+    }
+
+    [Test]
+    public static void ACancellationTheSaveDidNotHonourIsAMeasuredRecordNotAnUnfitOne()
+    {
+        // the save never sees the cancellation (the harness records the request and does not cancel the token): it publishes
+        var (code, error) = With(GateRunner.CancelBehaviour.RequestWithoutCancelling, null, () => RunChild("cancel:3", "test-published-exit"));
+        Assert.Equal(0, code, "the child exits 0 for a run whose save published despite the cancellation (exit 3 would have the orchestrator replace it): " + error);
+        foreach (var point in new[] { 1, 2, 3, 4 })
+        {
+            var r = With(GateRunner.CancelBehaviour.RequestWithoutCancelling, null, () => Run("cancel:" + point, "test-published-" + point));
+            var c = r.Cancel!;
+            Assert.Equal("Published", r.Outcome, $"point {point}: the save published");
+            Assert.Equal("Published", c.Outcome, $"point {point}: the cancel record says so");
+            Assert.True(c.Requested, $"point {point}: the cancellation WAS requested");
+            Assert.Null(c.Rollback, $"point {point}: nothing was rolled back, so there is no rollback to assert");
+            Assert.True(c.CancelToReturnSeconds > 0 && c.RowsAtCancel > 0, $"point {point}: the request was timed and its rows counted");
+            Assert.False(c.PublishedAfterCancel, "CAN-01e is the property of the after-final run, not of a cancel point");
+            var problems = RecordJson.Validate(RecordJson.Serialize(r));
+            Assert.Equal(0, problems.Count, $"point {point}: a valid, measured record of a miss is fit as raw evidence: " + string.Join("; ", problems));
+        }
+    }
+
+    [Test]
+    public static void ACancelPointThatWasNeverReachedIsRecordedAsNeverRequested()
+    {
+        var r = With(GateRunner.CancelBehaviour.DoNotRequest, null, () => Run("cancel:2", "test-never-requested"));
+        var c = r.Cancel!;
+        Assert.False(c.Requested, "no cancellation was requested");
+        Assert.Equal("Published", c.Outcome, "so the save published");
+        Assert.Null(c.Rollback, "and there is nothing to roll back");
+        Assert.Equal(0.0, c.CancelToReturnSeconds, "no request, no time");
+        Assert.Equal(0, RecordJson.Validate(RecordJson.Serialize(r)).Count, "the record is fit: the orchestrator classifies it (a miss: nothing was measured about cancelling)");
+    }
+
+    [Test]
+    public static void ASaveThatFailsAtBeginIsAMeasuredRecordNotAnUnfitOne()
+    {
+        // a space guard that refuses at BEGIN: one IMP-11 check is recorded, the save fails, nothing is published
+        var (code, error) = With(GateRunner.CancelBehaviour.Cancel, new RefuseAtBegin(), () => RunChild("timed", "test-failed-at-begin-exit"));
+        Assert.Equal(0, code, "the child exits 0 for a save that failed at BEGIN: " + error);
+        var timed = With(GateRunner.CancelBehaviour.Cancel, new RefuseAtBegin(), () => Run("timed", "test-failed-at-begin"));
+        Assert.True(timed.Outcome.StartsWith("Failed:", StringComparison.Ordinal), "the save failed: " + timed.Outcome);
+        Assert.Equal(1, timed.Imp11!.SpaceChecks, "only BEGIN's check ran");
+        var problems = RecordJson.Validate(RecordJson.Serialize(timed));
+        Assert.Equal(0, problems.Count, "a failed save with fewer than two checks is a valid, measured record: " + string.Join("; ", problems));
+        var dir = Path.Combine(World.RunRoot, "analysis-failed-" + Guid.NewGuid().ToString("N")[..6]);
+        var attribution = With(GateRunner.CancelBehaviour.Cancel, new RefuseAtBegin(), () => Run("attribution", "test-attribution-failed-at-begin", dir));
+        Assert.True(attribution.Outcome.StartsWith("Failed:", StringComparison.Ordinal), "the attributed save failed too: " + attribution.Outcome);
+        Assert.Equal(0, RecordJson.Validate(RecordJson.Serialize(attribution)).Count, "its record is fit: " + string.Join("; ", RecordJson.Validate(RecordJson.Serialize(attribution))));
+    }
+
+    [Test]
+    public static void ValidationAcceptsMeasuredFailuresAndRefusesWhatCannotBeInterpreted()
+    {
+        // the three classes of a cancel run: (i) expected (cancelled, rolled back, asserted), (ii) a miss (the save published, or the point was never reached),
+        // (iii) a record that cannot be interpreted. Only (iii) is exit 3, and only (iii) is replaced by the orchestrator.
+        var honoured = RecordJson.Serialize(Run("cancel:2", "test-validate-cancel"));
+        Assert.Equal(0, RecordJson.Validate(honoured).Count, "(i) an expected cancellation is fit");
+        JsonNode Doc(string json) => JsonNode.Parse(json)!;
+        bool Refused(JsonNode doc, string text) => RecordJson.Validate(doc.ToJsonString()).Any(p => p.Contains(text, StringComparison.Ordinal));
+
+        var published = Doc(honoured);
+        published["outcome"] = "Published";
+        published["cancel"]!["outcome"] = "Published";
+        published["cancel"]!["rollback"] = null;
+        Assert.Equal(0, RecordJson.Validate(published.ToJsonString()).Count, "(ii) a cancel run whose save published carries no rollback and is fit");
+        var noRollback = Doc(honoured);
+        noRollback["cancel"]!["rollback"] = null;
+        Assert.True(Refused(noRollback, "cancel.rollback"), "(iii) a run that says it was cancelled and rolled back must carry its rollback assertion");
+        var failedCancel = Doc(honoured);
+        failedCancel["cancel"]!["outcome"] = "Failed: LibraryFull";
+        failedCancel["cancel"]!["rollback"] = null;
+        Assert.True(Refused(failedCancel, "cancel.rollback"), "(iii) a cancel run whose save failed (it did not publish) is asserted rolled back too");
+        foreach (var field in new[] { "requested", "outcome", "point", "cancelToReturnSeconds" })
+        {
+            var doc = Doc(honoured);
+            doc["cancel"]!.AsObject().Remove(field);
+            Assert.True(Refused(doc, "cancel." + field), $"(iii) a cancel record without cancel.{field} is unfit");
+        }
+
+        var timed = RecordJson.Serialize(Run("timed", "test-validate-timed"));
+        var earlyFailure = Doc(timed);
+        earlyFailure["outcome"] = "Failed: LibraryFull";
+        earlyFailure["imp11"]!["checks"] = JsonNode.Parse("[[1,0,1,1,1,1,1,1]]");
+        Assert.Equal(0, RecordJson.Validate(earlyFailure.ToJsonString()).Count, "(ii) a save that failed at BEGIN (one check) is fit");
+        earlyFailure["imp11"]!["checks"] = JsonNode.Parse("[]");
+        Assert.Equal(0, RecordJson.Validate(earlyFailure.ToJsonString()).Count, "(ii) so is one that failed before any check");
+        var publishedOneCheck = Doc(timed);
+        publishedOneCheck["imp11"]!["checks"] = JsonNode.Parse("[[1,0,1,1,1,1,1,1]]");
+        Assert.True(Refused(publishedOneCheck, "fewer than two checks"), "(iii) a PUBLISHED save made BEGIN's check and the final one: one check is unfit");
+        var failedWithoutImp11 = Doc(timed);
+        failedWithoutImp11["outcome"] = "Failed: LibraryFull";
+        failedWithoutImp11.AsObject().Remove("imp11");
+        Assert.True(Refused(failedWithoutImp11, "imp11"), "(iii) a failed save still has to say what it measured");
+
+        // the exit codes
+        var cancelRecord = RecordJson.Deserialize(honoured)!;
+        Assert.Equal(0, GateBenchmark.ExitCodeOf("cancel:2", cancelRecord, out _), "(i) exit 0");
+        var publishedRecord = cancelRecord with { Outcome = "Published", Cancel = cancelRecord.Cancel! with { Outcome = "Published", Rollback = null } };
+        Assert.Equal(0, GateBenchmark.ExitCodeOf("cancel:2", publishedRecord, out var none), "(ii) exit 0 for a published cancel run: " + string.Join("; ", none));
+        var neverRequested = publishedRecord with { Cancel = publishedRecord.Cancel! with { Requested = false, CancelToReturnSeconds = 0 } };
+        Assert.Equal(0, GateBenchmark.ExitCodeOf("cancel:2", neverRequested, out _), "(ii) exit 0 for a cancel point that was never reached");
+        var unfit = cancelRecord with { Cancel = cancelRecord.Cancel! with { Rollback = null } };
+        Assert.Equal(3, GateBenchmark.ExitCodeOf("cancel:2", unfit, out var why), "(iii) exit 3 for a record that cannot be interpreted");
+        Assert.True(why.Any(p => p.Contains("cancel.rollback", StringComparison.Ordinal)), "...and it says why");
+        var timedRecord = RecordJson.Deserialize(timed)!;
+        Assert.Equal(0, GateBenchmark.ExitCodeOf("timed", timedRecord, out _), "a published timed run: exit 0");
+        var timedUnfit = timedRecord with { Imp11 = null };
+        Assert.Equal(3, GateBenchmark.ExitCodeOf("timed", timedUnfit, out _), "a timed record without its IMP-11 checks cannot be interpreted: exit 3");
+        Assert.Equal(0, GateBenchmark.ExitCodeOf("crash", timedUnfit, out _), "a crash run's record is judged by the orchestrator with its recovery");
     }
 
     [Test]

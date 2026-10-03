@@ -5,13 +5,15 @@ A RUN of a session is a dict with the fields below; the orchestrator (perf_sessi
 
     runId, cell, kind, attempt, order       identity and chronological order (the "run order": the first five VALID runs of a cell are the sample)
     status        'ok'       valid, and its result is a measurement
-                  'failed'   valid (its environment was fine), but the engine's own result is a failure (a failed save, a rollback assertion
-                             that did not hold): it counts as a valid run and is never discarded or replaced for its result; the cell's
-                             outcome is MISSED on every budget it carries
-                  'invalid'  not valid: the load rule, an invalid round, a harness failure, or (an attribution) INVALID evidence; it
-                             stays in the raw tables with its reasons and earns a replacement
-    metrics       what the budgets read: filesPerSecond and importSeconds (timed); cancelSeconds (cancel:n); recoverySeconds (crash);
-                  attribution = 'PASS' or 'FAIL' (attribution); tokenGapSeconds (timed, attribution, cancel)
+                  'failed'   valid (its environment was fine), but the engine's own result is a failure (a save that failed, even at BEGIN; a
+                             cancellation the product did not honour, i.e. a save that published after the cancellation; a cancel point that was
+                             never reached; a rollback assertion that did not hold): it counts as a valid run and is never discarded or replaced
+                             for its result; the cell's outcome is MISSED on every budget it carries (C4R-M03)
+                  'invalid'  not valid: the load rule, an invalid round, a harness failure (a child that died, a record the harness itself refused as
+                             raw evidence), or (an attribution) INVALID evidence; it stays in the raw tables with its reasons and earns a replacement
+    metrics       what the budgets read: filesPerSecond and importSeconds (timed); cancelSeconds (cancel:n: the time from a REQUESTED cancellation to
+                  the return, kept for a miss too) and cancelClass; recoverySeconds (crash); attribution = 'PASS' or 'FAIL' (attribution);
+                  tokenGapSeconds (timed, attribution, cancel); problem (a failed run: what went wrong)
 
 Kinds: timed (five valid runs a cell), attribution (one), cancel:1 .. cancel:4 (one each), crash (one), delete (one, informational).
 
@@ -35,6 +37,8 @@ RECOVERY_BUDGET = 5.0                         # seconds for the next start-up op
 PERF16_ENGINE_FRACTION = {'Representative': 1.75, 'Stress': 4.75, 'Worst-case': 4.75}    # PERF-16's engine part is PERF-15 (c)'s cancel budget
 
 OUTCOME_ORDER = ['STOP', 'MISSED', 'NOT MEASURED', 'MET']
+CONTROL_VARIANTS = ('new', 'existing')       # §15.4's negative control: an import into a new source and into an existing one
+TEST_P1_FAILED = 'TEST-P1 FAILED'            # the negative control did not FAIL: the checker is defective, so no attribution verdict of the session can be trusted
 
 
 def set_rounds(n):
@@ -118,9 +122,12 @@ def judge_perf14(fig, target, stop):
 
 
 def judge_attribution(sample):
-    """PERF-15 (a): the single valid attribution of the cell. PASS meets; FAIL is a defect (MISSED, no stop); none valid is NOT MEASURED."""
+    """PERF-15 (a): the single valid attribution of the cell. PASS meets; FAIL is a defect (MISSED, no stop); none valid is NOT MEASURED. An attribution
+    run whose save failed is a valid failed run (there is no journal to attribute): MISSED, never replaced."""
     if sample is None:
         return 'NOT MEASURED', 'no valid attribution (every capture was INVALID)'
+    if sample[0]['status'] == 'failed':
+        return 'MISSED', sample[0]['metrics'].get('problem', 'the attributed run failed')
     v = sample[0]['metrics'].get('attribution')
     return ('MET', 'PASS') if v == 'PASS' else ('MISSED', f'the checker says {v}')
 
@@ -134,7 +141,12 @@ def judge_seconds(value, budget, what):
 
 
 def judge_cancel(runs, cell, budget):
-    """PERF-15 (c): the four cancel points of a cell; its figure is the largest. Each point needs one valid run."""
+    """PERF-15 (c): the four cancel points of a cell; its figure is the largest. Each point needs one valid run.
+
+    A cancel run is (i) an EXPECTED cancellation (requested, rolled back, asserted): judged on its time; (ii) a MISS (the cancellation was requested and the
+    save published or failed instead, the rollback did not hold, or the point was never reached): a valid run, MEASURED, never replaced; MISSED, and STOP when
+    the time it took to return after the request is above 1.5 x the budget, which is PERF-15 (c)'s stop threshold applied to the measured time whatever the
+    outcome; (iii) invalid (the load rule, a harness failure), which earns a replacement and never reaches this function as a result."""
     points = []
     reasons = []
     outcomes = []
@@ -146,8 +158,16 @@ def judge_cancel(runs, cell, budget):
             continue
         r = sample[0]
         if r['status'] == 'failed':
-            outcomes.append('MISSED')
-            reasons.append(f'cancel point {p}: {r["metrics"].get("problem", "failed")}')
+            why = f'cancel point {p}: {r["metrics"].get("problem", "failed")}'
+            seconds = r['metrics'].get('cancelSeconds')
+            if seconds is None:
+                outcomes.append('MISSED')
+                reasons.append(why)
+            else:
+                points.append(seconds)
+                over = seconds > budget * STOP_FACTOR
+                outcomes.append('STOP' if over else 'MISSED')
+                reasons.append(why + f' (returned {seconds:.2f} s after the request' + (f', above {STOP_FACTOR:g} x its budget {budget:g} s)' if over else ')'))
             continue
         points.append(r['metrics']['cancelSeconds'])
         o, why = judge_seconds(r['metrics']['cancelSeconds'], budget, f'point {p}')
@@ -171,10 +191,29 @@ def judge_recovery(runs, cell):
     return o, why, r['metrics']['recoverySeconds']
 
 
-def evaluate(cells, runs, judged=True):
+def judge_control(controls):
+    """§15.4's negative control (required once per session: an import into a new source and into an existing one, into a Library whose name index is keyed
+    by the name alone): the checker MUST FAIL it. A PASS means the checker is defective and TEST-P1 fails; INVALID evidence is captured again (at most five
+    times), so a variant that never gave a valid FAIL fails TEST-P1 too (nothing shows that the checker works). controls: [{'variant', 'verdict', ...}]."""
+    by = {}
+    for c in controls:
+        by.setdefault(c['variant'], []).append(c['verdict'])
+    problems = []
+    for v in CONTROL_VARIANTS:
+        verdicts = by.get(v, [])
+        if 'PASS' in verdicts:
+            problems.append(f'the {v}-source control PASSED: the checker accepted a Library it must reject')
+        elif 'FAIL' not in verdicts:
+            problems.append(f'the {v}-source control never gave a valid FAIL (' + ('no attempt was recorded' if not verdicts else 'verdicts: ' + ', '.join(verdicts)) + ')')
+    ok = not problems
+    return {'ok': ok, 'outcome': 'FAILED AS REQUIRED' if ok else TEST_P1_FAILED, 'why': '; '.join(problems) or 'both controls FAIL as required', 'attempts': {v: by.get(v, []) for v in CONTROL_VARIANTS}}
+
+
+def evaluate(cells, runs, judged=True, controls=None):
     """cells: the plan's cells ({id, class, budgets:{...}}). Returns {'cells': {id: {...figures and per-budget outcomes}}, 'budgets': {name: ...}}.
     judged=False (a session that is not a gate session, a smoke scale, or without load validity) reports the figures and marks every budget
-    NOT JUDGED."""
+    NOT JUDGED. controls: the negative control's attempts of the session ([] when it ran and recorded none, None when it is not part of the evaluation,
+    e.g. a session that never reached it): when it did not FAIL as required, the session's PERF-15 (a) is TEST-P1 FAILED whatever its attributions say."""
     per_cell = {}
     for c in cells:
         cid, b = c['id'], c['budgets']
@@ -222,4 +261,11 @@ def evaluate(cells, runs, judged=True):
         can01e['outcome'] = 'NOT JUDGED'
     token = {'largestGapSeconds': max(gaps) if gaps else None, 'runs': len(gaps)}
     token['outcome'] = ('NOT MEASURED' if not gaps else 'MET' if max(gaps) <= TOKEN_INTERVAL else 'MISSED') if judged else 'NOT JUDGED'
-    return {'cells': per_cell, 'budgets': budgets, 'tokenInterval': token, 'cancelAfterFinalCheck': can01e, 'judged': judged}
+    evaluation = {'cells': per_cell, 'budgets': budgets, 'tokenInterval': token, 'cancelAfterFinalCheck': can01e, 'judged': judged}
+    if controls is not None:
+        control = evaluation['negativeControl'] = judge_control(controls)
+        if not control['ok']:
+            b = budgets['PERF-15 (a)']
+            budgets['PERF-15 (a)'] = {**b, 'outcome': TEST_P1_FAILED if judged else 'NOT JUDGED', 'wouldBe': TEST_P1_FAILED, 'blocksAcceptance': judged,
+                                      'cells': [{'cell': '(negative control)', 'part': 'TEST-P1', 'outcome': TEST_P1_FAILED, 'why': control['why']}] + b['cells']}
+    return evaluation

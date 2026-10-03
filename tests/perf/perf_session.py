@@ -6,6 +6,7 @@ Commands (see README.md):
   perf_session.py run     --session DIR   --exe EXE [--dll DLL] [...]            runs a declared session: quiet check, warm-up, rounds, blocks, replacements
   perf_session.py go      ...                                                    declare and run
   perf_session.py outcome --session DIR                                          recomputes session.json and the outcomes from the raw files
+  perf_session.py attempts --evidence DIR [--json]                               lists every session (attempt) of an evidence directory with its status
 
 A session, in order: the manifest (identifier, binary commit and build-output hash, cells, run order, five rounds, declared start, gate or not) is
 written FIRST; prefills are built once per cell's prefill parameters by a separate process of the same binary; the QUIET CHECK runs before the
@@ -19,6 +20,13 @@ Run validity is decided by the measured environment only (loadsource.py): U = th
 collections WHOLLY inside the measured operation; mean <= 10% and p95 <= 25%, none inside is INVALID. A round whose quiet check after it fails is
 invalid and its load-dependent runs are marked invalid and replaced. No valid run is ever discarded or replaced because of its result. A key-range
 attribution is valid when the checker (attribute_run.py) gives PASS or FAIL; INVALID evidence is captured again (a deterministic journal needs no quiet machine).
+
+A session directory is an ATTEMPT and is run ONCE. `run` refuses a directory that holds anything of a started session (refused.json, aborted.json,
+runs.jsonl, session.json, ...): a refused, aborted or interrupted attempt is kept as it is, never run again in place, and a retry is a NEW session declared
+with --supersedes <earlier id> --reason <text> (§15.4 "Reruns": a new session starts only after a documented objective invalidation and is declared as
+such). Only a session that was refused, aborted, never completed, whose negative control did not FAIL, or that has cells NOT MEASURED can be superseded;
+a session that completed with a valid result, whatever the result, cannot (a rerun because of its result is what the rules forbid). The negative control is
+part of the result: a session whose control did not FAIL is TEST-P1 FAILED (session.json, `outcome`, the report) and its PERF-15 (a) is TEST-P1 FAILED.
 
 --no-load-validity (smoke only): the quiet checks and the run rule are skipped, EVERY run is accepted as valid, and the session is NOT a gate session
 (its manifest says so before it starts); its budgets are reported as NOT JUDGED. A scaled session (--scale) or one with fewer than the whole matrix or
@@ -52,7 +60,15 @@ CANCEL_KINDS = ('cancel:1', 'cancel:2', 'cancel:3', 'cancel:4')
 BLOCK_ORDER = ['attribution', 'cancel:1', 'cancel:2', 'cancel:3', 'cancel:4', 'crash', 'cancel-after-final', 'delete']
 LOAD_INDEPENDENT = ('attribution', 'control')       # judged by the checker, not by the load: a journal is deterministic
 
-EXIT_DONE, EXIT_FAILED, EXIT_USAGE, EXIT_REFUSED, EXIT_ABORTED = 0, 1, 2, 3, 4
+# Exit codes of this tool: 0 done (read the outcomes), 1 the negative control did not FAIL (TEST-P1 FAILED), 2 refused or usage (a declaration the rules
+# refuse, a session directory that already started), 3 the quiet check before the session failed (refused.json), 4 aborted (an OSError; aborted.json),
+# 5 the tool itself failed (an unhandled exception; for a session already started aborted.json says so). Distinct on purpose: an unhandled exception
+# used to exit 1, the code of "the negative control failed".
+EXIT_DONE, EXIT_FAILED, EXIT_USAGE, EXIT_REFUSED, EXIT_ABORTED, EXIT_CRASHED = 0, 1, 2, 3, 4, 5
+HARNESS_UNFIT = 3         # the harness child's exit code for a record it cannot interpret as raw evidence (GateBenchmark.ExitCodeOf); every other result exits 0
+STATUS_COMPLETE = 'complete'
+STATUS_CONTROL = 'TEST-P1 FAILED: the negative control did not FAIL'
+STARTED = ('refused.json', 'aborted.json', 'session.json', 'runs.jsonl', 'judgements.jsonl', 'quiet.jsonl', 'collections.jsonl', 'machine.json', 'events.log')   # files only a started session leaves
 
 
 class Refusal(Exception):
@@ -98,6 +114,56 @@ def write_json(path, obj):
         f.write(json.dumps(obj, indent=1, ensure_ascii=False) + '\n')
 
 
+# ---------------------------------------------------------------------------------------------------------------- attempts
+def started_files(directory):
+    """What a session directory holds of a started session (empty for a declared session that never ran)."""
+    return [n for n in STARTED if os.path.exists(os.path.join(directory, n))]
+
+
+def status_of(directory, evaluation):
+    """The status of an attempt, from its raw files and its evaluation: the same words in session.json, `outcome`, `attempts` and the report."""
+    if os.path.exists(os.path.join(directory, 'refused.json')):
+        return 'REFUSED'
+    if os.path.exists(os.path.join(directory, 'aborted.json')):
+        return 'ABORTED'
+    if not os.path.exists(os.path.join(directory, 'session.json')):
+        return 'INCOMPLETE' if started_files(directory) else 'declared (not run)'
+    control = evaluation.get('negativeControl')
+    return STATUS_CONTROL if control is not None and not control['ok'] else STATUS_COMPLETE
+
+
+def attempts(evidence):
+    """Every session (attempt) of an evidence directory, in declaration order, with its status. Refused, aborted and incomplete attempts are listed like any
+    other: an attempt is never removed or overwritten."""
+    rows = []
+    for name in sorted(os.listdir(evidence)) if os.path.isdir(evidence) else []:
+        directory = os.path.join(evidence, name)
+        if not os.path.exists(os.path.join(directory, 'manifest.json')):
+            continue
+        manifest, _, _, evaluation = rebuild(directory)
+        rows.append({'id': manifest['id'], 'directory': name, 'gate': manifest['gate'], 'supersedes': manifest.get('supersedes'), 'reason': manifest.get('reason'),
+                     'declaredUtc': manifest['declaredUtc'], 'binaryHash': manifest['binary']['outputHash'], 'status': status_of(directory, evaluation)})
+    return sorted(rows, key=lambda r: (r['declaredUtc'], r['id']))
+
+
+def invalidation_reason(directory):
+    """The documented objective invalidation of an attempt (§15.4 "Reruns": an invalid session, or cells NOT MEASURED), derived from its files; None when
+    it has not been invalidated. A session that completed with a valid result, whatever the result, is never invalidated: a rerun because of its result is
+    exactly what the rules forbid."""
+    _, _, _, evaluation = rebuild(directory)
+    status = status_of(directory, evaluation)
+    if status == 'REFUSED':
+        return 'it was refused: the quiet check before the session failed'
+    if status == 'ABORTED':
+        return 'it aborted before it completed (aborted.json)'
+    if status == 'INCOMPLETE':
+        return 'it never completed (a raw table and no session.json: the process died)'
+    if status == STATUS_CONTROL:
+        return 'its negative control did not FAIL: the checker is defective'
+    not_measured = sorted({f'{b} {c["cell"]}' for b, v in evaluation['budgets'].items() for c in v['cells'] if c['outcome'] == 'NOT MEASURED'})
+    return ('cells NOT MEASURED: ' + ', '.join(not_measured)) if not_measured else None
+
+
 # ---------------------------------------------------------------------------------------------------------------- the manifest
 def harness_of(a):
     return gate_exe.Harness(a.exe, a.dll, a.bench_root)
@@ -140,21 +206,24 @@ def declare(a):
     if gate and reasons:
         raise Refusal('a gate session covers the whole matrix at scale 1 with five rounds, load validity and a clean tree; this one has: ' + '; '.join(reasons))
     session_id = a.id or f'{utc_now().strftime("%Y%m%d-%H%M%S")}-{commit[:8]}-{"gate" if gate else "nongate"}'
+    invalidation = None
     if gate:
-        earlier = []
-        for name in sorted(os.listdir(a.evidence)) if os.path.isdir(a.evidence) else []:
-            m = os.path.join(a.evidence, name, 'manifest.json')
-            if os.path.exists(m):
-                prior = json.load(open(m, encoding='utf-8'))
-                if prior.get('gate') and prior['binary']['outputHash'] == plan['binary']['outputHash']:
-                    earlier.append(prior['id'])
+        earlier = [x for x in attempts(a.evidence) if x['gate'] and x['binaryHash'] == plan['binary']['outputHash']]
         if earlier and not a.supersedes:
-            raise Refusal('the first session declared on this binary is the gate session; ' + ', '.join(earlier) + ' already is. A later one is designated only when '
+            raise Refusal('the first session declared on this binary is the gate session; ' + ', '.join(x['id'] for x in earlier) + ' already is. A later one is designated only when '
                           'an earlier one was invalidated by the rules (--supersedes <id> --reason <text>)')
-        if a.supersedes and a.supersedes not in earlier:
+        if a.supersedes and a.supersedes not in [x['id'] for x in earlier]:
             raise Refusal(f'--supersedes {a.supersedes}: no earlier gate session of this binary has that id')
         if a.supersedes and not a.reason:
             raise Refusal('--supersedes needs --reason')
+        if a.supersedes:
+            successor = next((x['id'] for x in earlier if x['supersedes'] == a.supersedes), None)
+            if successor:
+                raise Refusal(f'--supersedes {a.supersedes}: that attempt is already superseded by {successor}; a retry names the latest attempt of the binary')
+            invalidation = invalidation_reason(os.path.join(a.evidence, next(x['directory'] for x in earlier if x['id'] == a.supersedes)))
+            if invalidation is None:
+                raise Refusal(f'--supersedes {a.supersedes}: that session has not been invalidated by the rules (refused, aborted, never completed, its negative control did not FAIL, '
+                              'or cells NOT MEASURED); a rerun because of a valid result is not allowed (§15.4 Reruns)')
     directory = os.path.join(a.evidence, session_id)
     if os.path.exists(os.path.join(directory, 'manifest.json')):
         raise Refusal('a manifest already exists for ' + session_id)
@@ -170,7 +239,7 @@ def declare(a):
         kinds_of[c['id']] = k
     manifest = {
         'schema': SCHEMA, 'id': session_id, 'declaredUtc': iso(), 'declaredStartUtc': iso(), 'gate': gate,
-        'supersedes': a.supersedes, 'reason': a.reason,
+        'supersedes': a.supersedes, 'reason': a.reason, 'invalidationOfSuperseded': invalidation,
         'notGateBecause': [] if gate else (reasons or ['--gate was not given']),
         'binary': plan['binary'], 'scale': a.scale, 'generatorVersion': plan['generatorVersion'],
         'cells': ids, 'rounds': a.rounds, 'runOrder': 'round-robin: run 1 of every cell, then run 2, and so on',
@@ -270,6 +339,7 @@ class Session:
         rec = {'name': name, 'startUtc': iso(datetime.datetime.fromtimestamp(window[0]['t0'], datetime.timezone.utc)), 'collections': len(window),
                'verdict': v['verdict'], 'U': {'mean': v['mean'], 'p95': v['p95'], 'max': v['max']}, 'reasons': v['reasons'], 'summary': self.ls.summarise(window)}
         self.quiet_checks.append(rec)
+        self.last_quiet_window = list(window)           # the raw collections of the check: a refusal carries them (refused.json)
         append_line(os.path.join(self.dir, 'quiet.jsonl'), rec)
         self.log(f'quiet check "{name}": {v["verdict"]} (U mean {v["mean"]:.2f}%, p95 {v["p95"]:.2f}%, {len(window)} collections)')
         return rec
@@ -379,7 +449,10 @@ class Session:
         reasons = run['reasons']
         kind = run['kind']
         if code not in (0, -1) and not (kind == 'crash' and rec and rec.get('kind') == 'crash'):
-            reasons.append(self.scrub(f'the harness child failed (exit {code}): {(err or "").strip().splitlines()[-1][:160] if err and err.strip() else "no message"}'))
+            # (iii) invalid harness or evidence: the child died, or refused its own record (exit 3: it cannot be interpreted as raw evidence). Replaceable under
+            # the accepted environmental rule. Every RESULT of a run (a failed save, a cancellation not honoured) exits 0 and is judged below, never here (C4R-M03).
+            fit = ': its run record is not fit as raw evidence' if code == HARNESS_UNFIT else ''
+            reasons.append(self.scrub(f'the harness child failed (exit {code}{fit}): {(err or "").strip().splitlines()[-1][:160] if err and err.strip() else "no message"}'))
             return
         if not isinstance(rec, dict):
             reasons.append('the harness child produced no run record')
@@ -425,31 +498,45 @@ class Session:
                 if kind == 'delete':
                     m['deleteSeconds'] = (rec.get('delete') or {}).get('seconds')
         elif kind == 'attribution':
-            v = self.attribute(run, line)
-            m['attribution'] = v['verdict'] if v['verdict'] in ('PASS', 'FAIL') else None
-            if rec['outcome'] == 'Published' and rec.get('imp11'):
-                m['imp11'] = {'checks': rec['imp11']['spaceChecks'], 'commitEqualsFinalPending': rec['imp11']['commitGrowthEqualsFinalPending']}
-            if v['verdict'] not in ('PASS', 'FAIL'):
-                reasons.extend(['attribution INVALID: ' + r for r in v['reasons'][:3]])
+            if rec['outcome'] != 'Published':
+                failed = f'the save did not publish: {rec["outcome"]}'       # no journal to attribute: a valid failed run, never replaced (C4R-M03)
+            else:
+                v = self.attribute(run, line)
+                m['attribution'] = v['verdict'] if v['verdict'] in ('PASS', 'FAIL') else None
+                if rec.get('imp11'):
+                    m['imp11'] = {'checks': rec['imp11']['spaceChecks'], 'commitEqualsFinalPending': rec['imp11']['commitGrowthEqualsFinalPending']}
+                if v['verdict'] not in ('PASS', 'FAIL'):
+                    reasons.extend(['attribution INVALID: ' + r for r in v['reasons'][:3]])
+                    return
+                run['status'] = 'ok'
                 return
-            run['status'] = 'ok'
-            return
         elif kind == 'cancel-after-final':
             if rec['outcome'] != 'Published' or not (rec.get('cancel') or {}).get('publishedAfterCancel'):
                 failed = f'CAN-01e: a cancellation after the final check must publish, but the outcome was {rec["outcome"]}'
             else:
                 m['publishedAfterCancel'] = True
         elif kind.startswith('cancel:'):
+            # (i) an EXPECTED cancellation: requested, rolled back, asserted. (ii) a MISS, a valid measured behavioural failure that stays in the record and is never
+            # replaced: the cancellation was requested and the save published (or failed) instead, the rollback did not hold, or the point was never reached.
+            # The time from a requested cancellation to the return is kept for a miss too: PERF-15 (c)'s stop threshold reads it. (iii) invalid evidence returned above.
             c = rec.get('cancel') or {}
             rb = c.get('rollback') or {}
-            if c.get('outcome') != 'Cancelled (rolled back)':
-                failed = f'the cancellation was not honoured: {c.get("outcome")}'
-            elif not rb.get('rolledBack'):
-                failed = 'rollback assertion failed: ' + str(rb.get('problem'))
+            if c.get('requested') is False:
+                failed = f'the cancellation was never requested (cancel point {c.get("point")} was not reached): the save {c.get("outcome")}'
+                m['cancelClass'] = 'never requested'
             else:
-                m['cancelSeconds'] = c['cancelToReturnSeconds']
-                m['journalAtCancelBytes'] = c['journalAtCancelBytes']
-                m['rowsAtCancel'] = c['rowsAtCancel']
+                if isinstance(c.get('cancelToReturnSeconds'), (int, float)):
+                    m['cancelSeconds'] = c['cancelToReturnSeconds']
+                if c.get('outcome') != 'Cancelled (rolled back)':
+                    failed = f'the cancellation was not honoured: {c.get("outcome")}'
+                    m['cancelClass'] = 'missed'
+                elif not rb.get('rolledBack'):
+                    failed = 'rollback assertion failed: ' + str(rb.get('problem'))
+                    m['cancelClass'] = 'missed'
+                else:
+                    m['cancelClass'] = 'expected cancellation'
+                    m['journalAtCancelBytes'] = c['journalAtCancelBytes']
+                    m['rowsAtCancel'] = c['rowsAtCancel']
         elif kind == 'crash':
             r = recovery or {}
             if not r:
@@ -463,6 +550,9 @@ class Session:
                 m['hotJournalBytes'] = r['hotJournalBytes']
         if not load_ok:
             run['status'] = 'invalid'
+            if failed:         # replaced under the load rule, but what the run showed is not lost: it stays in the row and the report names it
+                m['problem'] = failed
+                reasons.append('what the run showed before it was invalidated: ' + failed)
             return
         if failed:
             run['status'] = 'failed'
@@ -535,9 +625,9 @@ class Session:
             self.ensure_stats(self.cells[cid], directory)
         q = self.quiet_check('before the session')
         if q['verdict'] == 'NOT QUIET':
-            write_json(os.path.join(self.dir, 'refused.json'), {'session': m['id'], 'refusedUtc': iso(), 'reason': 'the quiet check before the session failed', 'quietCheck': q})
+            self.stop_load()                # the raw collections are written first, then the record that points at them
+            self.record_refusal(q)
             self.log('REFUSED: the quiet check before the session failed; the session does not start')
-            self.stop_load()
             return EXIT_REFUSED
         self.update_machine_defender()
         self.warmup()
@@ -570,6 +660,28 @@ class Session:
         if self.controls and not self.control_ok():
             self.log('THE NEGATIVE CONTROL DID NOT FAIL (or was never valid): the checker is defective and TEST-P1 fails')
         return self.finish()
+
+    # ---- the attempt's own records (an attempt that did not run to the end is kept, with these, and never run again)
+    def attempt_record(self, status, **fields):
+        m = self.manifest
+        with open(os.path.join(self.dir, 'manifest.json'), 'rb') as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        return {'schema': SCHEMA, 'status': status, 'session': m['id'], 'gate': m['gate'], 'supersedes': m.get('supersedes'), **fields,
+                'manifest': {'file': 'manifest.json', 'sha256': digest},
+                'declared': {'cells': m['cells'], 'rounds': m['rounds'], 'scale': m['scale'], 'loadValidity': m['loadValidity'], 'binary': m['binary']},
+                'evidence': {k: n for k, n in (('quietChecks', 'quiet.jsonl'), ('collections', 'collections.jsonl'), ('machine', 'machine.json'), ('runs', 'runs.jsonl'), ('judgements', 'judgements.jsonl'),
+                                               ('events', 'events.log')) if os.path.exists(os.path.join(self.dir, n))},
+                'retry': f'this attempt is final: a retry is a NEW session declared with --supersedes {m["id"]} --reason <text> (§15.4 Reruns)'}
+
+    def record_refusal(self, q):
+        """refused.json: the attempt record of a session the quiet check refused: the check's summary and its raw collections are in it (the whole series is also in collections.jsonl)."""
+        write_json(os.path.join(self.dir, 'refused.json'), self.attempt_record('REFUSED', refusedUtc=iso(), reason='the quiet check before the session failed', quietCheck=q,
+                                                                                 rawCollections=getattr(self, 'last_quiet_window', None)))
+
+    def record_abort(self, e):
+        """aborted.json: the attempt record of a session that stopped before it completed (an exception, an OSError, an interrupt)."""
+        self.log(f'SESSION ABORTED: {type(e).__name__}: {e}')
+        write_json(os.path.join(self.dir, 'aborted.json'), self.attempt_record('ABORTED', abortedUtc=iso(), error=f'{type(e).__name__}: {e}', runsRecorded=len(self.runs)))
 
     # ---- the negative control
     def negative_control(self):
@@ -613,10 +725,7 @@ class Session:
                         pass
 
     def control_ok(self):
-        by = {}
-        for c in self.controls:
-            by.setdefault(c['variant'], []).append(c['verdict'])
-        return all('FAIL' in by.get(v, []) and 'PASS' not in by.get(v, []) for v in ('new', 'existing'))
+        return model.judge_control(self.controls)['ok']
 
     # ---- records
     def machine_record(self):
@@ -638,12 +747,9 @@ class Session:
     def finish(self):
         self.update_machine_defender()
         judged = self.manifest['gate']
-        evaluation = model.evaluate(list(self.cells.values()), self.runs, judged=judged)
-        status = 'complete'
-        failed = False
-        if not self.control_ok():
-            status = 'TEST-P1 FAILED: the negative control did not FAIL'
-            failed = True
+        evaluation = model.evaluate(list(self.cells.values()), self.runs, judged=judged, controls=self.controls)       # the control is part of the result
+        failed = not evaluation['negativeControl']['ok']
+        status = STATUS_CONTROL if failed else STATUS_COMPLETE
         session = {'schema': SCHEMA, 'id': self.manifest['id'], 'status': status, 'gate': self.manifest['gate'], 'manifest': 'manifest.json', 'finishedUtc': iso(),
                    'quietChecks': self.quiet_checks, 'negativeControl': self.controls, 'runs': self.runs, 'evaluation': evaluation,
                    'loadValidity': self.load_validity, 'scale': self.scale}
@@ -684,6 +790,8 @@ def fit_problems(rec, kind):
     expected = {'timed': 'timed', 'attribution': 'attribution', 'delete': 'delete', 'cancel-after-final': 'cancel-after-final'}.get(kind, 'cancel')
     if rec.get('kind') != expected:
         problems.append(f'kind is {rec.get("kind")!r}, not {expected}')
+    if expected == 'cancel' and not (isinstance(rec.get('cancel'), dict) and 'outcome' in rec['cancel']):
+        problems.append('missing cancel.outcome')
     if kind in ('timed', 'attribution', 'delete', 'cancel-after-final'):
         for k in ('imp11', 'token', 'journal', 'memory'):
             if not rec.get(k):
@@ -700,6 +808,8 @@ def print_outcomes(evaluation, status):
             print(f'      {c["cell"]} [{c["part"]}]: {c["outcome"]} - {c["why"]}')
     t = evaluation['tokenInterval']
     print(f'  token-check interval (CAN-01d, <= 0.5 s): {t["outcome"]}, largest gap {t["largestGapSeconds"]}')
+    if 'negativeControl' in evaluation:
+        print(f'  negative control (must FAIL): {evaluation["negativeControl"]["outcome"]} - {evaluation["negativeControl"]["why"]}')
 
 
 def rebuild(directory):
@@ -721,12 +831,27 @@ def rebuild(directory):
         elif e['event'] == 'control':
             controls.append({k: v for k, v in e.items() if k != 'event'})
     cells = manifest['plan']['cells']
-    return manifest, ordered, controls, model.evaluate(cells, ordered, judged=manifest['gate'])
+    # the negative control is part of the result of a session that ran to the end (a session that never reached it has none to judge)
+    finished = os.path.exists(os.path.join(directory, 'session.json'))
+    return manifest, ordered, controls, model.evaluate(cells, ordered, judged=manifest['gate'], controls=controls if controls or finished else None)
 
 
 def outcome_command(a):
     manifest, runs, controls, evaluation = rebuild(a.session)
-    print_outcomes(evaluation, 'rebuilt from the raw files')
+    status = status_of(a.session, evaluation)
+    print_outcomes(evaluation, f'{status}, rebuilt from the raw files')
+    return EXIT_FAILED if status == STATUS_CONTROL else EXIT_DONE
+
+
+def attempts_command(a):
+    rows = attempts(a.evidence)
+    if a.json:
+        print(json.dumps(rows, indent=1))
+        return EXIT_DONE
+    if not rows:
+        print('no session in ' + a.evidence)
+    for r in rows:
+        print(f'{r["id"]}  {"gate" if r["gate"] else "not gate"}  {r["status"]}' + (f'  supersedes {r["supersedes"]}' if r['supersedes'] else '') + f'  declared {r["declaredUtc"]}')
     return EXIT_DONE
 
 
@@ -760,6 +885,9 @@ def parser():
     common(sub.add_parser('go', help='declare and run'))
     p = sub.add_parser('outcome', help='recompute the outcomes from a session\'s raw files')
     p.add_argument('--session', required=True)
+    p = sub.add_parser('attempts', help='list every session (attempt) of an evidence directory with its status')
+    p.add_argument('--evidence', required=True)
+    p.add_argument('--json', action='store_true')
     return ap
 
 
@@ -768,25 +896,29 @@ def main(argv):
     try:
         if a.command == 'outcome':
             return outcome_command(a)
+        if a.command == 'attempts':
+            return attempts_command(a)
         if a.command in ('declare', 'go') and a.smoke:
             a.scale, a.cells, a.rounds = 0.025, 'F-2M-25-system,R-2M-25-system-1-05-05', 2
         if a.command == 'declare':
             declare(a)
             return EXIT_DONE
         directory = declare(a) if a.command == 'go' else a.session
+        started = started_files(directory) if a.command == 'run' else []
+        if started:
+            # an attempt is run ONCE: whatever became of it (refused, aborted, interrupted, finished), its files are kept as they are and a retry is a new declaration
+            raise Refusal(f'{directory} already holds a started session ({", ".join(started)}); a session is run once and its files are kept as they are. '
+                          'A retry is a NEW session declared with --supersedes <this id> --reason <text> (§15.4 Reruns)')
         s = Session(directory, a)
         # the binary measured is the binary declared
         commit, dirty = gate_exe.git_identity(gate_exe.repo_root())
         plan = plan_of(s.h, s.scale, s.manifest['binary']['commit'], s.manifest['binary']['dirty'])
         if plan['binary']['outputHash'] != s.manifest['binary']['outputHash']:
             raise Refusal('the build output has changed since the manifest was written (hash ' + plan['binary']['outputHash'][:16] + ' against ' + s.manifest['binary']['outputHash'][:16] + ')')
-        if os.path.exists(os.path.join(directory, 'session.json')):
-            raise Refusal('this session already ran')
         try:
             return s.go()
-        except Exception as e:      # noqa: BLE001 - recorded as an aborted session, then raised
-            s.log(f'SESSION ABORTED: {type(e).__name__}: {e}')
-            write_json(os.path.join(directory, 'aborted.json'), {'session': s.manifest['id'], 'abortedUtc': iso(), 'error': f'{type(e).__name__}: {e}'})
+        except BaseException as e:      # noqa: BLE001 - recorded as an aborted session (an interrupt too), then raised
+            s.record_abort(e)
             raise
     except Refusal as e:
         print('REFUSED: ' + str(e), file=sys.stderr)
@@ -797,4 +929,10 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    try:
+        code = main(sys.argv[1:])
+    except Exception:       # noqa: BLE001 - the tool's own failure exits 5, never the 1 of "the negative control failed"
+        import traceback
+        traceback.print_exc()
+        code = EXIT_CRASHED
+    sys.exit(code)

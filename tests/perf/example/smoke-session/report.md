@@ -34,6 +34,7 @@ Status: **complete**. Not a gate session.
 | Not a gate session because | scale 0.025 (a scaled cell gates nothing); not the whole matrix; 2 rounds, not five; --no-load-validity |
 | Supersedes |  |
 | Reason |  |
+| Invalidation of the superseded session (derived from its files) |  |
 | Binary commit, build-output SHA-256 | f2a5d2e3ffad3cd22269eaaeeabb09b98b206b06, 392cc3625c05ef58 |
 | Scale | 0.025 |
 | Rounds | 2 |
@@ -66,7 +67,7 @@ Status: **complete**. Not a gate session.
 
 ### Runs (raw table: every attempt, valid or not)
 
-| Run | Cell | Kind | Attempt | Round | Status | Rows/s | T-IMPORT s | Cancel to return s | Recovery open s | Delete s | Attribution / CAN-01e | Token gap s | Load (U) | Reasons |
+| Run | Cell | Kind | Attempt | Round | Status | Rows/s | T-IMPORT s | Cancel to return s | Recovery open s | Delete s | Attribution / CAN-01e / cancel class | Token gap s | Load (U) | Reasons |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | F-2M-25-system-timed-a1-round1 | F-2M-25-system | timed | 1 | round1 | ok | 53,037 | 0.95 |  |  |  |  | 0.102 | NOT ASSESSED |  |
 | R-2M-25-system-1-05-05-timed-a1-round1 | R-2M-25-system-1-05-05 | timed | 1 | round1 | ok | 51,505 | 0.98 |  |  |  |  | 0.090 | NOT ASSESSED |  |
@@ -112,6 +113,8 @@ Status: **complete**. Not a gate session.
 |---|---|---|---|---|---|
 | new | 1 | FAIL | 625 | 2 | REMOTE pages 625, levels over the SHARED cap 2 |
 | existing | 1 | FAIL | 0 | 2 | REMOTE pages 0, levels over the SHARED cap 2 |
+
+Result: FAILED AS REQUIRED - both controls FAIL as required.
 
 ### Figures per cell
 

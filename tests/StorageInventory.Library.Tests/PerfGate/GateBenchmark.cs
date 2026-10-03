@@ -117,13 +117,20 @@ internal static class GateBenchmark
         var options = new RunOptions(spec, scale, mode, GateSupport.Req(args, "prefill-from"), GateSupport.Opt(args, "stats", "") is { Length: > 0 } s ? s : null,
             GateSupport.Opt(args, "analysis-dir", Path.GetTempPath()), GateSupport.Opt(args, "label", spec.Id + "-" + mode.Replace(':', '-')), Binary(args, Engine()));
         var record = GateRunner.RunCell(options);
-        var problems = RecordJson.Validate(RecordJson.Serialize(record));
-        if (problems.Count > 0 && mode != "crash")
-        {
-            Console.Error.WriteLine("gate: the run record is not fit as raw evidence: " + string.Join("; ", problems));
-            return 3;
-        }
-        return 0;
+        var code = ExitCodeOf(mode, record, out var problems);
+        if (code != 0) Console.Error.WriteLine("gate: the run record is not fit as raw evidence: " + string.Join("; ", problems));
+        return code;
+    }
+
+    /// <summary>The exit code of a measuring child (§15.4 "Validity"). <b>0</b> whenever its record can be interpreted, WHATEVER the run's result: a save that
+    /// failed (even at BEGIN, before a second IMP-11 check), a cancellation the product did not honour (the save published), a cancel point that was never reached
+    /// and a rollback that did not hold are MEASURED results that the orchestrator judges (MISSED or STOP) and never replaces (C4R-M03). <b>3</b> only for a record
+    /// that cannot be interpreted as raw evidence (a missing or malformed field), which the orchestrator treats as an invalid run. A crash run's record is the one
+    /// printed before the kill; the orchestrator judges it with its recovery.</summary>
+    internal static int ExitCodeOf(string mode, RunRecord record, out List<string> problems)
+    {
+        problems = RecordJson.Validate(RecordJson.Serialize(record));
+        return problems.Count > 0 && mode != "crash" ? 3 : 0;
     }
 
     private static int Control(string[] args)

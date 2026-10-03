@@ -6,7 +6,8 @@ Usage:  python perf_report.py <session dir> [<session dir> ...] [--out report.md
 
 Each session directory is read from its RAW files (manifest.json, machine.json, quiet.jsonl, judgements.jsonl, runs.jsonl, attribution/*.verdict.json,
 refused.json, aborted.json), not from session.json: the tables are recomputed, so a report never disagrees with the raw record. Every session given is
-reported in full, an invalid, refused or aborted one included. Nothing here is a path or a name of the machine.
+reported in full, an invalid, refused or aborted one included, and a session whose negative control did not FAIL says TEST-P1 FAILED in its status, its
+PERF-15 (a) row and its control table. Nothing here is a path or a name of the machine.
 """
 import argparse
 import json
@@ -77,7 +78,7 @@ def manifest_section(m):
     lines = table(['Field', 'Value'], [
         ('Identifier', m['id']), ('Declared (before the first run)', m['declaredUtc']), ('Gate session', m['gate']),
         ('Not a gate session because', '; '.join(m.get('notGateBecause', [])) or ''),
-        ('Supersedes', m.get('supersedes') or ''), ('Reason', m.get('reason') or ''),
+        ('Supersedes', m.get('supersedes') or ''), ('Reason', m.get('reason') or ''), ('Invalidation of the superseded session (derived from its files)', m.get('invalidationOfSuperseded') or ''),
         ('Binary commit, build-output SHA-256', f'{m["binary"]["commit"]}{" (dirty)" if m["binary"]["dirty"] else ""}, {m["binary"]["outputHash"][:16]}'),
         ('Scale', m['scale']), ('Rounds', m['rounds']), ('Run order', m['runOrder']), ('Load validity', m['loadValidity']),
         ('Quiet check', f'{m["quietCheck"]["seconds"]} s, {m["quietCheck"]["collections"]} collections, U mean <= {m["quietCheck"]["meanMax"]}%, p95 <= {m["quietCheck"]["p95Max"]}%'),
@@ -109,9 +110,9 @@ def runs_section(runs):
                      else load.get('verdict', 'not judged by load' if r['kind'] == 'attribution' else ''))
         rows.append((r['runId'], r['cell'], r['kind'], r['attempt'], r['round'], r['status'], fmt(m.get('filesPerSecond'), ',.0f'), fmt(m.get('importSeconds'), '.2f'),
                      fmt(m.get('cancelSeconds'), '.3f'), fmt(m.get('recoverySeconds'), '.3f'), fmt(m.get('deleteSeconds'), '.2f'),
-                     m.get('attribution') or ('published' if m.get('publishedAfterCancel') else ''), fmt(m.get('tokenGapSeconds'), '.3f'), load_text,
+                     m.get('attribution') or ('published' if m.get('publishedAfterCancel') else m.get('cancelClass', '')), fmt(m.get('tokenGapSeconds'), '.3f'), load_text,
                      '; '.join(r['reasons'])))
-    return table(['Run', 'Cell', 'Kind', 'Attempt', 'Round', 'Status', 'Rows/s', 'T-IMPORT s', 'Cancel to return s', 'Recovery open s', 'Delete s', 'Attribution / CAN-01e', 'Token gap s', 'Load (U)', 'Reasons'], rows)
+    return table(['Run', 'Cell', 'Kind', 'Attempt', 'Round', 'Status', 'Rows/s', 'T-IMPORT s', 'Cancel to return s', 'Recovery open s', 'Delete s', 'Attribution / CAN-01e / cancel class', 'Token gap s', 'Load (U)', 'Reasons'], rows)
 
 
 def imp11_section(runs):
@@ -157,9 +158,13 @@ def outcomes_section(evaluation):
     return lines + [''] + table(['Budget', 'Cell', 'Part', 'Outcome', 'Why'], detail)
 
 
-def control_section(controls):
-    return table(['Variant', 'Attempt', 'Verdict', 'REMOTE pages', 'Levels over the SHARED cap', 'Reasons'],
-                 [(c['variant'], c['attempt'], c['verdict'], fmt(c.get('remotePages')), fmt(c.get('levelsOverSharedCap')), '; '.join(c.get('reasons', []))) for c in controls]) if controls else ['_No negative control ran._']
+def control_section(controls, evaluation):
+    lines = table(['Variant', 'Attempt', 'Verdict', 'REMOTE pages', 'Levels over the SHARED cap', 'Reasons'],
+                  [(c['variant'], c['attempt'], c['verdict'], fmt(c.get('remotePages')), fmt(c.get('levelsOverSharedCap')), '; '.join(c.get('reasons', []))) for c in controls]) if controls else ['_No negative control ran._']
+    control = evaluation.get('negativeControl')
+    if control is not None:
+        lines += ['', ('Result: ' + control['outcome'] + ' - ' + control['why'] + '.') if control['ok'] else ('**TEST-P1 FAILED**: ' + control['why'] + '.')]
+    return lines
 
 
 def attribution_section(directory):
@@ -185,6 +190,13 @@ def caveats(manifest, evaluation, runs, quiet):
     invalid = [r for r in runs if r['status'] == 'invalid']
     if invalid:
         c.append(f'{len(invalid)} run(s) are invalid (kept in the raw table with their reasons): ' + ', '.join(sorted({r["runId"] for r in invalid}))[:400] + '.')
+    seen = [r for r in invalid if r['metrics'].get('problem')]
+    if seen:
+        c.append(f'{len(seen)} invalid run(s) had shown a behavioural failure before an environmental rule invalidated them (kept in the raw table, with the observation; the replacement runs decide the cell under the accepted rules): '
+                 + ', '.join(sorted(r['runId'] for r in seen))[:400] + '.')
+    control = evaluation.get('negativeControl')
+    if control is not None and not control['ok']:
+        c.append('TEST-P1 FAILED: ' + control['why'] + '. The checker is defective, so no PERF-15 (a) verdict of this session can be relied on, and PERF-15 (a) is not met.')
     failed_quiet = [q['name'] for q in quiet if q.get('verdict') == 'NOT QUIET']
     if failed_quiet:
         c.append('Quiet checks that failed: ' + ', '.join(failed_quiet) + '.')
@@ -204,15 +216,17 @@ def session_report(directory):
     refused = load_json(os.path.join(directory, 'refused.json'))
     aborted = load_json(os.path.join(directory, 'aborted.json'))
     out = [f'## Session {manifest["id"]}', '']
-    status = 'REFUSED (the quiet check before the session failed)' if refused else f'ABORTED ({aborted["error"]})' if aborted else 'complete'
-    out += [f'Status: **{status}**.' + (' **Gate session.**' if manifest['gate'] else ' Not a gate session.'), '']
+    status = perf_session.status_of(directory, evaluation)
+    detail = f' ({refused["reason"]})' if refused else f' ({aborted["error"]}; {aborted.get("runsRecorded", 0)} run(s) recorded before it stopped)' if aborted \
+        else ' (a raw table and no outcome: the session did not finish)' if status == 'INCOMPLETE' else ''
+    out += [f'Status: **{status}**{detail}.' + (' **Gate session.**' if manifest['gate'] else ' Not a gate session.'), '']
     out += ['### Machine record', ''] + machine_section(machine) + ['']
     out += ['### Manifest (written before the session started)', ''] + manifest_section(manifest) + ['']
     out += ['### Quiet checks', ''] + quiet_section(quiet) + ['']
     out += ['### Runs (raw table: every attempt, valid or not)', ''] + runs_section(runs) + ['']
     out += ['### IMP-11 and resources per run', ''] + imp11_section(runs) + ['']
     out += ['### PERF-15 (a): key-range attribution', ''] + attribution_section(directory) + ['']
-    out += ['### Negative control (must FAIL)', ''] + control_section(controls) + ['']
+    out += ['### Negative control (must FAIL)', ''] + control_section(controls, evaluation) + ['']
     out += ['### Figures per cell', ''] + figures_section(evaluation) + ['']
     out += ['### Outcomes', ''] + outcomes_section(evaluation) + ['']
     out += ['### Caveats', ''] + [f'- {c}' for c in caveats(manifest, evaluation, runs, quiet)] + ['']

@@ -219,6 +219,25 @@ internal static class GateRunner
     /// <summary>The importer's cancel points by number (§15.4).</summary>
     internal static readonly string[] PointNames = ["", "after a row token check", "verification start", "verification middle", "final statements"];
 
+    /// <summary>What the harness does when a cancel point is reached. Test seam: a benchmark child never changes it (an in-process test sets it and restores
+    /// it), so that the records of a save that IGNORES the cancellation and of a cancel point that was never reached can be produced and judged.</summary>
+    internal enum CancelBehaviour
+    {
+        /// <summary>The shipped path: the save token is cancelled.</summary>
+        Cancel,
+
+        /// <summary>The cancellation is requested and recorded (time stamp, rows, journal) but the token is not cancelled: the product never sees it and publishes.</summary>
+        RequestWithoutCancelling,
+
+        /// <summary>No cancellation is requested at all (the point is "not reached").</summary>
+        DoNotRequest,
+    }
+
+    internal static CancelBehaviour TestCancelBehaviour { get; set; } = CancelBehaviour.Cancel;
+
+    /// <summary>Test seam: a space guard for the measured import (the shipped harness has none), to make a save fail at <c>BEGIN</c>.</summary>
+    internal static ISpaceGuard? TestSpaceGuard { get; set; }
+
     /// <summary>One run of one cell. The record is returned; a <c>crash</c> run kills this process at the journal's peak instead, after
     /// printing its record.</summary>
     internal static RunRecord RunCell(RunOptions o)
@@ -303,17 +322,18 @@ internal static class GateRunner
 
             void Cancel(string pointName)
             {
-                if (cancelled) return;
+                if (cancelled || TestCancelBehaviour == CancelBehaviour.DoNotRequest) return;
                 cancelled = true;
                 cancelPointName = pointName;
                 cancelRows = lastRows;
                 journalAtCancel = GateSupport.HandleLengthOrZero(journal);
                 cancelStamp = Stopwatch.GetTimestamp();
-                cancel.Cancel();
+                if (TestCancelBehaviour == CancelBehaviour.Cancel) cancel.Cancel();
             }
 
             var options = new ImportOptions
             {
+                SpaceGuard = TestSpaceGuard,
                 OnSpaceCheck = check =>
                 {
                     checks.Add([(long)check.Kind, check.RowsInserted, check.PageCount, check.PageSize, check.MainFileLength, check.JournalLength, check.PendingGrowth, GateSupport.FreeBytes(main)]);
@@ -379,7 +399,7 @@ internal static class GateRunner
                 RollbackRecord? rollback = null;
                 var published = result is not null;
                 if (!published) rollback = CheckRolledBack(session, dbBefore, dbAfter, journalAfter, namesBefore, snapshotsBefore);
-                cancelRecord = new CancelRecord(cancelPoint, cancelPointName, seconds, cancelRows, journalAtCancel, outcome, rollback, published && o.Mode == "cancel-after-final");
+                cancelRecord = new CancelRecord(cancelPoint, cancelPointName, seconds, cancelRows, journalAtCancel, outcome, rollback, published && o.Mode == "cancel-after-final", cancelled);
                 if (!Quiet) Console.WriteLine($"cancelled at {cancelPointName} ({journalAtCancel / 1048576.0:0.0} MiB of journal, {cancelRows:N0} rows): returned after {seconds:0.000} s; {outcome}");
             }
 

@@ -46,7 +46,10 @@ internal sealed record AttributionRecord(TargetRecord Target, string Layout, lon
 /// <summary>The state after a cancellation, asserted by the child (PERF-15 (c)): everything rolled back.</summary>
 internal sealed record RollbackRecord(bool RolledBack, long SnapshotsAfter, long NamesAfter, long MainLengthBefore, long MainLengthAfter, long JournalLengthAfter, bool OlderSnapshotsVerify, string? Problem);
 
-internal sealed record CancelRecord(int Point, string PointName, double CancelToReturnSeconds, long RowsAtCancel, long JournalAtCancelBytes, string Outcome, RollbackRecord? Rollback, bool PublishedAfterCancel);
+/// <summary>One cancel run (or the cancellation after the final check). <c>Requested</c> is false when the harness never reached its cancel point (no cancellation was
+/// asked for: the run measures nothing about cancelling); <c>Rollback</c> is null exactly when the save PUBLISHED (the product did not honour the cancellation, so
+/// there is no rollback to assert): that run is a valid, measured miss, not an unfit record (C4R-M03).</summary>
+internal sealed record CancelRecord(int Point, string PointName, double CancelToReturnSeconds, long RowsAtCancel, long JournalAtCancelBytes, string Outcome, RollbackRecord? Rollback, bool PublishedAfterCancel, bool Requested);
 
 internal sealed record RecoveryRecord(double OpenSeconds, string State, long HotJournalBytes, long MainBeforeBytes, long MainAfterBytes, long JournalAfterBytes, long Snapshots, bool OlderSnapshotsVerify, string? Problem);
 
@@ -126,6 +129,7 @@ internal static class RecordJson
         if (Has(root, "cell")) Need(root.GetProperty("cell"), "cell.", "id", "label", "class", "kind", "nominalFiles", "prefillKey", "scale");
         if (Has(root, "library")) Need(root.GetProperty("library"), "library.", "beforeBytes", "afterBytes", "pageSize");
         var kindText = Has(root, "kind") ? root.GetProperty("kind").GetString() : null;
+        var published = Has(root, "outcome") && root.GetProperty("outcome").GetString() == "Published";
         if (kindText is "timed" or "attribution" or "cancel-after-final" or "delete")
         {
             Need(root, "", "imp11", "token", "journal", "memory", "phases");
@@ -133,7 +137,9 @@ internal static class RecordJson
             {
                 var imp = root.GetProperty("imp11");
                 Need(imp, "imp11.", "checks", "spaceChecks", "finalPendingGrowth", "commitGrowth", "commitGrowthEqualsFinalPending");
-                if (Has(imp, "checks", JsonValueKind.Array) && imp.GetProperty("checks").GetArrayLength() < 2) problems.Add("imp11.checks holds fewer than two checks");
+                // Only a save that PUBLISHED made at least BEGIN's check and the final one. A save that failed early (at BEGIN, before a second check) is a valid,
+                // measured record of that failure: it is not unfit (C4R-M03), and the orchestrator judges it a failed run, never a replaced one.
+                if (published && Has(imp, "checks", JsonValueKind.Array) && imp.GetProperty("checks").GetArrayLength() < 2) problems.Add("imp11.checks holds fewer than two checks");
             }
             if (Has(root, "token")) Need(root.GetProperty("token"), "token.", "observations", "maxGapSeconds");
             if (Has(root, "journal")) Need(root.GetProperty("journal"), "journal.", "lengthAtFinalCheck", "sampledPeak", "largestSamplingIntervalMs");
@@ -158,7 +164,14 @@ internal static class RecordJson
         if (kindText == "cancel")
         {
             Need(root, "", "cancel");
-            if (Has(root, "cancel")) Need(root.GetProperty("cancel"), "cancel.", "point", "cancelToReturnSeconds", "rollback", "outcome");
+            if (Has(root, "cancel"))
+            {
+                var cancel = root.GetProperty("cancel");
+                Need(cancel, "cancel.", "point", "cancelToReturnSeconds", "outcome", "requested");
+                // The rollback is asserted for every cancel run whose save did not publish. A run whose save PUBLISHED despite the cancellation (the product did not
+                // honour it, or it was never requested) has no rollback to assert: that is a valid, measured miss the orchestrator reports, not an unfit record (C4R-M03).
+                if (Has(cancel, "outcome") && cancel.GetProperty("outcome").GetString() != "Published") Need(cancel, "cancel.", "rollback");
+            }
         }
         if (kindText == "crash")
         {
