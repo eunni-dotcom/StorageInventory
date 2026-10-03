@@ -102,7 +102,7 @@ jobs:
           $exe = (Get-ChildItem tests\StorageInventory.Library.Tests\bin\Release -Recurse -Filter StorageInventory.Library.Tests.exe | Select-Object -First 1).FullName
           & $exe GateSmoke WorkloadClass PerfGate
 
-      - name: TEST-P1 matrix, once (hosted, informational: NOT a gate session, a hosted figure never meets or misses a target)
+      - name: "TEST-P1 matrix, once (hosted, informational - NOT a gate session; a hosted figure never meets or misses a target)"
         shell: powershell
         continue-on-error: true
         timeout-minutes: 240
