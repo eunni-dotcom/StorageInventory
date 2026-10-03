@@ -206,6 +206,14 @@ def test_precedence_and_independence():
     check('...and met at exactly 0.5 s', m.evaluate([cell('a')], r.runs)['tokenInterval']['outcome'] == 'MET')
 
 
+def test_can01e():
+    r = Runs().add('c', 'cancel-after-final', publishedAfterCancel=True)
+    check('CAN-01e: a cancellation after the final check that published is MET', m.evaluate([cell('c')], r.runs)['cancelAfterFinalCheck']['outcome'] == 'MET')
+    r = Runs().add('c', 'cancel-after-final', 'failed', problem='did not publish')
+    check('CAN-01e: one that did not publish is MISSED', m.evaluate([cell('c')], r.runs)['cancelAfterFinalCheck']['outcome'] == 'MISSED')
+    check('CAN-01e: not planned when no such run exists', m.evaluate([cell('c')], [])['cancelAfterFinalCheck']['outcome'] == 'not planned')
+
+
 def test_rebuild():
     with tempfile.TemporaryDirectory() as d:
         manifest = {'schema': 1, 'id': 's', 'gate': True, 'rounds': 5, 'plan': {'cells': [cell('c', perf01=True)]}}
@@ -305,7 +313,7 @@ def test_round_invalidation():
 
 
 def main():
-    for f in (test_statistic_and_replacement, test_perf01, test_perf14, test_cancel_and_recovery, test_attribution, test_precedence_and_independence, test_rebuild, test_orchestrator_judging, test_round_invalidation):
+    for f in (test_statistic_and_replacement, test_perf01, test_perf14, test_cancel_and_recovery, test_attribution, test_precedence_and_independence, test_can01e, test_rebuild, test_orchestrator_judging, test_round_invalidation):
         f()
     print(f'{len(FAILS)} failed' if FAILS else 'all session self-tests passed')
     return 1 if FAILS else 0

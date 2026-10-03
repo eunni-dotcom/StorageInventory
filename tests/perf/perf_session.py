@@ -46,9 +46,10 @@ SCHEMA = 1
 QUIET_SECONDS = 60
 QUIET_COLLECTIONS = 120
 CHILD_TIMEOUT = 4 * 3600
-DELETE_CELLS = ('F-2M-25-system',)
+DELETE_CELLS = ('F-2M-25-system',)           # the deletion of a 2M snapshot (PERF-10, informational)
+AFTER_FINAL_CELLS = ('F-2M-25-system',)      # CAN-01e: a cancellation after the final check publishes (recorded once)
 CANCEL_KINDS = ('cancel:1', 'cancel:2', 'cancel:3', 'cancel:4')
-BLOCK_ORDER = ['attribution', 'cancel:1', 'cancel:2', 'cancel:3', 'cancel:4', 'crash', 'delete']
+BLOCK_ORDER = ['attribution', 'cancel:1', 'cancel:2', 'cancel:3', 'cancel:4', 'crash', 'cancel-after-final', 'delete']
 LOAD_INDEPENDENT = ('attribution', 'control')       # judged by the checker, not by the load: a journal is deterministic
 
 EXIT_DONE, EXIT_FAILED, EXIT_USAGE, EXIT_REFUSED, EXIT_ABORTED = 0, 1, 2, 3, 4
@@ -162,6 +163,8 @@ def declare(a):
     kinds_of = {}
     for c in chosen:
         k = list(c['kinds'])
+        if c['id'] in AFTER_FINAL_CELLS:
+            k.append('cancel-after-final')
         if c['id'] in DELETE_CELLS:
             k.append('delete')
         kinds_of[c['id']] = k
@@ -218,6 +221,14 @@ class Session:
         print(line, flush=True)
         with open(os.path.join(self.dir, 'events.log'), 'a', encoding='utf-8', newline='\n') as f:
             f.write(line + '\n')
+
+    def scrub(self, text):
+        """No path of this machine in a kept record: the user profile, the temporary folder, the benchmark root and the session directory become tokens."""
+        for raw, token in ((getattr(self, 'dir', ''), '<session>'), (getattr(self, 'bench_root', ''), '<scratch>'), (getattr(self, 'cache', ''), '<cache>'), (os.environ.get('TEMP', ''), '<temp>'), (os.path.expanduser('~'), '<user>')):
+            if raw:
+                for form in {raw, raw.replace('\\', '/'), raw.replace('/', '\\')}:
+                    text = text.replace(form, token)
+        return text
 
     # ---- the load source
     def start_load(self):
@@ -345,11 +356,12 @@ class Session:
                 pass
             rec['recovery'] = recovery
             rec['recoveryExit'] = rcode
+            rec['killedLibraryDirectory'] = rec['killedAppData'] = '<scratch>'       # no path of the machine is kept in the raw table
             if recovery is None:
                 err += f'\nrecovery child failed ({rcode}): {rerr[-200:]}'
         envelope = {'session': self.manifest['id'], 'runId': label, 'cell': cell['id'], 'kind': kind, 'attempt': attempt, 'round': round_name, 'exitCode': code,
                     'startedUtc': iso(datetime.datetime.fromtimestamp(started, datetime.timezone.utc)), 'endedUtc': iso(datetime.datetime.fromtimestamp(ended, datetime.timezone.utc)),
-                    'childWallSeconds': round(ended - started, 3), 'stderrTail': err[-400:] if err else ''}
+                    'childWallSeconds': round(ended - started, 3), 'stderrTail': self.scrub(err[-400:]) if err else ''}
         line = dict(rec) if isinstance(rec, dict) else {'kind': 'failed', 'label': label}
         line['envelope'] = envelope
         append_line(os.path.join(self.dir, 'runs.jsonl'), line)
@@ -367,7 +379,7 @@ class Session:
         reasons = run['reasons']
         kind = run['kind']
         if code not in (0, -1) and not (kind == 'crash' and rec and rec.get('kind') == 'crash'):
-            reasons.append(f'the harness child failed (exit {code}): {(err or "").strip().splitlines()[-1][:160] if err and err.strip() else "no message"}')
+            reasons.append(self.scrub(f'the harness child failed (exit {code}): {(err or "").strip().splitlines()[-1][:160] if err and err.strip() else "no message"}'))
             return
         if not isinstance(rec, dict):
             reasons.append('the harness child produced no run record')
@@ -422,6 +434,11 @@ class Session:
                 return
             run['status'] = 'ok'
             return
+        elif kind == 'cancel-after-final':
+            if rec['outcome'] != 'Published' or not (rec.get('cancel') or {}).get('publishedAfterCancel'):
+                failed = f'CAN-01e: a cancellation after the final check must publish, but the outcome was {rec["outcome"]}'
+            else:
+                m['publishedAfterCancel'] = True
         elif kind.startswith('cancel:'):
             c = rec.get('cancel') or {}
             rb = c.get('rollback') or {}
@@ -664,10 +681,10 @@ def fit_problems(rec, kind):
         if rec.get('kind') != 'crash':
             problems.append(f'kind is {rec.get("kind")!r}, not crash')
         return problems
-    expected = {'timed': 'timed', 'attribution': 'attribution', 'delete': 'delete'}.get(kind, 'cancel')
+    expected = {'timed': 'timed', 'attribution': 'attribution', 'delete': 'delete', 'cancel-after-final': 'cancel-after-final'}.get(kind, 'cancel')
     if rec.get('kind') != expected:
         problems.append(f'kind is {rec.get("kind")!r}, not {expected}')
-    if kind in ('timed', 'attribution', 'delete'):
+    if kind in ('timed', 'attribution', 'delete', 'cancel-after-final'):
         for k in ('imp11', 'token', 'journal', 'memory'):
             if not rec.get(k):
                 problems.append('missing ' + k)

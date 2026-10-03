@@ -108,9 +108,10 @@ def runs_section(runs):
         load_text = (f'{load["verdict"]} ({load.get("n")} collections, mean {load.get("mean"):.1f}%, p95 {load.get("p95"):.1f}%)' if load.get('mean') is not None
                      else load.get('verdict', 'not judged by load' if r['kind'] == 'attribution' else ''))
         rows.append((r['runId'], r['cell'], r['kind'], r['attempt'], r['round'], r['status'], fmt(m.get('filesPerSecond'), ',.0f'), fmt(m.get('importSeconds'), '.2f'),
-                     fmt(m.get('cancelSeconds'), '.3f'), fmt(m.get('recoverySeconds'), '.3f'), m.get('attribution') or '', fmt(m.get('tokenGapSeconds'), '.3f'), load_text,
+                     fmt(m.get('cancelSeconds'), '.3f'), fmt(m.get('recoverySeconds'), '.3f'), fmt(m.get('deleteSeconds'), '.2f'),
+                     m.get('attribution') or ('published' if m.get('publishedAfterCancel') else ''), fmt(m.get('tokenGapSeconds'), '.3f'), load_text,
                      '; '.join(r['reasons'])))
-    return table(['Run', 'Cell', 'Kind', 'Attempt', 'Round', 'Status', 'Rows/s', 'T-IMPORT s', 'Cancel to return s', 'Recovery open s', 'Attribution', 'Token gap s', 'Load (U)', 'Reasons'], rows)
+    return table(['Run', 'Cell', 'Kind', 'Attempt', 'Round', 'Status', 'Rows/s', 'T-IMPORT s', 'Cancel to return s', 'Recovery open s', 'Delete s', 'Attribution / CAN-01e', 'Token gap s', 'Load (U)', 'Reasons'], rows)
 
 
 def imp11_section(runs):
@@ -147,6 +148,7 @@ def outcomes_section(evaluation):
         rows.append((name, b['outcome'] + (f' (would be {b["wouldBe"]})' if not evaluation['judged'] else ''), 'blocks acceptance' if b['blocksAcceptance'] else ''))
     t = evaluation['tokenInterval']
     rows.append(('Token-check interval (CAN-01d, at most 0.5 s)', f'{t["outcome"]} (largest gap {fmt(t["largestGapSeconds"], ".3f")} s over {t["runs"]} runs)', ''))
+    rows.append(('A cancellation after the final check publishes (CAN-01e)', evaluation['cancelAfterFinalCheck']['outcome'], ''))
     lines = table(['Budget', 'Outcome', ''], rows)
     detail = []
     for name, b in evaluation['budgets'].items():

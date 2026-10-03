@@ -215,6 +215,11 @@ def evaluate(cells, runs, judged=True):
                          'cells': [{'cell': r[0], 'part': r[1], 'outcome': r[2], 'why': r[3]} for r in results]}
     # the token-check interval (CAN-01d): the largest gap between two looks at the save token over every run that recorded one
     gaps = [r['metrics']['tokenGapSeconds'] for r in runs if r['status'] in ('ok', 'failed') and r['metrics'].get('tokenGapSeconds') is not None]
+    after_final = [r for r in runs if r['kind'] == 'cancel-after-final']
+    can01e = {'runs': len(after_final), 'outcome': ('not planned' if not after_final else 'MET' if any(r['status'] == 'ok' for r in after_final)
+                                                  else 'MISSED' if any(r['status'] == 'failed' for r in after_final) else 'NOT MEASURED')}
+    if not judged and can01e['outcome'] != 'not planned':
+        can01e['outcome'] = 'NOT JUDGED'
     token = {'largestGapSeconds': max(gaps) if gaps else None, 'runs': len(gaps)}
     token['outcome'] = ('NOT MEASURED' if not gaps else 'MET' if max(gaps) <= TOKEN_INTERVAL else 'MISSED') if judged else 'NOT JUDGED'
-    return {'cells': per_cell, 'budgets': budgets, 'tokenInterval': token, 'judged': judged}
+    return {'cells': per_cell, 'budgets': budgets, 'tokenInterval': token, 'cancelAfterFinalCheck': can01e, 'judged': judged}
