@@ -814,8 +814,8 @@ internal sealed class LibrarySession
     }
 
     /// <summary>Ends this process's hold on the Library the way process exit does, for tests that cannot exit: closes the gate and
-    /// the writer lock handle. Production never calls it (the lock is held until the process exits, CONC-01); an audit checks that
-    /// no shipped code does.</summary>
+    /// the writer lock handle. Production never calls it (the lock is held until the process exits, CONC-01); no audit enforces that
+    /// (review observation C4R-O06), the callers are the tests.</summary>
     internal void TestOnlyShutdown()
     {
         Gate.Close();

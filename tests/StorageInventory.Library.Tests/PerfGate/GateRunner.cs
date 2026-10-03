@@ -291,7 +291,11 @@ internal static class GateRunner
             var cancelRows = 0L;
             long journalAtCancel = 0;
             string cancelPointName = cancelPoint > 0 ? PointNames[cancelPoint] : o.Mode == "cancel-after-final" ? "after the final check" : "";
-            var expectedRows = (long)(0.95 * (header.Files + header.Folders));
+            // cancel point 1 is "right after a row check at or after 95% of the rows" (§15.4). A check now falls after every 4,096 inserted rows of ANY
+            // table (the dictionary rows included), and the dictionary rows and the folder rows all come before the file rows, so the file rows are the
+            // progress to read: from the moment 95% of the files are in, at least 95% of every row of the import is.
+            var expectedFiles = (long)(0.95 * header.Files);
+            long filesSoFar = 0;
             long journalAtKill = 0;
             var operationStart = DateTime.UtcNow;
             var operationWatch = Stopwatch.StartNew();
@@ -342,9 +346,10 @@ internal static class GateRunner
                         Process.GetCurrentProcess().Kill();
                         return;
                     }
-                    if (cancelPoint == 1 && point == ImportPoint.AfterRowCheck && lastRows >= expectedRows) Cancel(PointNames[1]);
+                    if (cancelPoint == 1 && point == ImportPoint.AfterRowCheck && filesSoFar >= expectedFiles) Cancel(PointNames[1]);
                     else if (cancelPoint is 2 or 3 or 4 && (int)point == cancelPoint) Cancel(PointNames[cancelPoint]);
                 } : null,
+                OnFileRows = cancelPoint == 1 ? files => filesSoFar = files : null,
                 AfterRows = cancelPoint == 1 ? () => Cancel("end of row insertion (the 95% row check was not reached)") : null,
             };
 

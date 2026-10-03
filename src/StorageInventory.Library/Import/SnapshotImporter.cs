@@ -14,12 +14,16 @@ namespace StorageInventory.Library;
 /// then publishes (<c>state = 2</c>) and commits. Nothing of the snapshot is visible to any connection before the <c>COMMIT</c>
 /// (CONC-04), a failure rolls everything back, and no earlier snapshot is ever written (it only inserts rows of its own snapshot id
 /// and new dictionary rows of its own source).
-/// <para><b>Checks.</b> At <c>BEGIN</c>, after every <see cref="GuardInterval"/> inserted observation rows and in a final check
-/// immediately before <c>COMMIT</c> (after the verification and the final statements, with nothing in between), the import checks
-/// that its lease is current (OBS-15), looks at the save token (CAN-01d: a cancelled token rolls everything back) and consults the
-/// space guard (IMP-11). Inside the verification the token is observed between queries, every 65,536 rows of a streamed query and
-/// by the engine's progress callback inside a statement; after the verification it is checked once more. The final check is the last
-/// look at the token: a cancellation after it is not observed and the save publishes (CAN-01e).</para>
+/// <para><b>Checks.</b> At <c>BEGIN</c>, after every <see cref="GuardInterval"/> inserted rows of ANY table (the dictionary rows of
+/// <c>name</c> and <c>folder_path</c> included, wherever in the import they are inserted: a folder boundary resets nothing) and in a
+/// final check immediately before <c>COMMIT</c> (after the verification and the final statements, with nothing in between), the import
+/// checks that its lease is current (OBS-15), looks at the save token (CAN-01d: a cancelled token rolls everything back) and consults the
+/// space guard (IMP-11). <b>Time bound.</b> Work that inserts nothing, or little (a name looked up in the dictionary, a slow row), is
+/// counted too: after every <see cref="ClockPoll"/> units of work the clock is read, and when <see cref="MaxLookGap"/> has passed since the
+/// last look at the token the lease and the token are looked at (CAN-03: no two looks more than 0.5 s apart); the space guard keeps its
+/// own row cadence, since growth is driven by rows. Inside the verification the token is observed between queries, every 65,536 rows of
+/// a streamed query and by the engine's progress callback inside a statement; after the verification it is checked once more. The
+/// final check is the last look at the token: a cancellation after it is not observed and the save publishes (CAN-01e).</para>
 /// <para>Every method takes the lease it works under (A-25 (a)): there is no lease-holding object.</para>
 /// </summary>
 internal static class SnapshotImporter
@@ -27,8 +31,17 @@ internal static class SnapshotImporter
     /// <summary>File rows between <see cref="ImportOptions.OnFileRows"/> callbacks.</summary>
     internal const int CheckInterval = 16_384;
 
-    /// <summary>IMP-11 / CAN-01d: observation rows between checks (lease, save token, space guard).</summary>
+    /// <summary>IMP-11 / CAN-01d: inserted rows (of any table) between checks (lease, save token, space guard).</summary>
     internal const int GuardInterval = 4_096;
+
+    /// <summary>CAN-03: units of work (a row inserted, a name looked up) between two readings of the clock. A reading costs tens of
+    /// nanoseconds against microseconds per unit, so the bound below costs nothing measurable, and a unit that costs a few milliseconds
+    /// (a stalled disk) still keeps a look within about <see cref="ClockPoll"/> units of <see cref="MaxLookGap"/>.</summary>
+    internal const int ClockPoll = 64;
+
+    /// <summary>CAN-03: the longest the import goes without looking at the save token (a fifth of the 0.5 s budget of CAN-01d, which
+    /// is what remains for the rollback's own detection and the units between two clock readings).</summary>
+    internal static readonly TimeSpan MaxLookGap = TimeSpan.FromMilliseconds(100);
 
     /// <summary>IMP-04: the per-capture, per-source name cache holds at most this many entries.</summary>
     internal const int NameCacheCapacity = 262_144;
@@ -37,13 +50,13 @@ internal static class SnapshotImporter
     internal delegate (long Main, long Journal) FileLengths();
 
     /// <summary>What one import carries from check to check. It holds no lease.</summary>
-    private sealed class ImportState(CancellationToken cancellation)
+    private sealed class ImportState(CancellationToken cancellation, Func<long>? clock)
     {
-        internal TokenChecker Checker { get; } = new(cancellation);
+        internal TokenChecker Checker { get; } = new(cancellation, clock);
         internal long Rows;
         internal long NextGuard = GuardInterval;
+        internal long Work;
         internal int SpaceChecks;
-        internal long PageSize = -1;
         internal long PeakJournal;
         internal long FinalPending = -1;
         internal long FinalMain = -1;
@@ -54,11 +67,10 @@ internal static class SnapshotImporter
         ImportSnapshotHeader header, ISnapshotRowSource rows, ImportOptions? options, FileLengths? lengths, CancellationToken cancellation)
     {
         var stopwatch = Stopwatch.StartNew();
-        var state = new ImportState(cancellation);
+        var state = new ImportState(cancellation, options?.Clock);
         try
         {
             writer.Begin(lease);
-            state.PageSize = options?.SpaceGuard is null && options?.OnSpaceCheck is null ? -1 : ReadPageSize(writer, lease);
             GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Begin);
             var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, lengths, state, cancellation, stopwatch);
             state.Checker.Close();
@@ -87,12 +99,6 @@ internal static class SnapshotImporter
         catch (Exception ex) when (ex is not OutOfMemoryException) { /* the connection is closed next; SQLite rolls back an open transaction */ }
     }
 
-    private static long ReadPageSize(WriterConnection writer, MutationLease lease)
-    {
-        try { return writer.PageSize(lease); }
-        catch (Exception ex) when (IsUnreadable(ex)) { throw new ImportException(CaptureFailureKind.LibraryFull, "The page size could not be read, so the free space cannot be judged.", ex); }
-    }
-
     /// <summary>An input of the space guard that could not be read (the engine's page count or page size, a file length): the import
     /// stops as <c>LibraryFull</c>, class A (IMP-11: an unknown free space is never treated as enough). A lease violation, a
     /// cancellation and a class C failure are not unreadable inputs and pass through.</summary>
@@ -116,11 +122,10 @@ internal static class SnapshotImporter
         try
         {
             if (lengths is null) throw new IOException("The lengths of the Library files are not available.");
-            var pageCount = writer.PageCount(lease);
-            var pageSize = state.PageSize >= 0 ? state.PageSize : writer.PageSize(lease);
+            var pageCount = ReadEngineInput(writer, lease, options, kind, EngineInput.PageCount);
+            var pageSize = ReadEngineInput(writer, lease, options, kind, EngineInput.PageSize);
             var (main, journal) = lengths();
-            var pending = Math.Max(0L, pageCount * pageSize - main);
-            check = new SpaceCheck(kind, pending, pageCount, pageSize, main, journal, state.Rows);
+            check = new SpaceCheck(kind, PendingGrowth(pageCount, pageSize, main), pageCount, pageSize, main, journal, state.Rows);
         }
         catch (Exception ex) when (IsUnreadable(ex))
         {
@@ -151,15 +156,57 @@ internal static class SnapshotImporter
         if (!permit) throw new ImportException(CaptureFailureKind.LibraryFull, $"The space guard stopped the import at {kind}: the drive holding the Library became nearly full while saving.");
     }
 
-    /// <summary>Counts <paramref name="count"/> inserted observation rows and runs a check at every
-    /// <see cref="GuardInterval"/> of them.</summary>
-    private static void RowsInserted(WriterConnection writer, MutationLease lease, ImportState state, ImportOptions? options, FileLengths? lengths, int count)
+    /// <summary>One engine-side input of a check, read from the writer inside the transaction (IMP-11: at EVERY check, never cached);
+    /// the test seam sees the value and may replace it or fail.</summary>
+    private static long ReadEngineInput(WriterConnection writer, MutationLease lease, ImportOptions? options, SpaceCheckKind kind, EngineInput input)
     {
-        state.Rows += count;
-        if (state.Rows < state.NextGuard) return;
-        while (state.NextGuard <= state.Rows) state.NextGuard += GuardInterval;
-        GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Rows);
-        options?.Probe?.Invoke(ImportPoint.AfterRowCheck);
+        var value = input == EngineInput.PageCount ? writer.PageCount(lease) : writer.PageSize(lease);
+        return options?.OnEngineInput is { } seam ? seam(input, kind, value) : value;
+    }
+
+    /// <summary>IMP-11's pending main-file growth <c>Λ</c> = max(0, <c>page_count</c> × page size − the main file's length): the pages
+    /// of the transaction's image the file does not hold yet. All arithmetic is in 64 bits and checked; an input that is out of range
+    /// (a negative page count or length, a page size of 0 or less, a product that overflows) is an input that cannot be read, so the
+    /// check fails closed and the import rolls back as <c>LibraryFull</c>.</summary>
+    internal static long PendingGrowth(long pageCount, long pageSize, long mainFileLength)
+    {
+        if (pageCount < 0 || pageSize <= 0 || mainFileLength < 0) throw new FormatException("An input of the space check is out of range.");
+        return Math.Max(0L, checked(pageCount * pageSize) - mainFileLength);
+    }
+
+    /// <summary>Accounts for work done since the last call: <paramref name="inserted"/> rows inserted into ANY table (file, folder,
+    /// folder-path, name, error and extension-total rows) and <paramref name="worked"/> further units that inserted nothing (a name
+    /// found in the cache or the dictionary). Two independent bounds apply, and neither is ever reset by a folder boundary because both
+    /// live in <see cref="ImportState"/>: a full check (lease, save token, space guard) after every <see cref="GuardInterval"/> inserted
+    /// rows (IMP-11 (3), CAN-01d), and a look at the lease and the token whenever <see cref="MaxLookGap"/> has passed since the last
+    /// look, tested after every <see cref="ClockPoll"/> units of work (CAN-03).</summary>
+    private static void Advance(WriterConnection writer, MutationLease lease, ImportState state, ImportOptions? options, FileLengths? lengths, int inserted, int worked = 0)
+    {
+        state.Rows += inserted;
+        if (state.Rows >= state.NextGuard)
+        {
+            while (state.NextGuard <= state.Rows) state.NextGuard += GuardInterval;
+            state.Work = 0;
+            GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Rows);
+            options?.Probe?.Invoke(ImportPoint.AfterRowCheck);
+            return;
+        }
+        state.Work += inserted + worked;
+        if (state.Work < ClockPoll) return;
+        state.Work = 0;
+        if (state.Checker.SinceLast < MaxLookGap) return;
+        writer.CheckCurrent(lease);
+        state.Checker.Check();
+    }
+
+    /// <summary>Interns one name and accounts for it: a name new to the source's dictionary is an inserted row of <c>name</c>, and a
+    /// look-up that inserts nothing is still a unit of work. This is the loop that a folder of 100,000 names or more makes long.</summary>
+    private static long Intern(WriterConnection writer, MutationLease lease, NameCache names, byte[] name, ImportState state, ImportOptions? options, FileLengths? lengths)
+    {
+        var before = names.NewNames;
+        var id = names.Intern(lease, name);
+        Advance(writer, lease, state, options, lengths, inserted: (int)(names.NewNames - before), worked: 1);
+        return id;
     }
 
     /// <summary>The capture failure kind of a SQLite error met during an import (§9.4): a constraint failure is an invariant
@@ -357,14 +404,19 @@ internal static class SnapshotImporter
         {
             if (folder.Index != expected || expected >= pathIds.Length) throw new ImportException(CaptureFailureKind.InvariantViolation, "The folder section is out of order.");
             if ((expected == 0) != (folder.ParentIndex < 0) || folder.ParentIndex >= folder.Index) throw new ImportException(CaptureFailureKind.InvariantViolation, "A folder's parent does not precede it.");
-            var nameId = names.Intern(lease, folder.Name);
+            var nameId = Intern(writer, lease, names, folder.Name, state, options, lengths);
             long? parent = folder.ParentIndex < 0 ? null : pathIds[folder.ParentIndex];
             var depth = folder.ParentIndex < 0 ? 0 : depths[folder.ParentIndex] + 1;
 
             var existing = select.Set(0, sourceId).Set(1, parent).Set(2, nameId).ExecuteScalar(lease);
             long pathId;
+            var pathRows = 0;
             if (existing is not null) pathId = Convert.ToInt64(existing);
-            else pathId = insertPath.Set(0, sourceId).Set(1, parent).Set(2, nameId).Set(3, depth).ExecuteInsert(lease);
+            else
+            {
+                pathId = insertPath.Set(0, sourceId).Set(1, parent).Set(2, nameId).Set(3, depth).ExecuteInsert(lease);
+                pathRows = 1;
+            }
             pathIds[expected] = pathId;
             depths[expected] = depth;
 
@@ -375,7 +427,7 @@ internal static class SnapshotImporter
                 .ExecuteNonQuery(lease);
             counts.Folders++;
             expected++;
-            RowsInserted(writer, lease, state, options, lengths, 1);
+            Advance(writer, lease, state, options, lengths, inserted: 1 + pathRows);
         }
         if (expected != pathIds.Length) throw new ImportException(CaptureFailureKind.InvariantViolation, "The folder section ended early.");
     }
@@ -406,7 +458,7 @@ internal static class SnapshotImporter
                         .Set(o + 6, file.CreatedTicks).Set(o + 7, file.AccessedTicks).Set(o + 8, file.Attributes);
                 }
                 batch.ExecuteNonQuery(lease);
-                RowsInserted(writer, lease, state, options, lengths, BatchRows);
+                Advance(writer, lease, state, options, lengths, inserted: BatchRows);
             }
             else
             {
@@ -415,7 +467,7 @@ internal static class SnapshotImporter
                     var (folder, name, file) = pending[r];
                     single.Set(0, snapshotId).Set(1, folder).Set(2, name).Set(3, file.Seq).Set(4, file.Size).Set(5, file.ModifiedTicks).Set(6, file.CreatedTicks)
                         .Set(7, file.AccessedTicks).Set(8, file.Attributes).ExecuteNonQuery(lease);
-                    RowsInserted(writer, lease, state, options, lengths, 1);
+                    Advance(writer, lease, state, options, lengths, inserted: 1);
                 }
             }
             pendingCount = 0;
@@ -430,7 +482,7 @@ internal static class SnapshotImporter
             var sorted = new int[files.Count];
             for (var i = 0; i < files.Count; i++)
             {
-                ids[i] = names.Intern(lease, files[i].Name);
+                ids[i] = Intern(writer, lease, names, files[i].Name, state, options, lengths);
                 sorted[i] = i;
             }
             Array.Sort(ids, sorted);
@@ -498,7 +550,7 @@ internal static class SnapshotImporter
             insert.Set(0, snapshotId).Set(1, error.Seq).Set(2, error.RelativePath).Set(3, StableCodes.ToCode(error.Type)).Set(4, error.Message).ExecuteNonQuery(lease);
             counts.Errors++;
             if (!error.Type.IsInformational()) counts.RealErrors++;
-            RowsInserted(writer, lease, state, options, lengths, 1);
+            Advance(writer, lease, state, options, lengths, inserted: 1);
         }
     }
 
@@ -509,7 +561,7 @@ internal static class SnapshotImporter
         foreach (var (key, files, bytes) in extensions.Ordered())
         {
             insert.Set(0, snapshotId).Set(1, Utf16.ToBytes(key)).Set(2, files).Set(3, bytes).ExecuteNonQuery(lease);
-            RowsInserted(writer, lease, state, options, lengths, 1);
+            Advance(writer, lease, state, options, lengths, inserted: 1);
         }
     }
 

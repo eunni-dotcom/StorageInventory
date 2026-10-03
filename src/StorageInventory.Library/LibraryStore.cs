@@ -391,7 +391,8 @@ internal sealed class LibraryStore
     }
 
     /// <summary>Closes the writer-lock handle the way process exit does, for tests that cannot exit. Production never calls it (the
-    /// lock is held until the process exits, CONC-01), and an audit checks that no shipped code does.</summary>
+    /// lock is held until the process exits, CONC-01); no audit enforces that (review observation C4R-O06), the callers are the tests and
+    /// <see cref="LibrarySession.TestOnlyShutdown"/>.</summary>
     internal void TestOnlyReleaseWriterLock()
     {
         _lockHandle?.Dispose();

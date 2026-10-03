@@ -8,11 +8,14 @@ namespace StorageInventory.Library;
 /// checks between statements, at every IMP-11 check, after the verification) or <see cref="Note"/> (the engine's progress callback
 /// inside a statement), and the checker records when: the largest gap between two consecutive observations is the number TEST-P1
 /// reports against the 0.5 s of CAN-01d. It is touched only by the thread that runs the import (the progress callback runs on the
-/// thread that steps the statement), so it needs no lock; the token itself is thread-safe.
+/// thread that steps the statement), so it needs no lock; the token itself is thread-safe. The clock is
+/// <see cref="Stopwatch.GetTimestamp"/>; a test can substitute one (timestamps in <see cref="Stopwatch"/> ticks) to make the time
+/// bound deterministic.
 /// </summary>
-internal sealed class TokenChecker(CancellationToken token)
+internal sealed class TokenChecker(CancellationToken token, Func<long>? clock = null)
 {
-    private long _last = Stopwatch.GetTimestamp();
+    private readonly Func<long> _clock = clock ?? Stopwatch.GetTimestamp;
+    private long _last = (clock ?? Stopwatch.GetTimestamp)();
     private long _maxGap;
     private long _observations;
 
@@ -26,7 +29,7 @@ internal sealed class TokenChecker(CancellationToken token)
     internal TimeSpan MaxGap => Stopwatch.GetElapsedTime(0, _maxGap);
 
     /// <summary>The time since the last observation.</summary>
-    internal TimeSpan SinceLast => Stopwatch.GetElapsedTime(_last);
+    internal TimeSpan SinceLast => Stopwatch.GetElapsedTime(_last, _clock());
 
     /// <summary>An explicit check: records the observation and throws <see cref="OperationCanceledException"/> when the token is
     /// cancelled (the caller rolls back).</summary>
@@ -40,7 +43,7 @@ internal sealed class TokenChecker(CancellationToken token)
     /// progress callback, where an exception must not cross the native boundary.</summary>
     internal bool Note()
     {
-        var now = Stopwatch.GetTimestamp();
+        var now = _clock();
         var gap = now - _last;
         if (gap > _maxGap) _maxGap = gap;
         _last = now;
@@ -51,7 +54,7 @@ internal sealed class TokenChecker(CancellationToken token)
     /// <summary>Closes the record at the end of the transaction: the time since the last observation counts as a gap too.</summary>
     internal void Close()
     {
-        var gap = Stopwatch.GetTimestamp() - _last;
+        var gap = _clock() - _last;
         if (gap > _maxGap) _maxGap = gap;
     }
 }

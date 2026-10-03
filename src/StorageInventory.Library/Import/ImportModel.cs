@@ -98,7 +98,8 @@ internal enum SpaceCheckKind
     /// <summary>Right after <c>BEGIN IMMEDIATE</c>.</summary>
     Begin = 1,
 
-    /// <summary>After every <see cref="SnapshotImporter.GuardInterval"/> inserted observation rows.</summary>
+    /// <summary>After every <see cref="SnapshotImporter.GuardInterval"/> inserted rows of any table (names and folder paths
+    /// included: IMP-11 (3), CAN-01d).</summary>
     Rows = 2,
 
     /// <summary>The final check, immediately before <c>COMMIT</c>, after the in-transaction verification and the final statements:
@@ -115,7 +116,9 @@ internal enum SpaceCheckKind
 /// <param name="PageSize"><c>PRAGMA page_size</c>.</param>
 /// <param name="MainFileLength">The main file's length through a handle.</param>
 /// <param name="JournalLength">The rollback journal's length through a handle (0 when there is none).</param>
-/// <param name="RowsInserted">Observation rows inserted so far (file, folder, scan-error and extension-total rows).</param>
+/// <param name="RowsInserted">Rows inserted so far into any table: the observation rows (file, folder, scan-error and extension-total)
+/// and the dictionary rows (<c>name</c>, <c>folder_path</c>). The periodic checks fall after every
+/// <see cref="SnapshotImporter.GuardInterval"/> of them.</param>
 internal readonly record struct SpaceCheck(SpaceCheckKind Kind, long PendingGrowth, long PageCount, long PageSize, long MainFileLength, long JournalLength, long RowsInserted);
 
 /// <summary>The space guard of IMP-11 (C4 provides the primitive's hook; C5 wires the rule). It is a read-only callback, not a mutation
@@ -125,6 +128,17 @@ internal interface ISpaceGuard
 {
     /// <summary>True to continue the import, false to stop it (rolled back as <c>LibraryFull</c>).</summary>
     bool Permit(in SpaceCheck check);
+}
+
+/// <summary>An engine-side input of a space check (IMP-11): what the primitive reads from the writer at every check, as against the
+/// two file lengths, which it reads through handles.</summary>
+internal enum EngineInput
+{
+    /// <summary><c>PRAGMA page_count</c> inside the transaction.</summary>
+    PageCount = 1,
+
+    /// <summary><c>PRAGMA page_size</c>.</summary>
+    PageSize = 2,
 }
 
 /// <summary>Named moments of T-IMPORT, for test seams and the benchmark's four cancel points (PERF-15 (c), §15.4).</summary>
@@ -153,8 +167,18 @@ internal sealed class ImportOptions
     /// <summary>Called once after all rows are inserted and before verification (a place to pause or crash a child process).</summary>
     internal Action? AfterRows { get; init; }
 
-    /// <summary>The IMP-11 space guard: consulted at <c>BEGIN</c>, after every 4,096 inserted rows and at the final check.</summary>
+    /// <summary>The IMP-11 space guard: consulted at <c>BEGIN</c>, after every 4,096 inserted rows of any table and at the final check.</summary>
     internal ISpaceGuard? SpaceGuard { get; init; }
+
+    /// <summary>Test seam, null in production: called with each engine-side input of a space check right after the primitive has read it
+    /// (<c>PRAGMA page_count</c>, <c>PRAGMA page_size</c>), with the check's kind and the value read. What it returns is used in place of
+    /// the value, and an exception from it is an input that could not be read (IMP-11: the import rolls back as <c>LibraryFull</c>), exactly
+    /// as an exception from the engine would be.</summary>
+    internal Func<EngineInput, SpaceCheckKind, long, long>? OnEngineInput { get; init; }
+
+    /// <summary>Test seam, null in production: the clock of the save token's observation record, in <see cref="System.Diagnostics.Stopwatch"/>
+    /// ticks. It makes the time bound of CAN-01d (no two looks at the token more than 0.5 s apart) testable without waiting.</summary>
+    internal Func<long>? Clock { get; init; }
 
     /// <summary>Called at each <see cref="ImportPoint"/> (a place to cancel, pause or measure).</summary>
     internal Action<ImportPoint>? Probe { get; init; }
