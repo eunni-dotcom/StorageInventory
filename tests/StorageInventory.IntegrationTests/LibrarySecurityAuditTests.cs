@@ -672,119 +672,6 @@ public static class LibrarySecurityAuditTests
         Assert.Equal(1, SecurityAuditTests.FilesMatching(@"PRAGMA\s", rogue).Count, "A-22 negative self-test");
     }
 
-    // ================================================================ A-25 parts (a) and (c)
-
-    private static string AssemblyPath(Assembly assembly) => assembly.Location;
-
-    [Test]
-    public static void A_25_every_mutation_of_the_Library_needs_a_lease_part_a()
-    {
-        var model = IlAudit.Read(AssemblyPath(typeof(StorageInventory.Library.LibraryNames).Assembly));
-        var leased = IlAudit.LeasedOperations(model);
-        Console.WriteLine($"A-25: {model.Methods.Count} methods, {leased.Count} leased operations, {model.LeaseBoundTypes.Count} lease-bound types");
-        Assert.True(leased.Count >= 30, $"{leased.Count} leased operations were found: the analysis sees the Library's lease-taking API");
-        foreach (var expected in new[]
-        {
-            "StorageInventory.Library.LibraryStore::CreateEmptyDatabase", "StorageInventory.Library.LibraryStore::QuarantineSet", "StorageInventory.Library.LibraryStore::AcquireWriterLock",
-            "StorageInventory.Library.LibraryStore::EnsureLibraryFolder", "StorageInventory.Library.LibraryDatabase::OpenWriter", "StorageInventory.Library.WriterConnection::Begin",
-            "StorageInventory.Library.WriterConnection::Commit", "StorageInventory.Library.WriterStatement::ExecuteNonQuery", "StorageInventory.Library.LibrarySession::DeleteSnapshotAsync",
-            "StorageInventory.Library.LibrarySession::ImportSnapshotAsync", "StorageInventory.Library.SnapshotImporter::Run",
-        })
-        {
-            Assert.True(leased.Contains(expected), "the analysis does not see " + expected);
-        }
-        var violations = IlAudit.MutationViolations(model, _ => true, leased);
-        Assert.Equal(0, violations.Count, string.Join(Environment.NewLine, violations));
-
-        // the engine's own API is a primitive too: only the writer's statement and connection types step or prepare a statement, and
-        // every one of their entry points takes the lease (so the rule is not vacuous for the hot path)
-        var steppers = model.Methods.Values.Where(m => m.Calls.Contains("SQLitePCL.raw::sqlite3_step") || m.Calls.Contains("SQLitePCL.raw::sqlite3_prepare_v2")).ToList();
-        Assert.True(steppers.Count >= 6, "the analysis sees the raw calls: " + string.Join(", ", steppers.Select(m => m.Key)));
-        Assert.True(steppers.All(m => m.Type is "StorageInventory.Library.WriterStatement" or "StorageInventory.Library.WriterConnection"), "only the writer's types step or prepare: " + string.Join(", ", steppers.Select(m => m.Key)));
-        Assert.True(steppers.Where(m => m.Name is not "Finish").All(m => m.TakesLease), "every such entry point takes a MutationLease: " + string.Join(", ", steppers.Where(m => !m.TakesLease).Select(m => m.Key)));
-
-        // the primitives have exactly the callers the design says (a proof that the allow-list is narrow)
-        string[] primitiveCallers = [.. model.Methods.Values.Where(m => m.Calls.Any(c => c is "System.IO.Directory::CreateDirectory" or "System.IO.File::Move" or "System.IO.FileStream::.ctor")).Select(m => m.Key).Order(StringComparer.Ordinal)];
-        Assert.SequenceEqual(
-            ["StorageInventory.Library.LibraryStore::AcquireWriterLock", "StorageInventory.Library.LibraryStore::CreateEmptyDatabase", "StorageInventory.Library.LibraryStore::EnsureLibraryFolder",
-             "StorageInventory.Library.LibraryStore::QuarantineSet", "StorageInventory.Library.LibraryStore::ReadHeader"],
-            primitiveCallers, "the only methods that create, rename or open files");
-        Assert.True(model.Methods.Values.Where(m => m.Calls.Contains("System.IO.File::Delete")).Count() == 0, "nothing in the Library deletes a file (A-04)");
-
-        // the other first-party assemblies cannot see the lease types at all
-        foreach (var assembly in new[] { typeof(StorageScanResult).Assembly, typeof(StorageInventory.History.Identity.IdentityMatching).Assembly })
-        {
-            Assert.False(assembly.GetReferencedAssemblies().Any(a => a.Name == "StorageInventory.Library"), assembly.GetName().Name + " does not reference the Library");
-        }
-    }
-
-    [Test]
-    public static void A_25_part_a_rejects_the_violating_fixtures_and_accepts_the_compliant_ones()
-    {
-        var library = IlAudit.Read(AssemblyPath(typeof(StorageInventory.Library.LibraryNames).Assembly));
-        var leased = IlAudit.LeasedOperations(library);
-        var fixtures = IlAudit.Read(AssemblyPath(typeof(SecurityAuditTests).Assembly));
-        // calls from the fixtures into the Library resolve by name, so the leased set of the Library is the reference
-        const string ns = "StorageInventory.IntegrationTests.LeaseAuditFixtures.";
-        var violations = IlAudit.MutationViolations(fixtures, t => t.StartsWith(ns, StringComparison.Ordinal), leased);
-        string[] mustBeFound =
-        [
-            ns + "WritesWithoutALease::Create",
-            ns + "PrivateHelperFromLeaselessPublic::Helper",
-            ns + "DirectFileSystemMutation::Make", ns + "DirectFileSystemMutation::Rename", ns + "DirectFileSystemMutation::Open",
-            ns + "AsyncWithoutALease::Delete",
-            ns + "LambdaWithoutALease::Make",
-        ];
-        foreach (var method in mustBeFound) Assert.True(violations.Any(v => v.StartsWith(method + " ", StringComparison.Ordinal)), $"A-25 (a) misses {method}:\n{string.Join("\n", violations)}");
-        string[] mustBeAccepted =
-        [
-            ns + "Compliant::Create", ns + "PrivateHelperFromLeasedMethod::Public", ns + "PrivateHelperFromLeasedMethod::Helper", ns + "LeaseBound::Create",
-            ns + "ObtainsItsOwnLease::Run", ns + "AsyncWithALease::Delete",
-        ];
-        foreach (var method in mustBeAccepted) Assert.False(violations.Any(v => v.StartsWith(method + " ", StringComparison.Ordinal)), $"A-25 (a) wrongly rejects {method}:\n{string.Join("\n", violations)}");
-        Assert.True(violations.Count >= mustBeFound.Length, "every planted violation was reported");
-    }
-
-    [Test]
-    public static void A_25_part_c_leases_are_constructed_only_by_the_interlock_and_no_public_member_exposes_one()
-    {
-        var model = IlAudit.Read(AssemblyPath(typeof(StorageInventory.Library.LibraryNames).Assembly));
-        var violations = IlAudit.ConstructionViolations(model, _ => true);
-        Assert.Equal(0, violations.Count, string.Join(Environment.NewLine, violations));
-        Assert.True(model.Methods.Values.Where(m => m.Type == IlAudit.InterlockType).SelectMany(m => m.Calls).Any(c => c == IlAudit.MutationLeaseType + "::.ctor"), "the interlock does construct leases (the check is not vacuous)");
-
-        // no public or internal constructor outside the interlock type: the lease constructors are internal and called only from the interlock
-        foreach (var type in new[] { typeof(StorageInventory.Library.MutationLease), typeof(StorageInventory.Library.ObservationLease) })
-        {
-            Assert.False(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance).Any(), type.Name + " has no public constructor");
-            Assert.True(type.IsValueType && !type.IsVisible, type.Name + " is an internal value type");
-        }
-
-        // no public member of any first-party assembly takes or returns a lease
-        foreach (var assembly in new[] { typeof(StorageScanResult).Assembly, typeof(StorageInventory.History.Identity.IdentityMatching).Assembly, typeof(StorageInventory.Library.LibraryNames).Assembly, typeof(StorageInventory.App.App).Assembly })
-        {
-            var exposed = IlAudit.PublicLeaseExposure(assembly);
-            Assert.Equal(0, exposed.Count, assembly.GetName().Name + ": " + string.Join("; ", exposed));
-        }
-        Assert.Equal(0, typeof(StorageInventory.Library.LibraryNames).Assembly.GetExportedTypes().Length, "the Library exposes nothing publicly in C4 (its surface arrives with the capture wiring)");
-    }
-
-    [Test]
-    public static void A_25_part_c_rejects_forged_leases_and_public_exposure()
-    {
-        var fixtures = IlAudit.Read(AssemblyPath(typeof(SecurityAuditTests).Assembly));
-        const string ns = "StorageInventory.IntegrationTests.LeaseAuditFixtures.";
-        var violations = IlAudit.ConstructionViolations(fixtures, t => t.StartsWith(ns, StringComparison.Ordinal));
-        Assert.True(violations.Any(v => v.Contains("ForgesALease::Forge", StringComparison.Ordinal) && v.Contains("constructs a lease", StringComparison.Ordinal)), "a constructor call: " + string.Join("; ", violations));
-        Assert.True(violations.Any(v => v.Contains("ForgesALease::Zero", StringComparison.Ordinal) && v.Contains("default value", StringComparison.Ordinal)), "default(MutationLease): " + string.Join("; ", violations));
-        Assert.True(violations.Any(v => v.Contains("ForgesALease::ForgeObservation", StringComparison.Ordinal)), "an observation lease constructor call");
-        Assert.False(violations.Any(v => v.Contains(".Compliant::", StringComparison.Ordinal) || v.Contains("LeaseBound", StringComparison.Ordinal)), "compliant fixtures are not reported");
-
-        var exposed = IlAudit.PublicLeaseExposure(typeof(SecurityAuditTests).Assembly, t => t == typeof(LeaseAuditFixtures.LeaseSurrogate));
-        Assert.True(exposed.Any(e => e.Contains("ExposesALease.Get")), "a public method returning a lease: " + string.Join("; ", exposed));
-        Assert.True(exposed.Any(e => e.Contains("ExposesALease.Take")), "a public method taking a lease: " + string.Join("; ", exposed));
-    }
-
     // ================================================================ A-20: the native file set in the publish output
 
     [Test]
@@ -822,10 +709,13 @@ public static class LibrarySecurityAuditTests
             ("A-15", nameof(A_15_the_writer_lock_is_a_file_open_in_LibraryStore_and_there_is_no_named_kernel_object), nameof(A_15_the_writer_lock_is_a_file_open_in_LibraryStore_and_there_is_no_named_kernel_object)),
             ("A-22", nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back), nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back)),
             ("SEC-15", nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path), nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path)),
-            ("A-25 (a)", nameof(A_25_every_mutation_of_the_Library_needs_a_lease_part_a), nameof(A_25_part_a_rejects_the_violating_fixtures_and_accepts_the_compliant_ones)),
-            ("A-25 (c)", nameof(A_25_part_c_leases_are_constructed_only_by_the_interlock_and_no_public_member_exposes_one), nameof(A_25_part_c_rejects_forged_leases_and_public_exposure)),
+            ("A-25 (a)", nameof(LeaseAuditTests.A_25_every_mutation_in_every_first_party_assembly_needs_a_lease_part_a), nameof(LeaseAuditTests.A_25_part_a_rejects_every_violating_fixture_for_its_specific_rule)),
+            ("A-25 (c)", nameof(LeaseAuditTests.A_25_part_c_leases_are_constructed_only_by_the_interlock_and_no_public_member_exposes_one), nameof(LeaseAuditTests.A_25_part_c_rejects_forged_leases_and_public_exposure)),
+            ("C4-M17 (file system)", nameof(LeaseAuditTests.C4_M17_only_LibraryStore_touches_the_file_system), nameof(LeaseAuditTests.C4_M17_file_system_rule_rejects_a_call_outside_LibraryStore)),
+            ("C4-M17 (lock first)", nameof(LeaseAuditTests.C4_M17_every_member_access_follows_the_writer_lock), nameof(LeaseAuditTests.C4_M17_lock_first_rule_rejects_an_inspection_before_the_lock)),
+            ("C4-M13 (const SQL)", nameof(LeaseAuditTests.C4_M13_every_field_of_the_Sql_classes_is_a_constant_and_every_forwarder_is_fed_a_constant), nameof(LeaseAuditTests.C4_M13_rejects_a_static_readonly_statement_a_built_string_and_a_non_constant_forwarder_argument)),
         };
-        var methods = typeof(LibrarySecurityAuditTests).GetMethods(BindingFlags.Public | BindingFlags.Static).Concat(typeof(SecurityAuditTests).GetMethods(BindingFlags.Public | BindingFlags.Static)).Select(m => m.Name).ToHashSet();
+        var methods = typeof(LibrarySecurityAuditTests).GetMethods(BindingFlags.Public | BindingFlags.Static).Concat(typeof(LeaseAuditTests).GetMethods(BindingFlags.Public | BindingFlags.Static)).Concat(typeof(SecurityAuditTests).GetMethods(BindingFlags.Public | BindingFlags.Static)).Select(m => m.Name).ToHashSet();
         foreach (var (rule, positive, negative) in rules.Where(r => !r.Rule.StartsWith("A-01", StringComparison.Ordinal) && r.Rule != "A-04"))
         {
             Assert.True(methods.Contains(positive), $"{rule}: test {positive} exists");

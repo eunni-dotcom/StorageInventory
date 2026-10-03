@@ -203,14 +203,6 @@ internal static class SchemaSql
         ) STRICT, WITHOUT ROWID
         """;
 
-    /// <summary>The DDL in execution order. The order is part of the frozen text: SQLite lists objects by creation order.</summary>
-    internal static readonly string[] CreateAll =
-    [
-        CreateLibraryInfo, CreateVolume, CreateVolumeBySerial, CreateSource, CreateSourceLocalKey, CreateSourceNetworkKey,
-        CreateScanAttempt, CreateScanAttemptBySource, CreateSnapshot, CreateSnapshotBySource, CreateName, CreateFolderPath,
-        CreateFolderPathChild, CreateFolderPathRoot, CreateFolderObs, CreateFileObs, CreateScanError, CreateSnapshotExtensionTotal,
-    ];
-
     internal const string InsertLibraryInfo = """
         INSERT INTO library_info (singleton, library_id, created_utc, created_app_version, last_opened_app_version, next_snapshot_id)
         VALUES (1, $library_id, $created_utc, $app_version, $app_version, 1)

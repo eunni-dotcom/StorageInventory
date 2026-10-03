@@ -249,7 +249,26 @@ internal sealed class LibrarySession
                 writer.Begin(lease);
                 Execute(writer, lease, SchemaSql.SetApplicationId);
                 Execute(writer, lease, SchemaSql.SetUserVersion);
-                foreach (var ddl in SchemaSql.CreateAll) Execute(writer, lease, ddl);
+                // The DDL in execution order (the order is part of the frozen text: SQLite lists objects by creation order). One call per
+                // constant, so that every statement text is a visible Sql constant (A-05, C4-M13).
+                Execute(writer, lease, SchemaSql.CreateLibraryInfo);
+                Execute(writer, lease, SchemaSql.CreateVolume);
+                Execute(writer, lease, SchemaSql.CreateVolumeBySerial);
+                Execute(writer, lease, SchemaSql.CreateSource);
+                Execute(writer, lease, SchemaSql.CreateSourceLocalKey);
+                Execute(writer, lease, SchemaSql.CreateSourceNetworkKey);
+                Execute(writer, lease, SchemaSql.CreateScanAttempt);
+                Execute(writer, lease, SchemaSql.CreateScanAttemptBySource);
+                Execute(writer, lease, SchemaSql.CreateSnapshot);
+                Execute(writer, lease, SchemaSql.CreateSnapshotBySource);
+                Execute(writer, lease, SchemaSql.CreateName);
+                Execute(writer, lease, SchemaSql.CreateFolderPath);
+                Execute(writer, lease, SchemaSql.CreateFolderPathChild);
+                Execute(writer, lease, SchemaSql.CreateFolderPathRoot);
+                Execute(writer, lease, SchemaSql.CreateFolderObs);
+                Execute(writer, lease, SchemaSql.CreateFileObs);
+                Execute(writer, lease, SchemaSql.CreateScanError);
+                Execute(writer, lease, SchemaSql.CreateSnapshotExtensionTotal);
                 using (var info = writer.Prepare(lease, SchemaSql.InsertLibraryInfo, "$library_id", "$created_utc", "$app_version"))
                 {
                     info.Set(0, Guid.NewGuid().ToString("D")).Set(1, DateTime.UtcNow.Ticks).Set(2, LibraryNames.AppVersion).ExecuteNonQuery(lease);
