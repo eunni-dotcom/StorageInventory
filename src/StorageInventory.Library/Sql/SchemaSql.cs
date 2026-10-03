@@ -121,10 +121,16 @@ internal static class SchemaSql
 
     internal const string CreateSnapshotBySource = "CREATE INDEX snapshot_by_source ON snapshot (source_id, snapshot_id)";
 
+    /// <summary>The per-source name dictionary (SCH-04, D-52): a name belongs to ONE source, and uniqueness is per (source, bytes). A
+    /// source's names therefore occupy a key range of their own in the automatic unique index, so importing one source modifies no
+    /// other source's dictionary pages and journals none of them (PERF-15 (a)). The automatic index keeps its name,
+    /// <c>sqlite_autoindex_name_1</c>.</summary>
     internal const string CreateName = """
         CREATE TABLE name (
-          name_id INTEGER PRIMARY KEY,
-          utf16   BLOB NOT NULL UNIQUE
+          name_id   INTEGER PRIMARY KEY,
+          source_id INTEGER NOT NULL REFERENCES source (source_id),
+          utf16     BLOB    NOT NULL,
+          UNIQUE (source_id, utf16)
         ) STRICT
         """;
 

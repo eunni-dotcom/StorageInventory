@@ -16,7 +16,7 @@ internal static class EngineMicroBenchmark
         using (var create = Lease(session, MutationKind.Create)) session.CreateLibrary(create);
         var main = Path.Combine(appData, "Library", LibraryNames.MainFile);
         using var prepare = Lease(session, MutationKind.Prepare);
-        using var writer = LibraryDatabase.OpenWriter(prepare, main, "micro", [MutationKind.Prepare], importCache: true, null);
+        using var writer = LibraryDatabase.OpenWriter(prepare, session.Interlock, main, "micro", [MutationKind.Prepare], true, null);
         writer.Begin(prepare);
         void Exec(string sql) { using var s = writer.Prepare(prepare, sql); s.ExecuteNonQuery(prepare); }
         var cacheKiB = Environment.GetEnvironmentVariable("SI_MICRO_CACHE_KIB");

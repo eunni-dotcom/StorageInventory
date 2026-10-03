@@ -31,6 +31,12 @@ internal enum HeaderOutcome
 
     /// <summary>Magic, format, application id and a supported schema version.</summary>
     Valid = 7,
+
+    /// <summary>A SQLite database with <c>application_id = 0</c>, <c>user_version = 0</c> and no schema objects (page 1 is an empty
+    /// leaf): uninitialised, exactly like a 0-byte file (LIB-07 step 7, §6.8 Not created). It is what a crash during T-CREATE leaves
+    /// once SQLite has rolled its journal back, and what a database emptied by dropping every table looks like. Initialised again on
+    /// the next save; never a foreign file.</summary>
+    EmptyDatabase = 8,
 }
 
 /// <summary>The decoded fields of a header read, and the commit generation (OBS-04b).</summary>
@@ -116,11 +122,47 @@ internal sealed class LibraryStore
     /// <summary>The directory that contains the Library directory (the app-data root, LIB-06a/b).</summary>
     internal string AppDataRoot { get; }
 
-    internal string LockPath => Path.Combine(Directory, LibraryNames.LockFile);
-    internal string MainPath => Path.Combine(Directory, LibraryNames.MainFile);
-    internal string JournalPath => Path.Combine(Directory, LibraryNames.JournalFile);
-    internal string WalPath => Path.Combine(Directory, LibraryNames.WalFile);
-    internal string ShmPath => Path.Combine(Directory, LibraryNames.ShmFile);
+    // The member paths are private (C4-M17, CONC-01): no code outside this class can name a Library member, so none can inspect one
+    // before the writer lock is held. The two accessors below hand out a path only under the lock.
+    private string LockPath => Path.Combine(Directory, LibraryNames.LockFile);
+    private string MainPath => Path.Combine(Directory, LibraryNames.MainFile);
+    private string JournalPath => Path.Combine(Directory, LibraryNames.JournalFile);
+    private string WalPath => Path.Combine(Directory, LibraryNames.WalFile);
+    private string ShmPath => Path.Combine(Directory, LibraryNames.ShmFile);
+
+    /// <summary>The path of <c>library.sqlite3</c>, for opening a connection to it. Only while this process holds the writer lock:
+    /// a connection to a Library this process does not own would be an inspection before the lock (CONC-01).</summary>
+    internal string MainPathUnderLock()
+    {
+        RequireLock("open a connection");
+        return MainPath;
+    }
+
+    private void RequireLock(string what)
+    {
+        if (_lockHandle is null) throw new InvalidOperationException($"Cannot {what}: no Library member may be touched before the writer lock is held (CONC-01).");
+    }
+
+    /// <summary>The main file's and the journal's lengths through handles (IMP-11, TEST-P1): a handle's length is current where a
+    /// directory listing can lag. A missing journal is length 0; a missing main file is an <see cref="IOException"/>. Only under the lock.</summary>
+    internal (long Main, long Journal) MeasureLengthsUnderLock()
+    {
+        RequireLock("measure the Library files");
+        return (HandleLength(MainPath, missingIsZero: false), HandleLength(JournalPath, missingIsZero: true));
+    }
+
+    private static long HandleLength(string path, bool missingIsZero)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
+            return stream.Length;
+        }
+        catch (Exception ex) when (missingIsZero && ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return 0;
+        }
+    }
 
     /// <summary>True once this process holds <c>library.lock</c>; it then holds it until it exits (CONC-01).</summary>
     internal bool HoldsWriterLock => _lockHandle is not null;
@@ -140,7 +182,7 @@ internal sealed class LibraryStore
     /// the lock is held (CONC-01).</summary>
     internal MemberSet InspectMembersUnderLock()
     {
-        if (_lockHandle is null) throw new InvalidOperationException("No Library member may be inspected before the writer lock is held (CONC-01).");
+        RequireLock("inspect the Library members");
         return new MemberSet(Info(LockPath), Info(MainPath), Info(JournalPath), Info(WalPath), Info(ShmPath));
     }
 
@@ -153,12 +195,21 @@ internal sealed class LibraryStore
     /// <summary>Reads and classifies the first 100 bytes of <c>library.sqlite3</c> without SQLite (LIB-08 step 4; also the commit
     /// generation, OBS-04b). <c>FileMode.Open</c>, <c>FileAccess.Read</c>, <c>FileShare.ReadWrite | FileShare.Delete</c>, so it
     /// coexists with SQLite's own handles on Windows (Q-21) and cannot write. A missing file is <see cref="HeaderOutcome.Absent"/>.</summary>
+    internal HeaderRead ReadHeaderUnderLock()
+    {
+        RequireLock("read the Library header");
+        return ReadHeader();
+    }
+
+    /// <summary>Reads and classifies the header (100 bytes, plus the 8-byte b-tree header of page 1 that tells an empty database from
+    /// a schema-bearing one). This form needs no lock: it is the OBS-04 read of the commit generation during an observation window.
+    /// Decisions about the Library's state use <see cref="ReadHeaderUnderLock"/>.</summary>
     internal HeaderRead ReadHeader()
     {
         try
         {
             using var stream = new FileStream(MainPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
-            var buffer = new byte[100];
+            var buffer = new byte[HeaderCheck.ReadLength];
             var read = 0;
             while (read < buffer.Length)
             {
@@ -338,6 +389,9 @@ internal static class HeaderCheck
 {
     private static readonly byte[] Magic = "SQLite format 3\0"u8.ToArray();
 
+    /// <summary>Bytes read for the pre-check: the 100-byte database header and the 8-byte b-tree header of page 1.</summary>
+    internal const int ReadLength = 108;
+
     internal static HeaderRead Classify(ReadOnlySpan<byte> header, long fileLength)
     {
         if (header.Length < 100) return new HeaderRead(HeaderOutcome.TooShort, 0, 0, 0, 0, fileLength);
@@ -349,10 +403,16 @@ internal static class HeaderCheck
         HeaderOutcome outcome;
         if (!header[..16].SequenceEqual(Magic)) outcome = HeaderOutcome.ForeignFile;
         else if (header[18] != 1 || header[19] != 1) outcome = HeaderOutcome.WalFormat;
+        else if (applicationId == 0 && userVersion == 0 && IsEmptyPageOne(header)) outcome = HeaderOutcome.EmptyDatabase;
         else if (applicationId != LibraryNames.ApplicationId) outcome = HeaderOutcome.WrongApplicationId;
         else if (userVersion > LibraryNames.SchemaVersion) outcome = HeaderOutcome.NewerSchema;
         else if (userVersion < 1) outcome = HeaderOutcome.UnsupportedUserVersion;
         else outcome = HeaderOutcome.Valid;
         return new HeaderRead(outcome, changeCounter, pageCount, applicationId, userVersion, fileLength);
     }
+
+    /// <summary>Page 1 of a database holds <c>sqlite_schema</c>. It has no schema objects exactly when page 1 is a leaf table b-tree
+    /// page (flag 0x0D at offset 100) with no cells (the 2-byte count at offset 103 is 0). Fewer than 108 bytes cannot say.</summary>
+    private static bool IsEmptyPageOne(ReadOnlySpan<byte> header) =>
+        header.Length >= ReadLength && header[100] == 0x0D && BinaryPrimitives.ReadUInt16BigEndian(header[103..]) == 0;
 }

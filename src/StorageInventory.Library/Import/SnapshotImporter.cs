@@ -8,42 +8,71 @@ using StorageInventory.Core.Scanning;
 namespace StorageInventory.Library;
 
 /// <summary>
-/// T-IMPORT (§10.3, IMP-02 to IMP-06) over an abstract row stream: ONE <c>BEGIN IMMEDIATE</c> transaction that resolves or creates
-/// the volume and source, inserts the snapshot (<c>state = 1</c>), interns names and folder paths, inserts the observation rows in
-/// key order, verifies the §9.5 invariants and the sealed totals, and only then publishes (<c>state = 2</c>) and commits. Nothing of
-/// the snapshot is visible to any connection before the <c>COMMIT</c> (CONC-04), a failure rolls everything back, and no earlier
-/// snapshot is ever written (it only inserts rows of its own snapshot id and new dictionary rows). The lease is checked when the
-/// writer opens, at <c>BEGIN IMMEDIATE</c>, every 16,384 rows, and immediately before <c>COMMIT</c> (OBS-15).
+/// T-IMPORT (§10.3, IMP-02 to IMP-06, IMP-11) over an abstract row stream: ONE <c>BEGIN IMMEDIATE</c> transaction that resolves or
+/// creates the volume and source, inserts the snapshot (<c>state = 1</c>), interns names and folder paths IN THE SOURCE'S OWN
+/// DICTIONARY (SCH-04, D-52), inserts the observation rows in key order, verifies the §9.5 invariants and the sealed totals, and only
+/// then publishes (<c>state = 2</c>) and commits. Nothing of the snapshot is visible to any connection before the <c>COMMIT</c>
+/// (CONC-04), a failure rolls everything back, and no earlier snapshot is ever written (it only inserts rows of its own snapshot id
+/// and new dictionary rows of its own source).
+/// <para><b>Checks.</b> At <c>BEGIN</c>, after every <see cref="GuardInterval"/> inserted observation rows and in a final check
+/// immediately before <c>COMMIT</c> (after the verification and the final statements, with nothing in between), the import checks
+/// that its lease is current (OBS-15), looks at the save token (CAN-01d: a cancelled token rolls everything back) and consults the
+/// space guard (IMP-11). Inside the verification the token is observed between queries, every 65,536 rows of a streamed query and
+/// by the engine's progress callback inside a statement; after the verification it is checked once more. The final check is the last
+/// look at the token: a cancellation after it is not observed and the save publishes (CAN-01e).</para>
+/// <para>Every method takes the lease it works under (A-25 (a)): there is no lease-holding object.</para>
 /// </summary>
 internal static class SnapshotImporter
 {
-    /// <summary>Rows between lease checks (OBS-15) and progress callbacks.</summary>
+    /// <summary>File rows between <see cref="ImportOptions.OnFileRows"/> callbacks.</summary>
     internal const int CheckInterval = 16_384;
 
-    /// <summary>IMP-04: the per-capture name cache holds at most this many entries.</summary>
+    /// <summary>IMP-11 / CAN-01d: observation rows between checks (lease, save token, space guard).</summary>
+    internal const int GuardInterval = 4_096;
+
+    /// <summary>IMP-04: the per-capture, per-source name cache holds at most this many entries.</summary>
     internal const int NameCacheCapacity = 262_144;
 
+    /// <summary>The main file's and the journal's lengths through handles (never through a directory listing, which can lag).</summary>
+    internal delegate (long Main, long Journal) FileLengths();
+
+    /// <summary>What one import carries from check to check. It holds no lease.</summary>
+    private sealed class ImportState(CancellationToken cancellation)
+    {
+        internal TokenChecker Checker { get; } = new(cancellation);
+        internal long Rows;
+        internal long NextGuard = GuardInterval;
+        internal int SpaceChecks;
+        internal long PageSize = -1;
+        internal long PeakJournal;
+        internal long FinalPending = -1;
+        internal long FinalMain = -1;
+        internal long NextFileCallback = CheckInterval;
+    }
+
     internal static ImportResult Run(WriterConnection writer, MutationLease lease, byte[] sessionToken, AttemptRef attempt, ImportSourceSpec sourceSpec,
-        ImportSnapshotHeader header, ISnapshotRowSource rows, ImportOptions? options, string? journalPath, CancellationToken cancellation)
+        ImportSnapshotHeader header, ISnapshotRowSource rows, ImportOptions? options, FileLengths? lengths, CancellationToken cancellation)
     {
         var stopwatch = Stopwatch.StartNew();
-        long peakJournal = 0;
-        void SampleJournal()
-        {
-            if (journalPath is null) return;
-            var info = new FileInfo(journalPath);
-            if (info.Exists && info.Length > peakJournal) peakJournal = info.Length;
-        }
-
+        var state = new ImportState(cancellation);
         try
         {
             writer.Begin(lease);
-            var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, SampleJournal, cancellation, stopwatch);
+            state.PageSize = options?.SpaceGuard is null && options?.OnSpaceCheck is null ? -1 : ReadPageSize(writer, lease);
+            GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Begin);
+            var result = Execute(writer, lease, sessionToken, attempt, sourceSpec, header, rows, options, lengths, state, cancellation, stopwatch);
+            state.Checker.Close();
             var commitStart = Stopwatch.GetTimestamp();
             writer.Commit(lease);
             var commit = Stopwatch.GetElapsedTime(commitStart);
-            SampleJournal();
-            return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = peakJournal, Phases = result.Phases! with { Commit = commit } };
+            var commitGrowth = -1L;
+            if (lengths is not null && state.FinalMain >= 0)
+            {
+                try { commitGrowth = Math.Max(0, lengths().Main - state.FinalMain); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* a measurement only: the commit has happened */ }
+            }
+            var checks = new ImportChecks(state.Checker.Observations, state.Checker.MaxGap, state.SpaceChecks, state.FinalPending, commitGrowth);
+            return result with { Elapsed = stopwatch.Elapsed, PeakJournalBytes = state.PeakJournal, Phases = result.Phases! with { Commit = commit }, Checks = checks };
         }
         catch (Exception ex)
         {
@@ -56,6 +85,81 @@ internal static class SnapshotImporter
     {
         try { writer.Rollback(lease); }
         catch (Exception ex) when (ex is not OutOfMemoryException) { /* the connection is closed next; SQLite rolls back an open transaction */ }
+    }
+
+    private static long ReadPageSize(WriterConnection writer, MutationLease lease)
+    {
+        try { return writer.PageSize(lease); }
+        catch (Exception ex) when (IsUnreadable(ex)) { throw new ImportException(CaptureFailureKind.LibraryFull, "The page size could not be read, so the free space cannot be judged.", ex); }
+    }
+
+    /// <summary>An input of the space guard that could not be read (the engine's page count or page size, a file length): the import
+    /// stops as <c>LibraryFull</c>, class A (IMP-11: an unknown free space is never treated as enough). A lease violation, a
+    /// cancellation and a class C failure are not unreadable inputs and pass through.</summary>
+    private static bool IsUnreadable(Exception ex) =>
+        ex is IOException or UnauthorizedAccessException or SqliteException or FormatException or InvalidCastException or OverflowException or ArgumentException
+        || (ex is InvalidOperationException and not LeaseViolationException);
+
+    /// <summary>One check of the primitive (IMP-11, CAN-01d, OBS-15): the lease is current, the save token is looked at (a cancelled
+    /// token throws and the caller rolls back), and the space guard is consulted with exact inputs. <paramref name="kind"/> is Final
+    /// only for the check immediately before <c>COMMIT</c>.</summary>
+    private static void GuardPoint(WriterConnection writer, MutationLease lease, ImportState state, ImportOptions? options, FileLengths? lengths, SpaceCheckKind kind)
+    {
+        writer.CheckCurrent(lease);
+        state.Checker.Check();
+
+        var guard = options?.SpaceGuard;
+        var record = options?.OnSpaceCheck;
+        if (guard is null && record is null && lengths is null) return;
+
+        SpaceCheck check;
+        try
+        {
+            if (lengths is null) throw new IOException("The lengths of the Library files are not available.");
+            var pageCount = writer.PageCount(lease);
+            var pageSize = state.PageSize >= 0 ? state.PageSize : writer.PageSize(lease);
+            var (main, journal) = lengths();
+            var pending = Math.Max(0L, pageCount * pageSize - main);
+            check = new SpaceCheck(kind, pending, pageCount, pageSize, main, journal, state.Rows);
+        }
+        catch (Exception ex) when (IsUnreadable(ex))
+        {
+            if (guard is null && record is null) return;   // nobody consults the numbers: an unreadable length is not a failure
+            throw new ImportException(CaptureFailureKind.LibraryFull, $"An input of the space check at {kind} could not be read, so the free space cannot be judged.", ex);
+        }
+
+        state.SpaceChecks++;
+        if (check.JournalLength > state.PeakJournal) state.PeakJournal = check.JournalLength;
+        if (kind == SpaceCheckKind.Final)
+        {
+            state.FinalPending = check.PendingGrowth;
+            state.FinalMain = check.MainFileLength;
+            state.PeakJournal = check.JournalLength;   // a TRUNCATE journal is at its largest immediately before COMMIT: the reported peak
+        }
+        record?.Invoke(check);
+        if (guard is null) return;
+
+        bool permit;
+        try
+        {
+            permit = guard.Permit(check);
+        }
+        catch (Exception ex) when (!LibraryInterlock.IsClassC(ex) && ex is not LeaseViolationException && !(ex is OperationCanceledException && state.Checker.Token.IsCancellationRequested))
+        {
+            throw new ImportException(CaptureFailureKind.LibraryFull, $"The space guard failed at {kind}: {ex.Message}", ex);
+        }
+        if (!permit) throw new ImportException(CaptureFailureKind.LibraryFull, $"The space guard stopped the import at {kind}: the drive holding the Library became nearly full while saving.");
+    }
+
+    /// <summary>Counts <paramref name="count"/> inserted observation rows and runs a check at every
+    /// <see cref="GuardInterval"/> of them.</summary>
+    private static void RowsInserted(WriterConnection writer, MutationLease lease, ImportState state, ImportOptions? options, FileLengths? lengths, int count)
+    {
+        state.Rows += count;
+        if (state.Rows < state.NextGuard) return;
+        while (state.NextGuard <= state.Rows) state.NextGuard += GuardInterval;
+        GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Rows);
+        options?.Probe?.Invoke(ImportPoint.AfterRowCheck);
     }
 
     /// <summary>The capture failure kind of a SQLite error met during an import (§9.4): a constraint failure is an invariant
@@ -85,14 +189,14 @@ internal static class SnapshotImporter
     }
 
     private static ImportResult Execute(WriterConnection writer, MutationLease lease, byte[] sessionToken, AttemptRef attempt, ImportSourceSpec sourceSpec,
-        ImportSnapshotHeader header, ISnapshotRowSource rows, ImportOptions? options, Action sampleJournal, CancellationToken cancellation, Stopwatch stopwatch)
+        ImportSnapshotHeader header, ISnapshotRowSource rows, ImportOptions? options, FileLengths? lengths, ImportState state, CancellationToken cancellation, Stopwatch stopwatch)
     {
-        // (d) The attempt exists, is this session's and this capture's, and is InProgress (checked early to avoid wasted work, and
-        // again by the final statement, which changes exactly one row).
-        using (var verify = writer.Prepare(lease, ImportSql.VerifyAttempt, "$attempt_id", "$session_token", "$capture_token"))
+        // (d) The attempt exists, is this session's and this capture's, carries this snapshot's run id (invariant 13) and is InProgress
+        // (checked early to avoid wasted work, and again by the final statement, which changes exactly one row).
+        using (var verify = writer.Prepare(lease, ImportSql.VerifyAttempt, "$attempt_id", "$session_token", "$capture_token", "$run_id"))
         {
-            verify.Set(0, attempt.AttemptId).Set(1, sessionToken).Set(2, attempt.CaptureToken);
-            if (Convert.ToInt64(verify.ExecuteScalar(lease)) != 1) throw new ImportException(CaptureFailureKind.InvariantViolation, "The attempt row is not InProgress for this session and capture.");
+            verify.Set(0, attempt.AttemptId).Set(1, sessionToken).Set(2, attempt.CaptureToken).Set(3, header.RunId);
+            if (Convert.ToInt64(verify.ExecuteScalar(lease)) != 1) throw new ImportException(CaptureFailureKind.InvariantViolation, "The attempt row is not InProgress for this session, capture and run.");
         }
 
         var now = DateTime.UtcNow.Ticks;
@@ -105,7 +209,9 @@ internal static class SnapshotImporter
         }
         InsertSnapshotRow(writer, lease, snapshotId, sourceId, attempt, header);
 
-        using var names = new NameCache(writer, lease);
+        // IMP-04: the name cache belongs to this capture AND to this source: it is created here, after the source is known, and
+        // discarded when the import ends, so no name id of another source or of an earlier (rolled-back) import can ever be reused.
+        using var names = new NameCache(writer, lease, sourceId);
         var counts = new Counters();
 
         // IMP-03 step 3: folders in ascending discovery index, parents first, interning folder paths.
@@ -113,46 +219,64 @@ internal static class SnapshotImporter
         var pathIds = new long[folderCount];
         var depths = new int[folderCount];
         var phase = Stopwatch.GetTimestamp();
-        InsertFolders(writer, lease, rows, snapshotId, sourceId, names, pathIds, depths, counts, options, cancellation);
+        InsertFolders(writer, lease, rows, snapshotId, sourceId, names, pathIds, depths, counts, options, lengths, state);
         var foldersTime = Stopwatch.GetElapsedTime(phase);
 
         // IMP-03 step 4: files, visiting folders in path-id order and inserting each run in name-id order.
         phase = Stopwatch.GetTimestamp();
         var extensions = new ExtensionTotals();
-        InsertFiles(writer, lease, rows, snapshotId, names, pathIds, extensions, counts, options, sampleJournal, cancellation);
+        InsertFiles(writer, lease, rows, snapshotId, names, pathIds, extensions, counts, options, lengths, state);
         var filesTime = Stopwatch.GetElapsedTime(phase);
 
         // IMP-03 step 5: error records. Step 6: the extension totals.
         phase = Stopwatch.GetTimestamp();
-        InsertErrors(writer, lease, rows, snapshotId, counts, cancellation);
-        InsertExtensionTotals(writer, lease, snapshotId, extensions);
+        InsertErrors(writer, lease, rows, snapshotId, counts, options, lengths, state);
+        InsertExtensionTotals(writer, lease, snapshotId, extensions, options, lengths, state);
         var errorsTime = Stopwatch.GetElapsedTime(phase);
         options?.AfterRows?.Invoke();
 
-        // IMP-05: verification inside the transaction, before the final statements. Cancelling here rolls everything back (CAN-01d).
-        cancellation.ThrowIfCancellationRequested();
+        // IMP-05: verification inside the transaction, before the final statements. A cancellation anywhere in it rolls everything
+        // back (CAN-01d): the token is looked at between queries, every 65,536 rows of a streamed query and, inside a statement, by
+        // the engine's progress callback, which exists only for the duration of the verification and only on this connection.
+        state.Checker.Check();
         VerifyCounts(header, counts);
         phase = Stopwatch.GetTimestamp();
-        var failure = SnapshotVerifier.Verify(new WriterQueryRunner(writer, lease), snapshotId, sourceId, header.Files, header.Bytes, header.Folders, header.ScanErrors,
-            header.Completion == ScanCompletionState.Complete);
+        string? failure;
+        using (writer.BeginCancellationScope(lease, cancellation, state.Checker))
+        {
+            var runner = new DelegateQueryRunner(
+                (sql, parameters) => writer.Scalar(lease, sql, parameters),
+                (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+            failure = SnapshotVerifier.Verify(runner, snapshotId, sourceId, header.Files, header.Bytes, header.Folders, header.ScanErrors,
+                header.Completion == ScanCompletionState.Complete,
+                new VerificationHooks { Checkpoint = state.Checker.Check, Stage = options?.Probe });
+        }
         var verificationTime = Stopwatch.GetElapsedTime(phase);
         if (failure is not null) throw new ImportException(CaptureFailureKind.InvariantViolation, "The snapshot failed its in-transaction verification: " + failure);
+
+        // the token check that follows the verification (CAN-01d), then the lease check
+        state.Checker.Check();
         writer.CheckCurrent(lease);
 
-        // IMP-06: the final statements, each required to change exactly one row.
+        // IMP-06: the final statements, each required to change exactly one row. The fourth cancel point lies between them (§15.4).
         var published = DateTime.UtcNow.Ticks;
         using (var publish = writer.Prepare(lease, ImportSql.PublishSnapshot, "$published_utc", "$snapshot_id"))
         {
             ExpectOneRow(publish.Set(0, published).Set(1, snapshotId).ExecuteNonQuery(lease), "publish the snapshot");
         }
-        using (var outcome = writer.Prepare(lease, ImportSql.PublishAttempt, "$source_id", "$ended_utc", "$attempt_id", "$session_token", "$capture_token"))
+        options?.Probe?.Invoke(ImportPoint.FinalStatements);
+        using (var outcome = writer.Prepare(lease, ImportSql.PublishAttempt, "$source_id", "$ended_utc", "$attempt_id", "$session_token", "$capture_token", "$run_id"))
         {
-            ExpectOneRow(outcome.Set(0, sourceId).Set(1, published).Set(2, attempt.AttemptId).Set(3, sessionToken).Set(4, attempt.CaptureToken).ExecuteNonQuery(lease), "record the attempt outcome");
+            ExpectOneRow(outcome.Set(0, sourceId).Set(1, published).Set(2, attempt.AttemptId).Set(3, sessionToken).Set(4, attempt.CaptureToken).Set(5, header.RunId).ExecuteNonQuery(lease), "record the attempt outcome");
         }
         using (var advance = writer.Prepare(lease, ImportSql.AdvanceSnapshotId, "$next_snapshot_id"))
         {
             ExpectOneRow(advance.Set(0, snapshotId).ExecuteNonQuery(lease), "advance the snapshot sequence");
         }
+
+        // IMP-11's final check, immediately before COMMIT (nothing runs between it and the commit): lease, save token, space guard.
+        // It is the last look at the token; a cancellation after it is not observed and the save publishes (CAN-01e).
+        GuardPoint(writer, lease, state, options, lengths, SpaceCheckKind.Final);
 
         return new ImportResult(snapshotId, sourceId, counts.Files, counts.Folders, counts.Errors, names.NewNames, stopwatch.Elapsed, 0,
             new ImportPhases(foldersTime, filesTime, errorsTime, verificationTime, TimeSpan.Zero));
@@ -222,7 +346,7 @@ internal static class SnapshotImporter
     }
 
     private static void InsertFolders(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, long sourceId, NameCache names,
-        long[] pathIds, int[] depths, Counters counts, ImportOptions? options, CancellationToken cancellation)
+        long[] pathIds, int[] depths, Counters counts, ImportOptions? options, FileLengths? lengths, ImportState state)
     {
         using var select = writer.Prepare(lease, ImportSql.SelectFolderPathId, "$source_id", "$parent_path_id", "$name_id");
         using var insertPath = writer.Prepare(lease, ImportSql.InsertFolderPath, "$source_id", "$parent_path_id", "$name_id", "$depth");
@@ -233,7 +357,7 @@ internal static class SnapshotImporter
         {
             if (folder.Index != expected || expected >= pathIds.Length) throw new ImportException(CaptureFailureKind.InvariantViolation, "The folder section is out of order.");
             if ((expected == 0) != (folder.ParentIndex < 0) || folder.ParentIndex >= folder.Index) throw new ImportException(CaptureFailureKind.InvariantViolation, "A folder's parent does not precede it.");
-            var nameId = names.Intern(folder.Name);
+            var nameId = names.Intern(lease, folder.Name);
             long? parent = folder.ParentIndex < 0 ? null : pathIds[folder.ParentIndex];
             var depth = folder.ParentIndex < 0 ? 0 : depths[folder.ParentIndex] + 1;
 
@@ -251,17 +375,13 @@ internal static class SnapshotImporter
                 .ExecuteNonQuery(lease);
             counts.Folders++;
             expected++;
-            if (expected % CheckInterval == 0)
-            {
-                writer.CheckCurrent(lease);
-                cancellation.ThrowIfCancellationRequested();
-            }
+            RowsInserted(writer, lease, state, options, lengths, 1);
         }
         if (expected != pathIds.Length) throw new ImportException(CaptureFailureKind.InvariantViolation, "The folder section ended early.");
     }
 
     private static void InsertFiles(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, NameCache names, long[] pathIds,
-        ExtensionTotals extensions, Counters counts, ImportOptions? options, Action sampleJournal, CancellationToken cancellation)
+        ExtensionTotals extensions, Counters counts, ImportOptions? options, FileLengths? lengths, ImportState state)
     {
         var order = new int[pathIds.Length];
         for (var i = 0; i < order.Length; i++) order[i] = i;
@@ -273,7 +393,6 @@ internal static class SnapshotImporter
         const int BatchRows = 8;
         var pending = new (long Folder, long Name, ImportFile File)[BatchRows];
         var pendingCount = 0;
-        var nextCheck = CheckInterval;
 
         void Flush()
         {
@@ -287,6 +406,7 @@ internal static class SnapshotImporter
                         .Set(o + 6, file.CreatedTicks).Set(o + 7, file.AccessedTicks).Set(o + 8, file.Attributes);
                 }
                 batch.ExecuteNonQuery(lease);
+                RowsInserted(writer, lease, state, options, lengths, BatchRows);
             }
             else
             {
@@ -295,6 +415,7 @@ internal static class SnapshotImporter
                     var (folder, name, file) = pending[r];
                     single.Set(0, snapshotId).Set(1, folder).Set(2, name).Set(3, file.Seq).Set(4, file.Size).Set(5, file.ModifiedTicks).Set(6, file.CreatedTicks)
                         .Set(7, file.AccessedTicks).Set(8, file.Attributes).ExecuteNonQuery(lease);
+                    RowsInserted(writer, lease, state, options, lengths, 1);
                 }
             }
             pendingCount = 0;
@@ -309,7 +430,7 @@ internal static class SnapshotImporter
             var sorted = new int[files.Count];
             for (var i = 0; i < files.Count; i++)
             {
-                ids[i] = names.Intern(files[i].Name);
+                ids[i] = names.Intern(lease, files[i].Name);
                 sorted[i] = i;
             }
             Array.Sort(ids, sorted);
@@ -320,12 +441,9 @@ internal static class SnapshotImporter
                 extensions.Add(file.Name, file.Size);
                 counts.Files++;
                 if (pendingCount == BatchRows) Flush();
-                if (counts.Files >= nextCheck)
+                if (counts.Files >= state.NextFileCallback)
                 {
-                    nextCheck += CheckInterval;
-                    writer.CheckCurrent(lease);
-                    cancellation.ThrowIfCancellationRequested();
-                    sampleJournal();
+                    state.NextFileCallback += CheckInterval;
                     options?.OnFileRows?.Invoke(counts.Files);
                 }
             }
@@ -371,7 +489,8 @@ internal static class SnapshotImporter
             _byKey.OrderBy(e => e.Key, StringComparer.Ordinal).Select(e => (e.Key, e.Value.Files, e.Value.Bytes));
     }
 
-    private static void InsertErrors(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, Counters counts, CancellationToken cancellation)
+    private static void InsertErrors(WriterConnection writer, MutationLease lease, ISnapshotRowSource rows, long snapshotId, Counters counts, ImportOptions? options,
+        FileLengths? lengths, ImportState state)
     {
         using var insert = writer.Prepare(lease, ImportSql.InsertScanError, "$snapshot_id", "$seq", "$rel_path", "$error_type", "$message");
         foreach (var error in rows.Errors())
@@ -379,20 +498,18 @@ internal static class SnapshotImporter
             insert.Set(0, snapshotId).Set(1, error.Seq).Set(2, error.RelativePath).Set(3, StableCodes.ToCode(error.Type)).Set(4, error.Message).ExecuteNonQuery(lease);
             counts.Errors++;
             if (!error.Type.IsInformational()) counts.RealErrors++;
-            if (counts.Errors % CheckInterval == 0)
-            {
-                writer.CheckCurrent(lease);
-                cancellation.ThrowIfCancellationRequested();
-            }
+            RowsInserted(writer, lease, state, options, lengths, 1);
         }
     }
 
-    private static void InsertExtensionTotals(WriterConnection writer, MutationLease lease, long snapshotId, ExtensionTotals extensions)
+    private static void InsertExtensionTotals(WriterConnection writer, MutationLease lease, long snapshotId, ExtensionTotals extensions, ImportOptions? options,
+        FileLengths? lengths, ImportState state)
     {
         using var insert = writer.Prepare(lease, ImportSql.InsertExtensionTotal, "$snapshot_id", "$extension_key", "$files", "$bytes");
         foreach (var (key, files, bytes) in extensions.Ordered())
         {
             insert.Set(0, snapshotId).Set(1, Utf16.ToBytes(key)).Set(2, files).Set(3, bytes).ExecuteNonQuery(lease);
+            RowsInserted(writer, lease, state, options, lengths, 1);
         }
     }
 
@@ -412,31 +529,36 @@ internal static class SnapshotImporter
         internal long RealErrors;
     }
 
-    /// <summary>IMP-04: a name cache per capture (created when T-IMPORT begins, discarded when it ends, committed or rolled back, so a
-    /// rolled-back <c>name_id</c> can never be reused), bounded at <see cref="NameCacheCapacity"/> entries and backed by lookups
-    /// inside the transaction. Eviction is by two generations: when the newer one is full it becomes the older one and the older
-    /// one is dropped, so recently used names stay cached.</summary>
+    /// <summary>IMP-04: a name cache per capture AND per source (D-52). It is created when T-IMPORT has resolved its source and is
+    /// discarded when the import ends, committed or rolled back, so a rolled-back <c>name_id</c> can never be reused and an id of
+    /// another source can never be handed out: every statement it runs is scoped to <see cref="SourceId"/>, and the dictionary rows
+    /// it creates belong to that source alone. Bounded at <see cref="NameCacheCapacity"/> entries and backed by lookups inside the
+    /// transaction. Eviction is by two generations: when the newer one is full it becomes the older one and the older one is
+    /// dropped, so recently used names stay cached. Every call takes the lease it works under (A-25 (a)).</summary>
     private sealed class NameCache : IDisposable
     {
+        private readonly long _sourceId;
         private readonly WriterStatement _select;
         private readonly WriterStatement _insert;
         private readonly WriterStatement _insertIfAbsent;
-        private readonly MutationLease _lease;
         private double _newRate = 0.25;   // a moving share of the cache misses that turned out to be NEW names
         private Dictionary<byte[], long> _young = new(ByteArrayComparer.Instance);
         private Dictionary<byte[], long> _old = new(ByteArrayComparer.Instance);
 
-        internal NameCache(WriterConnection writer, MutationLease lease)
+        internal NameCache(WriterConnection writer, MutationLease lease, long sourceId)
         {
-            _lease = lease;
-            _select = writer.Prepare(lease, ImportSql.SelectNameId, "$utf16");
-            _insert = writer.Prepare(lease, ImportSql.InsertName, "$utf16");
-            _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsent, "$utf16");
+            _sourceId = sourceId;
+            _select = writer.Prepare(lease, ImportSql.SelectNameId, "$source_id", "$utf16");
+            _insert = writer.Prepare(lease, ImportSql.InsertName, "$source_id", "$utf16");
+            _insertIfAbsent = writer.Prepare(lease, ImportSql.InsertNameIfAbsent, "$source_id", "$utf16");
         }
+
+        /// <summary>The one source this cache serves.</summary>
+        internal long SourceId => _sourceId;
 
         internal long NewNames { get; private set; }
 
-        internal long Intern(byte[] name)
+        internal long Intern(MutationLease lease, byte[] name)
         {
             if (_young.TryGetValue(name, out var id)) return id;
             if (_old.TryGetValue(name, out id))
@@ -444,20 +566,21 @@ internal static class SnapshotImporter
                 Remember(name, id);
                 return id;
             }
-            // A name that is not cached is either already in the dictionary (a later snapshot of a source: look it up) or new (the first
-            // snapshot of a source: insert it). The moving share of new names among the misses chooses the cheaper first statement:
-            // look-up-first costs a probe and, for a new name, an insert; insert-first costs one insert, and a probe more for an old name.
+            // A name that is not cached is either already in the source's dictionary (a later snapshot of the source: look it up) or
+            // new to it (the first snapshot of a source: insert it). The moving share of new names among the misses chooses the
+            // cheaper first statement: look-up-first costs a probe and, for a new name, an insert; insert-first costs one insert, and
+            // a probe more for an old name.
             bool isNew;
             if (_newRate > 0.5)
             {
-                isNew = _insertIfAbsent.Set(0, name).ExecuteInsertIfAbsent(_lease, out id);
-                if (!isNew) id = LookUp(name);
+                isNew = _insertIfAbsent.Set(0, _sourceId).Set(1, name).ExecuteInsertIfAbsent(lease, out id);
+                if (!isNew) id = LookUp(lease, name);
             }
             else
             {
-                var found = _select.Set(0, name).ExecuteScalar(_lease);
+                var found = _select.Set(0, _sourceId).Set(1, name).ExecuteScalar(lease);
                 isNew = found is null;
-                id = isNew ? _insert.Set(0, name).ExecuteInsert(_lease) : (long)found!;
+                id = isNew ? _insert.Set(0, _sourceId).Set(1, name).ExecuteInsert(lease) : (long)found!;
             }
             if (isNew) NewNames++;
             _newRate = _newRate * 0.995 + (isNew ? 0.005 : 0);
@@ -465,8 +588,8 @@ internal static class SnapshotImporter
             return id;
         }
 
-        private long LookUp(byte[] name) =>
-            (long?)_select.Set(0, name).ExecuteScalar(_lease) ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A name that conflicted on insert could not be found.");
+        private long LookUp(MutationLease lease, byte[] name) =>
+            (long?)_select.Set(0, _sourceId).Set(1, name).ExecuteScalar(lease) ?? throw new ImportException(CaptureFailureKind.InvariantViolation, "A name that conflicted on insert could not be found.");
 
         private void Remember(byte[] name, long id)
         {

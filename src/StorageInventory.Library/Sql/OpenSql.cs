@@ -28,12 +28,28 @@ internal static class OpenSql
     internal const string GetTrustedSchema = "PRAGMA trusted_schema";
     internal const string GetCacheSize = "PRAGMA cache_size";
     internal const string GetApplicationId = "PRAGMA application_id";
+
+    // ---- IMP-11: the transaction's own image of the database, read inside T-IMPORT (not settings: nothing here is ever set) ----
+    internal const string GetPageCount = "PRAGMA page_count";
+    internal const string GetPageSize = "PRAGMA page_size";
     internal const string GetUserVersion = "PRAGMA user_version";
 
     // ---- LIB-08 steps 6 and 7 ----
     /// <summary>Every row of <c>sqlite_schema</c>: the schema fingerprint is computed over these (SEC-17). Unordered on purpose: the
     /// fingerprint sorts them in .NET, so the query needs no temporary B-tree even over a hostile database (A-24).</summary>
     internal const string SelectSchemaRows = "SELECT type, name, tbl_name, sql FROM sqlite_schema";
+
+    /// <summary>The dictionary footprint of ONE source (IMP-11): its name count and the sum of its names' UTF-16 bytes, read by a
+    /// covering scan of the source's key range of the unique name index, on a reader connection before T-IMPORT. Zero rows for a
+    /// new source.</summary>
+    internal const string SelectNameFootprint = "SELECT count(*), coalesce(sum(length(utf16)), 0) FROM name WHERE source_id = $source_id";
+
+    /// <summary>The number of folder paths of one source (IMP-11's third footprint figure).</summary>
+    internal const string SelectFolderPathFootprint = "SELECT count(*) FROM folder_path WHERE source_id = $source_id";
+
+    /// <summary>The empty-database test of LIB-07 step 7, after SQLite has opened the file (and rolled a hot journal back): the
+    /// number of objects in <c>sqlite_schema</c>.</summary>
+    internal const string CountSchemaObjects = "SELECT count(*) FROM sqlite_schema";
 
     /// <summary>Must be 0: every committed snapshot is Published (SCH-08 #0, D-47).</summary>
     internal const string CountUnpublishedSnapshots = "SELECT count(*) FROM snapshot WHERE state <> 2";

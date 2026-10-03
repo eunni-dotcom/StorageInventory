@@ -131,7 +131,7 @@ public static class ReadsTests
         var options = new ImportOptions { OnFileRows = count => { if (count % 49_152 == 0) seen.Add(session!.Store.ReadHeader().Outcome); } };
         var captureId = session.NewCaptureId();
         using var prepare = World.Lease(session, MutationKind.Prepare, captureId);
-        var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes("x"), null, "r", 1)).GetAwaiter().GetResult();
+        var attempt = session.RecordAttemptStartAsync(prepare, new AttemptStart(new byte[16], null, Utf16.ToBytes("x"), null, "run-1", 1)).GetAwaiter().GetResult();
         using var save = prepare.HandOffToObservation().HandOffToSave(out _);
         session.ImportSnapshotAsync(save, attempt, SyntheticSnapshot.NewSource(), big.Header(), big, options).GetAwaiter().GetResult();
         Assert.True(seen.Count >= 1, "the header was read during the transaction");

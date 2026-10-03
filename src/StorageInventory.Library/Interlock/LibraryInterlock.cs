@@ -144,6 +144,27 @@ internal sealed class LibraryInterlock
         return ok ? lease : throw new LeaseViolationException("The start-up lease is not available.");
     }
 
+    /// <summary>Runs the start-up open (OBS-14): the interlock hands its start-up lease to <paramref name="work"/> as a PARAMETER and
+    /// ends it, cleanly or not, when the work returns. No method of the Library other than the interlock ever holds a lease it did
+    /// not receive as a parameter (A-25 (a): there is no lease-producer exception).</summary>
+    internal T RunStartup<T>(Func<MutationLease, T> work)
+    {
+        var lease = TakeStartupLease();
+        try { return work(lease); }
+        finally { lease.Dispose(); }
+    }
+
+    /// <summary>Asks for a mutation lease and, when it is granted, hands it to <paramref name="work"/> as a parameter and ends it when
+    /// the work returns (A-25 (a)). A refusal is an outcome, not an error: it returns false with the reason.</summary>
+    internal bool TryRunMutation<T>(MutationKind kind, long owner, Func<MutationLease, T> work, out T? result, out string refusal)
+    {
+        result = default;
+        if (!TryBeginMutation(kind, owner, out var lease, out refusal)) return false;
+        try { result = work(lease); }
+        finally { lease.Dispose(); }
+        return true;
+    }
+
     /// <summary>Asks for a mutation lease. Granted only from Idle (OBS-07); a Save lease exists only as a hand-off.</summary>
     internal bool TryBeginMutation(MutationKind kind, long owner, out MutationLease lease, out string refusal)
     {
@@ -365,6 +386,40 @@ internal sealed class LibraryInterlock
             if (CheckLocked(lease, allowed) is null) return;
         }
         Require(lease, operation + ": " + detail, allowed);
+    }
+
+    /// <summary>The check of an operation on a connection that one specific lease opened (OBS-15): the offered lease must be current
+    /// and of an allowed kind (as <see cref="Require(MutationLease, string, string, MutationKind[])"/>) AND be that very lease:
+    /// another current lease of this interlock (a later grant, a hand-off successor) does not authorise a connection that was not
+    /// opened under it. A failure enters Faulted and throws before any I/O.</summary>
+    internal void RequireOpenedBy(MutationLease lease, MutationLease openedBy, string operation, string detail, MutationKind[] allowed)
+    {
+        lock (_monitor)
+        {
+            if (CheckLocked(lease, allowed) is null && lease.Id == openedBy.Id) return;
+        }
+        InterlockSnapshot? changed = null;
+        string? failure;
+        lock (_monitor)
+        {
+            failure = CheckLocked(lease, allowed) ?? (lease.Id != openedBy.Id ? "the lease is not the one that opened this connection" : null);
+            if (failure is not null) changed = FaultLocked($"{operation}: {detail}: {failure}");
+        }
+        Notify(changed);
+        if (failure is not null) throw new LeaseViolationException($"Refused before any I/O: {operation}: {detail}: {failure}.");
+    }
+
+    /// <summary>The identity-only check used by a release (a rollback): the offered lease must be the one that opened the connection,
+    /// but it need NOT be current, because a rollback removes uncommitted work and is allowed after the lease went stale or the
+    /// interlock Faulted (best-effort release, OBS-13). A default lease, a foreign lease or another lease of this interlock is
+    /// refused, enters Faulted and throws.</summary>
+    internal void RequireSameLease(MutationLease lease, MutationLease openedBy, string operation, string detail)
+    {
+        if (lease.Owner == openedBy.Owner && lease.Owner == this && lease.Id == openedBy.Id) return;
+        InterlockSnapshot? changed;
+        lock (_monitor) changed = FaultLocked($"{operation}: {detail}: the lease is not the one that opened this connection");
+        Notify(changed);
+        throw new LeaseViolationException($"Refused before any I/O: {operation}: {detail}: the lease is not the one that opened this connection.");
     }
 
     internal void Require(MutationLease lease, string operation, params MutationKind[] allowed)

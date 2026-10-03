@@ -15,6 +15,10 @@ internal sealed class LibrarySessionOptions
 /// <summary>A read was requested while the Library is not readable (any state but Available, or Faulted). Class A: a state, not a crash.</summary>
 internal sealed class LibraryUnavailableException(string message) : InvalidOperationException(message);
 
+/// <summary>The Library on disk is no longer what was opened: the path rules fail, the header pre-check fails, or the application id,
+/// the schema version or the schema fingerprint changed since the open (SEC-32, §6.4 "before every open", CONC-10). Class A.</summary>
+internal sealed class LibraryChangedException(string message) : InvalidOperationException(message);
+
 /// <summary>The result of a set-aside (LIB-13).</summary>
 /// <param name="Quarantine">What the renames did; null when the lock could not be taken (nothing was renamed).</param>
 /// <param name="Status">The state derived afterwards.</param>
@@ -105,36 +109,18 @@ internal sealed class LibrarySession
 
     /// <summary>The start-up open (OBS-14, LIB-08): runs under the start-up Open lease the interlock was constructed holding, and
     /// only when it ends cleanly does the interlock reach Idle for the first time, whatever state was derived.</summary>
-    internal LibraryStatus RunStartupOpen()
-    {
-        var lease = Interlock.TakeStartupLease();
-        try
-        {
-            return Derive(lease, OpenMode.Open);
-        }
-        finally
-        {
-            lease.Dispose();
-        }
-    }
+    internal LibraryStatus RunStartupOpen() => Interlock.RunStartup(lease => Derive(lease, OpenMode.Open));
 
     /// <summary>"Retry" (LIB-08): an Open lease granted from Idle. Refused, with the reason, while anything else runs.</summary>
     internal bool TryRetryOpen(out LibraryStatus status, out string refusal)
     {
-        if (!Interlock.TryBeginMutation(MutationKind.Open, 0, out var lease, out refusal))
+        if (!Interlock.TryRunMutation(MutationKind.Open, 0, lease => Derive(lease, OpenMode.Open), out var derived, out refusal))
         {
             status = Status;
             return false;
         }
-        try
-        {
-            status = Derive(lease, OpenMode.Open);
-            return true;
-        }
-        finally
-        {
-            lease.Dispose();
-        }
+        status = derived!;
+        return true;
     }
 
     /// <summary>LIB-08 under a lease the caller holds (an Open lease).</summary>
@@ -208,7 +194,16 @@ internal sealed class LibrarySession
         {
             return State(LibraryState.LeftoverFiles, LibraryReason.JournalWithoutMain, "Files from an interrupted Library remain here.");
         }
-        if (mainUsable) return OpenExisting(lease);
+        if (mainUsable)
+        {
+            var existing = OpenExisting(lease, mode);
+            if (existing.Status is { } decided) return decided;
+            // LIB-07 step 7: a database with application_id 0, user_version 0 and no schema objects is uninitialised, like a 0-byte
+            // file. A crash during T-CREATE leaves exactly this once SQLite has rolled its journal back. Look at the members again:
+            // the rollback may have emptied the file and deleted the journal.
+            members = Store.InspectMembersUnderLock();
+            if (members.Wal.Exists || members.Shm.Exists) return State(LibraryState.NotALibrary, LibraryReason.WalOrShmPresent, "The Library files have been modified by another program (a -wal or -shm file is present).");
+        }
 
         // Main file absent or 0 bytes, and no non-empty journal.
         var existedBefore = Store.LockPreExisted || _everHadLibrary;
@@ -216,7 +211,7 @@ internal sealed class LibrarySession
         {
             case OpenMode.Open:
                 return members.Main.Exists || !existedBefore
-                    ? State(LibraryState.NotCreated, LibraryReason.None, "There is no Library yet.")
+                    ? State(LibraryState.NotCreated, members.Main.Exists ? LibraryReason.Uninitialised : LibraryReason.None, members.Main.Exists ? "The database file is empty: it is initialised on the next save." : "There is no Library yet.")
                     : State(LibraryState.Missing, LibraryReason.MainFileMissingLockExisted, "The Library was not found.");
             case OpenMode.ImplicitCreate when !members.Main.Exists && existedBefore:
                 return State(LibraryState.Missing, LibraryReason.MainFileMissingLockExisted, "The Library was not found; it is never recreated silently.");
@@ -233,10 +228,11 @@ internal sealed class LibrarySession
             return Fail(LibraryReason.IoError, "The database file appeared while the Library was being created; nothing was overwritten. Try again.");
         }
         var allowed = new[] { MutationKind.Create, MutationKind.Prepare };
+        using var exclusive = Gate.AcquireWriter();   // CONC-06: the writer takes the gate before it opens its connection (C4-M10)
         WriterConnection writer;
         try
         {
-            writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "T-CREATE", allowed, importCache: false, _faults);
+            writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "T-CREATE", allowed, importCache: false, _faults);
         }
         catch (SqliteException ex)
         {
@@ -283,39 +279,52 @@ internal sealed class LibrarySession
         catch (Exception ex) when (ex is not OutOfMemoryException) { /* the connection is closed next */ }
     }
 
-    /// <summary>LIB-08 steps 4 to 9 for a main file that is present and not empty.</summary>
-    private LibraryStatus OpenExisting(MutationLease lease)
+    /// <summary>What opening an existing main file decided: a state, or "uninitialised" (no state yet: the caller treats the file like
+    /// a 0-byte one, LIB-07 step 7).</summary>
+    private readonly record struct Opened(LibraryStatus? Status)
     {
-        // Step 4: the header pre-check, WITHOUT SQLite. SQLite never opens a file that fails it (SEC-32).
-        var header = Store.ReadHeader();
+        internal static Opened Uninitialised => new(null);
+    }
+
+    /// <summary>LIB-08 steps 4 to 9 for a main file that is present and not empty.</summary>
+    private Opened OpenExisting(MutationLease lease, OpenMode mode)
+    {
+        _ = mode;
+
+        // Step 4: the header pre-check, WITHOUT SQLite, under the lock. SQLite never opens a file that fails it (SEC-32).
+        var header = Store.ReadHeaderUnderLock();
         switch (header.Outcome)
         {
             case HeaderOutcome.Absent:
-                return Fail(LibraryReason.IoError, "The database file disappeared while it was being opened.");
+                return new Opened(Fail(LibraryReason.IoError, "The database file disappeared while it was being opened."));
             case HeaderOutcome.TooShort:
-                return State(LibraryState.NotALibrary, LibraryReason.TooShort, "The file is too short to be a Library.");
+                return new Opened(State(LibraryState.NotALibrary, LibraryReason.TooShort, "The file is too short to be a Library."));
             case HeaderOutcome.ForeignFile:
-                return State(LibraryState.NotALibrary, LibraryReason.ForeignFile, "The file is not a StorageInventory Library.");
+                return new Opened(State(LibraryState.NotALibrary, LibraryReason.ForeignFile, "The file is not a StorageInventory Library."));
             case HeaderOutcome.WalFormat:
-                return State(LibraryState.NotALibrary, LibraryReason.WalHeader, "The file is in write-ahead-log format, which a Library never is.");
+                return new Opened(State(LibraryState.NotALibrary, LibraryReason.WalHeader, "The file is in write-ahead-log format, which a Library never is."));
             case HeaderOutcome.WrongApplicationId:
-                return State(LibraryState.NotALibrary, LibraryReason.WrongApplicationId, "The file is not a StorageInventory Library.");
+                return new Opened(State(LibraryState.NotALibrary, LibraryReason.WrongApplicationId, "The file is not a StorageInventory Library."));
             case HeaderOutcome.UnsupportedUserVersion:
-                return State(LibraryState.NotALibrary, LibraryReason.UnsupportedUserVersion, "The file has an unsupported schema version.");
+                return new Opened(State(LibraryState.NotALibrary, LibraryReason.UnsupportedUserVersion, "The file has an unsupported schema version."));
             case HeaderOutcome.NewerSchema:
-                return State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {header.UserVersion}). Update the app.");
+                return new Opened(State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {header.UserVersion}). Update the app."));
+            case HeaderOutcome.EmptyDatabase:
+                return Opened.Uninitialised;   // application_id 0, user_version 0, no schema: uninitialised (LIB-07 step 7); SQLite is not opened here
         }
 
-        // Step 5: the writer connection, every pragma, the engine assertion. A hot journal is rolled back by SQLite here.
+        // Step 5: the writer connection, every pragma, the engine assertion. A hot journal is rolled back by SQLite here, so the
+        // writer takes the in-process gate first: no in-process reader is open on the file meanwhile (CONC-06, C4-M10).
         var allowed = new[] { MutationKind.Open, MutationKind.Create, MutationKind.Prepare };
+        using var exclusive = Gate.AcquireWriter();
         WriterConnection writer;
         try
         {
-            writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "open the Library", allowed, importCache: false, _faults);
+            writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "open the Library", allowed, importCache: false, _faults);
         }
         catch (SqliteException ex)
         {
-            return FromSqliteFailure(ex);
+            return new Opened(FromSqliteFailure(ex));
         }
 
         bool recoveryPending;
@@ -323,24 +332,12 @@ internal sealed class LibrarySession
         {
             try
             {
-                var q = new WriterQueryRunner(writer, lease);
-                // Step 6: application id, schema version and the schema fingerprint, re-read through SQLite.
-                if (Convert.ToInt64(q.Scalar(OpenSql.GetApplicationId)) != LibraryNames.ApplicationId)
+                // Steps 6 and 7 through SQLite: application id, schema version, schema fingerprint, committed state.
+                if (CheckIdentity(writer, lease) is { } refusal)
                 {
-                    return State(LibraryState.NotALibrary, LibraryReason.WrongApplicationId, "The file is not a StorageInventory Library.");
-                }
-                var userVersion = Convert.ToInt64(q.Scalar(OpenSql.GetUserVersion));
-                if (userVersion > LibraryNames.SchemaVersion) return State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {userVersion}).");
-                if (userVersion != LibraryNames.SchemaVersion) return State(LibraryState.NotALibrary, LibraryReason.UnsupportedUserVersion, "The file has an unsupported schema version.");
-                var rows = new List<SchemaRow>();
-                q.Rows(OpenSql.SelectSchemaRows, r => rows.Add(new SchemaRow(r.GetString(0), r.GetString(1), r.GetString(2), r.IsNull(3) ? null : r.GetString(3))));
-                var differences = LibrarySchema.Differences(rows);
-                if (differences.Count > 0) return State(LibraryState.NotALibrary, LibraryReason.SchemaFingerprint, "The Library does not have the expected structure: " + string.Join("; ", differences.Take(3)));
-
-                // Step 7: the committed-state check. A committed snapshot not Published proves SQLite's atomic commit was defeated.
-                if (Convert.ToInt64(q.Scalar(OpenSql.CountUnpublishedSnapshots)) != 0)
-                {
-                    return State(LibraryState.Damaged, LibraryReason.NotPublishedSnapshot, "The Library holds a snapshot that was never completed.");
+                    // SQLite has now rolled a hot journal back. If that left an empty database (application_id 0, user_version 0, no
+                    // schema objects: what an interrupted T-CREATE leaves, LIB-07 step 7), the file is uninitialised, not foreign.
+                    return refusal.Reason == LibraryReason.WrongApplicationId && IsEmptyDatabase(writer, lease) ? Opened.Uninitialised : new Opened(refusal);
                 }
 
                 // Step 8: T-RECOVER, best effort, only under the lock (CONC-08).
@@ -348,13 +345,64 @@ internal sealed class LibrarySession
             }
             catch (SqliteException ex)
             {
-                return FromSqliteFailure(ex);
+                return new Opened(FromSqliteFailure(ex));
             }
         }
 
         _everHadLibrary = true;
         var status = new LibraryStatus(LibraryState.Available, LibraryReason.None, recoveryPending ? "The Library is available; recovery is pending." : "The Library is available.", recoveryPending, false, Store.Directory);
-        return status;
+        return new Opened(status);
+    }
+
+    /// <summary>Steps 6 and 7 of LIB-08 on an open writer: application id, schema version, schema fingerprint and the committed-state
+    /// check, re-read through SQLite. Null when the file is a Library of this version; otherwise the state it refuses with. Also run
+    /// before every later mutation (SEC-32, C4-M11): a file swapped for another since the open is refused, whatever the header says.</summary>
+    private LibraryStatus? CheckIdentity(WriterConnection writer, MutationLease lease)
+    {
+        var q = new DelegateQueryRunner(
+            (sql, parameters) => writer.Scalar(lease, sql, parameters),
+            (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+        if (Convert.ToInt64(q.Scalar(OpenSql.GetApplicationId)) != LibraryNames.ApplicationId)
+        {
+            return State(LibraryState.NotALibrary, LibraryReason.WrongApplicationId, "The file is not a StorageInventory Library.");
+        }
+        var userVersion = Convert.ToInt64(q.Scalar(OpenSql.GetUserVersion));
+        if (userVersion > LibraryNames.SchemaVersion) return State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {userVersion}).");
+        if (userVersion != LibraryNames.SchemaVersion) return State(LibraryState.NotALibrary, LibraryReason.UnsupportedUserVersion, "The file has an unsupported schema version.");
+        var rows = new List<SchemaRow>();
+        q.Rows(OpenSql.SelectSchemaRows, r => rows.Add(new SchemaRow(r.GetString(0), r.GetString(1), r.GetString(2), r.IsNull(3) ? null : r.GetString(3))));
+        var differences = LibrarySchema.Differences(rows);
+        if (differences.Count > 0) return State(LibraryState.NotALibrary, LibraryReason.SchemaFingerprint, "The Library does not have the expected structure: " + string.Join("; ", differences.Take(3)));
+
+        // Step 7: the committed-state check. A committed snapshot not Published proves SQLite's atomic commit was defeated.
+        if (Convert.ToInt64(q.Scalar(OpenSql.CountUnpublishedSnapshots)) != 0)
+        {
+            return State(LibraryState.Damaged, LibraryReason.NotPublishedSnapshot, "The Library holds a snapshot that was never completed.");
+        }
+        return null;
+    }
+
+    /// <summary>LIB-07 step 7 after SQLite has opened the file: <c>application_id = 0</c>, <c>user_version = 0</c> and no schema objects.</summary>
+    private static bool IsEmptyDatabase(WriterConnection writer, MutationLease lease) =>
+        Convert.ToInt64(writer.Scalar(lease, OpenSql.GetApplicationId)) == 0
+        && Convert.ToInt64(writer.Scalar(lease, OpenSql.GetUserVersion)) == 0
+        && Convert.ToInt64(writer.Scalar(lease, OpenSql.CountSchemaObjects)) == 0;
+
+    /// <summary>The path rules and the header pre-check again, immediately before a writer is opened for a mutation (SEC-32, §6.4 "before
+    /// every open", C4-M11): hours can lie between the open and a save, and the lock does not protect the main file from being swapped.
+    /// Class A: the mutation is refused and nothing is written.</summary>
+    private void RevalidateBeforeWriter(string operation)
+    {
+        var path = Store.ValidatePath();
+        if (path.Blocked) throw new LibraryChangedException($"{operation} refused: the Library path no longer passes the path rules ({path.FirstBlocking!.Message}).");
+        var header = Store.ReadHeaderUnderLock();
+        if (header.Outcome != HeaderOutcome.Valid) throw new LibraryChangedException($"{operation} refused: the database file is no longer a Library ({header.Outcome}).");
+    }
+
+    /// <summary>The same check through SQLite, on the writer just opened (application id, schema version, fingerprint, committed state).</summary>
+    private void RevalidateWriter(WriterConnection writer, MutationLease lease, string operation)
+    {
+        if (CheckIdentity(writer, lease) is { } refusal) throw new LibraryChangedException($"{operation} refused: {refusal.Message}");
     }
 
     /// <summary>T-RECOVER (§10.3, CONC-08): attempts left InProgress by ANOTHER session become Interrupted, and the last-opened app
@@ -400,7 +448,7 @@ internal sealed class LibrarySession
     {
         try
         {
-            using var reader = LibraryDatabase.OpenReader(Store.MainPath, _faults);
+            using var reader = LibraryDatabase.OpenReader(Store.MainPathUnderLock(), _faults);
             var check = reader.QuickCheck();
             return check == "ok"
                 ? Fail(LibraryReason.IoError, "SQLite reported corruption but quick_check passed: " + original.Message)
@@ -460,10 +508,25 @@ internal sealed class LibrarySession
     {
         Interlock.Require(lease, "T0", MutationKind.Prepare);
         RequireWritable();
-        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
-        using var writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "T0", [MutationKind.Prepare], importCache: false, _faults);
         try
         {
+            return await RecordAttemptStartCoreAsync(lease, start, cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (LibraryInterlock.IsClassC(ex))
+        {
+            lease.ClassCFailure(ex);   // OBS-13: a class C failure in T0 ends in Faulted, not in a clean Idle
+            throw;
+        }
+    }
+
+    private async Task<AttemptRef> RecordAttemptStartCoreAsync(MutationLease lease, AttemptStart start, CancellationToken cancellation)
+    {
+        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
+        RevalidateBeforeWriter("T0");
+        using var writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "T0", [MutationKind.Prepare], importCache: false, _faults);
+        try
+        {
+            RevalidateWriter(writer, lease, "T0");
             writer.Begin(lease);
             long id;
             using (var insert = writer.Prepare(lease, ImportSql.InsertAttempt, "$session_token", "$capture_token", "$source_id", "$root_path", "$report_folder", "$run_id", "$started_utc"))
@@ -488,10 +551,25 @@ internal sealed class LibrarySession
         Interlock.Require(lease, "T-OUTCOME", MutationKind.Save);
         if (outcome == AttemptOutcome.InProgress) throw new ArgumentException("An outcome is never InProgress.", nameof(outcome));
         RequireWritable();
-        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
-        using var writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "T-OUTCOME", [MutationKind.Save], importCache: false, _faults);
         try
         {
+            return await RecordAttemptOutcomeCoreAsync(lease, attempt, outcome, failure, message, cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (LibraryInterlock.IsClassC(ex))
+        {
+            lease.ClassCFailure(ex);
+            throw;
+        }
+    }
+
+    private async Task<bool> RecordAttemptOutcomeCoreAsync(MutationLease lease, AttemptRef attempt, AttemptOutcome outcome, CaptureFailureKind? failure, string? message, CancellationToken cancellation)
+    {
+        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
+        RevalidateBeforeWriter("T-OUTCOME");
+        using var writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "T-OUTCOME", [MutationKind.Save], importCache: false, _faults);
+        try
+        {
+            RevalidateWriter(writer, lease, "T-OUTCOME");
             writer.Begin(lease);
             int changed;
             using (var update = writer.Prepare(lease, ImportSql.RecordAttemptOutcome, "$outcome", "$failure_kind", "$message", "$ended_utc", "$attempt_id", "$session_token"))
@@ -520,11 +598,33 @@ internal sealed class LibrarySession
     {
         Interlock.Require(lease, "T-IMPORT", MutationKind.Save);
         RequireWritable();
+        try
+        {
+            return await ImportSnapshotCoreAsync(lease, attempt, source, header, rows, options, cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (LibraryInterlock.IsClassC(ex))
+        {
+            lease.ClassCFailure(ex);
+            throw;
+        }
+    }
+
+    private async Task<ImportResult> ImportSnapshotCoreAsync(MutationLease lease, AttemptRef attempt, ImportSourceSpec source, ImportSnapshotHeader header,
+        ISnapshotRowSource rows, ImportOptions? options, CancellationToken cancellation)
+    {
         using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
+        try
+        {
+            RevalidateBeforeWriter("T-IMPORT");
+        }
+        catch (LibraryChangedException ex)
+        {
+            throw new ImportException(CaptureFailureKind.LibraryUnavailable, ex.Message, ex);
+        }
         WriterConnection writer;
         try
         {
-            writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "T-IMPORT", [MutationKind.Save], importCache: true, _faults);
+            writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "T-IMPORT", [MutationKind.Save], importCache: true, _faults);
         }
         catch (SqliteException ex)
         {
@@ -532,9 +632,42 @@ internal sealed class LibrarySession
         }
         using (writer)
         {
-            return SnapshotImporter.Run(writer, lease, SessionToken, attempt, source, header, rows, options, Store.JournalPath, cancellation);
+            try
+            {
+                RevalidateWriter(writer, lease, "T-IMPORT");
+            }
+            catch (LibraryChangedException ex)
+            {
+                throw new ImportException(CaptureFailureKind.LibraryUnavailable, ex.Message, ex);
+            }
+            return SnapshotImporter.Run(writer, lease, SessionToken, attempt, source, header, rows, options, Store.MeasureLengthsUnderLock, cancellation);
         }
     }
+
+    /// <summary>The target source's dictionary footprint (IMP-11), read before T-IMPORT on a read-only connection: the source's name
+    /// count and name bytes, and its folder-path count. All zero for a new source or one without a dictionary. The reads run under the
+    /// engine's progress callback, which observes the save token (CAN-01d), so a cancellation interrupts them.</summary>
+    internal Task<DictionaryFootprint> ReadDictionaryFootprintAsync(long sourceId, CancellationToken cancellation = default) => ReadAsync(reader =>
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, reader.Token);
+        var checker = new TokenChecker(linked.Token);
+        try
+        {
+            using (reader.BeginProgress(checker))
+            {
+                var names = reader.Query(OpenSql.SelectNameFootprint, ("$source_id", sourceId)).Single();
+                var folders = reader.Query(OpenSql.SelectFolderPathFootprint, ("$source_id", sourceId)).Single();
+                return new DictionaryFootprint(
+                    LibraryCatalog.Integer(names[0], "name count", min: 0),
+                    LibraryCatalog.Integer(names[1], "name bytes", min: 0),
+                    LibraryCatalog.Integer(folders[0], "folder path count", min: 0));
+            }
+        }
+        catch (SqliteException) when (linked.Token.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(linked.Token);
+        }
+    }, cancellation);
 
     // ---- T-DELETE ----
 
@@ -545,10 +678,25 @@ internal sealed class LibrarySession
     {
         Interlock.Require(lease, "T-DELETE", MutationKind.Delete);
         RequireWritable();
-        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
-        using var writer = LibraryDatabase.OpenWriter(lease, Store.MainPath, "T-DELETE", [MutationKind.Delete], importCache: false, _faults);
         try
         {
+            await DeleteSnapshotCoreAsync(lease, snapshotId, cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (LibraryInterlock.IsClassC(ex))
+        {
+            lease.ClassCFailure(ex);
+            throw;
+        }
+    }
+
+    private async Task DeleteSnapshotCoreAsync(MutationLease lease, long snapshotId, CancellationToken cancellation)
+    {
+        using var exclusive = await Gate.AcquireWriterAsync(cancellation).ConfigureAwait(false);
+        RevalidateBeforeWriter("T-DELETE");
+        using var writer = LibraryDatabase.OpenWriter(lease, Interlock, Store.MainPathUnderLock(), "T-DELETE", [MutationKind.Delete], importCache: false, _faults);
+        try
+        {
+            RevalidateWriter(writer, lease, "T-DELETE");
             writer.Begin(lease);
             Delete(writer, lease, DeleteSql.MarkDeleting, snapshotId, expectOne: true, "mark the snapshot as deleting (it is not a published snapshot)", cancellation);
             Delete(writer, lease, DeleteSql.DeleteFileObs, snapshotId, expectOne: false, "", cancellation);
@@ -600,7 +748,7 @@ internal sealed class LibrarySession
         ReaderConnection? reader = null;
         try
         {
-            reader = LibraryDatabase.OpenReader(Store.MainPath, _faults);
+            reader = LibraryDatabase.OpenReader(Store.MainPathUnderLock(), _faults);
             reader.Token = ticket.Token;
             return read(reader);
         }

@@ -110,3 +110,12 @@ internal sealed class World
         return condition();
     }
 }
+
+/// <summary>Test helper: the writer's queries inside its transaction, guarded by the lease on every statement (what the importer's
+/// verification uses), without a lease-holding object in the product.</summary>
+internal static class WriterQueries
+{
+    internal static IQueryRunner Of(WriterConnection writer, MutationLease lease) => new DelegateQueryRunner(
+        (sql, parameters) => writer.Scalar(lease, sql, parameters),
+        (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+}

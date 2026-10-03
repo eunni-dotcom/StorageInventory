@@ -12,12 +12,24 @@ internal interface IQueryRunner
     void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters);
 }
 
-/// <summary>The writer's queries inside its transaction, guarded by the lease on every statement (OBS-15).</summary>
-internal sealed class WriterQueryRunner(WriterConnection writer, MutationLease lease) : IQueryRunner
+/// <summary>A query runner built from two delegates. The writer's runner is created by a method that TAKES the lease and captures it
+/// in the delegates (so the lease is checked on every statement, OBS-15, and A-25 (a) sees the host method that holds it); the
+/// verifier itself never touches a connection, so it needs no lease and reaches no mutation primitive.</summary>
+internal sealed class DelegateQueryRunner(Func<string, (string Name, object? Value)[], object?> scalar, Action<string, Action<IRowReader>, (string Name, object? Value)[]> rows) : IQueryRunner
 {
-    public object? Scalar(string sql, params (string Name, object? Value)[] parameters) => writer.Scalar(lease, sql, parameters);
+    public object? Scalar(string sql, params (string Name, object? Value)[] parameters) => scalar(sql, parameters);
 
-    public void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters) => writer.Rows(lease, sql, each, parameters);
+    public void Rows(string sql, Action<IRowReader> each, params (string Name, object? Value)[] parameters) => rows(sql, each, parameters);
+}
+
+/// <summary>Seams of one verification: <see cref="Checkpoint"/> is called between queries and every
+/// <see cref="SnapshotVerifier.CheckpointRows"/> rows of a streamed query (it observes the save token and may throw a cancellation);
+/// <see cref="Stage"/> names the moments the benchmark's cancel points use.</summary>
+internal sealed class VerificationHooks
+{
+    internal Action? Checkpoint { get; init; }
+
+    internal Action<ImportPoint>? Stage { get; init; }
 }
 
 /// <summary>
@@ -28,11 +40,20 @@ internal sealed class WriterQueryRunner(WriterConnection writer, MutationLease l
 /// </summary>
 internal static class SnapshotVerifier
 {
+    /// <summary>Rows between calls of <see cref="VerificationHooks.Checkpoint"/> inside a streamed query (CAN-01d: at most 65,536 rows
+    /// examined by any verification query between looks at the save token).</summary>
+    internal const int CheckpointRows = 65_536;
+
     /// <summary>Verifies invariants 1 to 12. Returns null when every one holds, otherwise the first that does not.</summary>
-    internal static string? Verify(IQueryRunner q, long snapshotId, long sourceId, long files, long bytes, long folders, long realErrors, bool expectComplete)
+    internal static string? Verify(IQueryRunner q, long snapshotId, long sourceId, long files, long bytes, long folders, long realErrors, bool expectComplete,
+        VerificationHooks? hooks = null)
     {
         (string, object?)[] snapshot = [("$snapshot_id", snapshotId)];
         (string, object?)[] snapshotAndSource = [("$snapshot_id", snapshotId), ("$source_id", sourceId)];
+        var checkpoint = hooks?.Checkpoint ?? (static () => { });
+        hooks?.Stage?.Invoke(ImportPoint.VerificationStart);
+
+        checkpoint();
 
         // 1: one root row, discovery index 0
         long rootRows = 0, rootIndex = -1;
@@ -40,20 +61,26 @@ internal static class SnapshotVerifier
         if (rootRows != 1 || rootIndex != 0) return $"invariant 1: {rootRows} root rows, root discovery index {rootIndex}";
 
         // 2: closure of paths and folders
+        checkpoint();
         if (Count(q, ImportSql.VerifyFolderPathsOfSource, snapshotAndSource) != 0) return "invariant 2: a folder row does not refer to a folder path of this source";
 
         // 3: parent closure
+        checkpoint();
         if (Count(q, ImportSql.VerifyParentClosure, snapshot) != 0) return "invariant 3: a folder has no listed, earlier parent in this snapshot";
 
-        // 4: name closure
-        if (Count(q, ImportSql.VerifyFileNames, snapshot) != 0) return "invariant 4: a file name is not in the dictionary";
-        if (Count(q, ImportSql.VerifyFolderNames, snapshot) != 0) return "invariant 4: a folder name is not in the dictionary";
+        // 4: name closure, per source: a name id that exists only for another source is a violation (D-52)
+        checkpoint();
+        if (Count(q, ImportSql.VerifyFileNames, snapshotAndSource) != 0) return "invariant 4: a file name is not in the dictionary of this source";
+        checkpoint();
+        if (Count(q, ImportSql.VerifyFolderNames, snapshotAndSource) != 0) return "invariant 4: a folder name is not in the dictionary of this source";
 
         // 2 (b) and 5: the files of every folder against the folders' recorded direct counts, by merging two ordered streams
-        var totalsProblem = CheckFolderTotals(q, snapshot);
+        checkpoint();
+        var totalsProblem = CheckFolderTotals(q, snapshot, checkpoint);
         if (totalsProblem is not null) return totalsProblem;
 
         // 6: sealed totals against the data, and the root's totals
+        checkpoint();
         long measuredFiles = 0, measuredBytes = 0, measuredFolders = 0;
         q.Rows(ImportSql.MeasureSnapshot, r => { measuredFiles = r.GetInt64(0); measuredBytes = r.GetInt64(1); measuredFolders = r.GetInt64(2); }, snapshot);
         if (measuredFiles != files || measuredBytes != bytes || measuredFolders != folders)
@@ -67,24 +94,33 @@ internal static class SnapshotVerifier
             return $"invariant 6: the root totals are {rootFiles} files, {rootBytes} bytes, {rootSubfolders} subfolders; sealed totals are {files}, {bytes}, {folders - 1} subfolders";
         }
 
+        hooks?.Stage?.Invoke(ImportPoint.VerificationMiddle);
+
         // 7: completeness mirrors the root
         if ((rootComplete == 1) != expectComplete) return "invariant 7: completeness does not match the root's subtree_complete";
 
         // 8 and 9: unlisted folders have no children; incompleteness propagates upwards
+        checkpoint();
         if (Count(q, ImportSql.VerifyNoChildrenOfUnlisted, snapshotAndSource) != 0) return "invariant 8: a skipped or unreadable folder has children";
+        checkpoint();
         if (Count(q, ImportSql.VerifyIncompleteFolders, snapshot) != 0) return "invariant 9: an unreadable or partial folder is marked subtree-complete";
+        checkpoint();
         if (Count(q, ImportSql.VerifyIncompleteAncestors, snapshot) != 0) return "invariant 9: an ancestor of an incomplete folder is marked subtree-complete";
 
         // 10: scan_errors counts the non-informational error rows
+        checkpoint();
         if (Count(q, ImportSql.CountRealScanErrors, snapshot) != realErrors) return "invariant 10: scan_errors differs from the non-informational error rows";
 
         // 11: each seq 0..files-1 and each discovery index 0..folders-1 exactly once, by streaming bitmaps (no sort, no temp B-tree)
-        var seqProblem = CheckPermutation(q, ImportSql.StreamFileSequences, snapshot, files);
+        checkpoint();
+        var seqProblem = CheckPermutation(q, ImportSql.StreamFileSequences, snapshot, files, checkpoint);
         if (seqProblem is not null) return "invariant 11: file seq " + seqProblem;
-        var indexProblem = CheckPermutation(q, ImportSql.StreamDiscoveryIndexes, snapshot, folders);
+        checkpoint();
+        var indexProblem = CheckPermutation(q, ImportSql.StreamDiscoveryIndexes, snapshot, folders, checkpoint);
         if (indexProblem is not null) return "invariant 11: folder discovery_index " + indexProblem;
 
         // 12: extension totals sum to files and bytes
+        checkpoint();
         long extFiles = -1, extBytes = -1;
         q.Rows(ImportSql.SumExtensionTotals, r => { extFiles = r.GetInt64(0); extBytes = r.GetInt64(1); }, snapshot);
         if (extFiles != files || extBytes != bytes) return $"invariant 12: extension totals sum to {extFiles} files and {extBytes} bytes";
@@ -109,11 +145,18 @@ internal static class SnapshotVerifier
     /// <summary>Invariants 2 (b) and 5 without a probe per folder: <c>file_obs</c> grouped by folder and <c>folder_obs</c> both arrive in
     /// <c>path_id</c> order, so one pass over each is merged here, and the child counts come from one more pass. A folder that holds
     /// files but has no folder row, or whose recorded direct files, bytes or subfolders differ from what is stored, fails.</summary>
-    private static string? CheckFolderTotals(IQueryRunner q, (string, object?)[] snapshot)
+    private static string? CheckFolderTotals(IQueryRunner q, (string, object?)[] snapshot, Action checkpoint)
     {
+        var rowsSeen = 0L;
+        void Tick()
+        {
+            if (++rowsSeen % CheckpointRows == 0) checkpoint();
+        }
+
         var children = new Dictionary<long, int>();
         q.Rows(ImportSql.StreamFolderParents, r =>
         {
+            Tick();
             var parent = r.GetInt64(0);
             children[parent] = children.GetValueOrDefault(parent) + 1;
         }, snapshot);
@@ -123,6 +166,7 @@ internal static class SnapshotVerifier
         var groupBytes = new List<long>();
         q.Rows(ImportSql.StreamFileFolderTotals, r =>
         {
+            Tick();
             groupFolder.Add(r.GetInt64(0));
             groupFiles.Add(r.GetInt64(1));
             groupBytes.Add(r.GetInt64(2));
@@ -132,6 +176,7 @@ internal static class SnapshotVerifier
         string? problem = null;
         q.Rows(ImportSql.StreamFolderDirects, r =>
         {
+            Tick();
             if (problem is not null) return;
             var path = r.GetInt64(0);
             while (next < groupFolder.Count && groupFolder[next] < path)
@@ -157,7 +202,7 @@ internal static class SnapshotVerifier
         Convert.ToInt64(q.Scalar(sql, parameters) ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>The streamed values must be exactly 0 .. expected-1, each once. Returns a description of the first problem.</summary>
-    private static string? CheckPermutation(IQueryRunner q, string sql, (string, object?)[] parameters, long expected)
+    private static string? CheckPermutation(IQueryRunner q, string sql, (string, object?)[] parameters, long expected, Action checkpoint)
     {
         if (expected < 0 || expected > int.MaxValue) return "total is out of range";
         var seen = new BitArray((int)expected);
@@ -167,7 +212,7 @@ internal static class SnapshotVerifier
         {
             if (problem is not null) return;
             var value = r.GetInt64(0);
-            count++;
+            if (++count % CheckpointRows == 0) checkpoint();
             if (value < 0 || value >= expected) problem = $"value {value} is outside 0..{expected - 1}";
             else if (seen[(int)value]) problem = $"value {value} appears twice";
             else seen[(int)value] = true;

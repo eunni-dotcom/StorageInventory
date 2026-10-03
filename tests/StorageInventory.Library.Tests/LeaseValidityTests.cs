@@ -34,7 +34,7 @@ public static class LeaseValidityTests
             ("QuarantineSet", (w, s) => s.Store.QuarantineSet(default), true),
             ("CreateLibrary", (w, s) => s.CreateLibrary(default), true),
             ("DeleteSnapshot", (w, s) => s.DeleteSnapshotAsync(default, 1).GetAwaiter().GetResult(), true),
-            ("OpenWriter", (w, s) => LibraryDatabase.OpenWriter(default, w.Main, "x", [MutationKind.Create], false, null), false),
+            ("OpenWriter", (w, s) => LibraryDatabase.OpenWriter(default, s.Interlock, w.Main, "x", [MutationKind.Create], false, null), true),
         };
         foreach (var (name, operation, faults) in cases)
         {
@@ -225,7 +225,7 @@ public static class LeaseValidityTests
         var session = world.CreatedSession();
         var lease = World.Lease(session, MutationKind.Prepare, owner: 1);
         // open the writer legitimately, then make the lease non-current before BEGIN
-        var writer = LibraryDatabase.OpenWriter(lease, world.Main, "t", [MutationKind.Prepare], false, null);
+        var writer = LibraryDatabase.OpenWriter(lease, session.Interlock, world.Main, "t", [MutationKind.Prepare], false, null);
         lease.Dispose();   // with the writer still open, this ends the lease in Faulted (a resource is open), so BEGIN must be refused
         Assert.Throws<LeaseViolationException>(() => writer.Begin(lease));
         Assert.False(writer.InTransaction, "no transaction was started");

@@ -15,7 +15,7 @@ internal readonly record struct SchemaRow(string Type, string Name, string Table
 internal static class LibrarySchema
 {
     /// <summary>SHA-256 (lower-case hex) of <see cref="Canonical"/> over the rows of a freshly created schema-1 Library.</summary>
-    internal const string Schema1Fingerprint = "8f96f561b6f811559bf56fe26322ae43e6835ea4f61c1c15df5200078b773457";
+    internal const string Schema1Fingerprint = "1d1a977f5e90563cd03fd8b397f57da4f104835e8309c3ae81da3709ee90e922";
 
     /// <summary>The objects schema 1 contains, as "type name": 10 tables-with-auto-indexes and the explicit indexes. SQLite also
     /// lists the automatic indexes it creates for PRIMARY KEY and UNIQUE constraints; they have no SQL text.</summary>

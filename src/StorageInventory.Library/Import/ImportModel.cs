@@ -92,7 +92,59 @@ internal interface ISnapshotRowSource
     IEnumerable<ImportError> Errors();
 }
 
-/// <summary>Progress and test seams for the import. Production passes none.</summary>
+/// <summary>Where a space check of the import primitive happens (IMP-11, CAN-01d).</summary>
+internal enum SpaceCheckKind
+{
+    /// <summary>Right after <c>BEGIN IMMEDIATE</c>.</summary>
+    Begin = 1,
+
+    /// <summary>After every <see cref="SnapshotImporter.GuardInterval"/> inserted observation rows.</summary>
+    Rows = 2,
+
+    /// <summary>The final check, immediately before <c>COMMIT</c>, after the in-transaction verification and the final statements:
+    /// nothing runs between it and <c>COMMIT</c>, and it is the last check of the save token.</summary>
+    Final = 3,
+}
+
+/// <summary>What the import primitive tells the space guard at a check (IMP-11). Every figure is exact, read at the check: the
+/// transaction's page count and the page size from the engine, the main file's and the journal's lengths through handles.</summary>
+/// <param name="Kind">Begin, Rows or Final.</param>
+/// <param name="PendingGrowth"><c>Λ</c> = max(0, <c>page_count</c> × page size − the main file's length): pages of the transaction's
+/// database image that the main file does not hold yet (new pages still in the page cache), which a cache spill or <c>COMMIT</c> will write.</param>
+/// <param name="PageCount"><c>PRAGMA page_count</c> inside the transaction.</param>
+/// <param name="PageSize"><c>PRAGMA page_size</c>.</param>
+/// <param name="MainFileLength">The main file's length through a handle.</param>
+/// <param name="JournalLength">The rollback journal's length through a handle (0 when there is none).</param>
+/// <param name="RowsInserted">Observation rows inserted so far (file, folder, scan-error and extension-total rows).</param>
+internal readonly record struct SpaceCheck(SpaceCheckKind Kind, long PendingGrowth, long PageCount, long PageSize, long MainFileLength, long JournalLength, long RowsInserted);
+
+/// <summary>The space guard of IMP-11 (C4 provides the primitive's hook; C5 wires the rule). It is a read-only callback, not a mutation
+/// primitive: it receives numbers and answers continue or stop. A "stop" answer, an exception from it, or an input the primitive
+/// could not read rolls the import back as <c>LibraryFull</c> (class A). The save token is checked before the guard at every check.</summary>
+internal interface ISpaceGuard
+{
+    /// <summary>True to continue the import, false to stop it (rolled back as <c>LibraryFull</c>).</summary>
+    bool Permit(in SpaceCheck check);
+}
+
+/// <summary>Named moments of T-IMPORT, for test seams and the benchmark's four cancel points (PERF-15 (c), §15.4).</summary>
+internal enum ImportPoint
+{
+    /// <summary>Immediately after a token check during row insertion (cancel point 1).</summary>
+    AfterRowCheck = 1,
+
+    /// <summary>The start of the in-transaction verification (cancel point 2).</summary>
+    VerificationStart = 2,
+
+    /// <summary>The middle of the in-transaction verification (cancel point 3).</summary>
+    VerificationMiddle = 3,
+
+    /// <summary>During the final statements, after the token check that follows the verification and before IMP-11's final check,
+    /// which is the last token check before <c>COMMIT</c> and detects a cancellation here (cancel point 4).</summary>
+    FinalStatements = 4,
+}
+
+/// <summary>Progress and test seams for the import. Production passes the space guard (C5) and nothing else.</summary>
 internal sealed class ImportOptions
 {
     /// <summary>Called every 16,384 file rows with the running count, after the lease has been checked (OBS-15).</summary>
@@ -100,7 +152,22 @@ internal sealed class ImportOptions
 
     /// <summary>Called once after all rows are inserted and before verification (a place to pause or crash a child process).</summary>
     internal Action? AfterRows { get; init; }
+
+    /// <summary>The IMP-11 space guard: consulted at <c>BEGIN</c>, after every 4,096 inserted rows and at the final check.</summary>
+    internal ISpaceGuard? SpaceGuard { get; init; }
+
+    /// <summary>Called at each <see cref="ImportPoint"/> (a place to cancel, pause or measure).</summary>
+    internal Action<ImportPoint>? Probe { get; init; }
+
+    /// <summary>Called with every space check the primitive makes, whether or not a guard is set (the benchmark's per-check record).</summary>
+    internal Action<SpaceCheck>? OnSpaceCheck { get; init; }
 }
+
+/// <summary>The target source's dictionary footprint (IMP-11): the figures the journal projection uses. All zero for a new source.</summary>
+/// <param name="Names">Name rows of the source (<c>E_n</c>).</param>
+/// <param name="NameBytes">The sum of those names' UTF-16 bytes (<c>E_b</c>).</param>
+/// <param name="FolderPaths">Folder-path rows of the source (<c>E_p</c>).</param>
+internal readonly record struct DictionaryFootprint(long Names, long NameBytes, long FolderPaths);
 
 /// <summary>The numbers an import measured about itself.</summary>
 /// <param name="SnapshotId">The id the snapshot was published under (SCH-11).</param>
@@ -110,9 +177,21 @@ internal sealed class ImportOptions
 /// <param name="ScanErrors">Scan error rows inserted.</param>
 /// <param name="NewNames">Names that were new to the dictionary.</param>
 /// <param name="Elapsed">Duration of the whole transaction, BEGIN to COMMIT.</param>
-/// <param name="PeakJournalBytes">The largest the rollback journal was seen while the transaction ran (sampled).</param>
+/// <param name="PeakJournalBytes">The journal's length through a handle at the final check, immediately before <c>COMMIT</c> (a
+/// <c>TRUNCATE</c> journal is at its largest there); the largest sampled value when no lengths were available.</param>
 /// <param name="Phases">Where the transaction's time went.</param>
-internal sealed record ImportResult(long SnapshotId, long SourceId, long Files, long Folders, long ScanErrors, long NewNames, TimeSpan Elapsed, long PeakJournalBytes, ImportPhases? Phases = null);
+/// <param name="Checks">What the import measured about itself: the token's observation record and the commit's write-out.</param>
+internal sealed record ImportResult(long SnapshotId, long SourceId, long Files, long Folders, long ScanErrors, long NewNames, TimeSpan Elapsed, long PeakJournalBytes,
+    ImportPhases? Phases = null, ImportChecks? Checks = null);
+
+/// <summary>The observation record of one import (CAN-01d, IMP-11): how often the save token was looked at, the longest gap between two
+/// looks, and what <c>COMMIT</c> wrote against the final check's pending growth.</summary>
+/// <param name="TokenObservations">Looks at the save token (explicit checks and progress callbacks).</param>
+/// <param name="MaxTokenGap">The longest gap between two consecutive looks, BEGIN to COMMIT.</param>
+/// <param name="SpaceChecks">Space checks made (BEGIN, every 4,096 rows, the final one).</param>
+/// <param name="FinalPendingGrowth"><c>Λ</c> at the final check, or -1 when no lengths were available.</param>
+/// <param name="CommitGrowth">How much the main file grew while <c>COMMIT</c> ran, or -1 when no lengths were available.</param>
+internal sealed record ImportChecks(long TokenObservations, TimeSpan MaxTokenGap, int SpaceChecks, long FinalPendingGrowth, long CommitGrowth);
 
 /// <summary>Where one import transaction spent its time (IMP-03 to IMP-06): interning and inserting folders, interning and inserting
 /// files (names included), the error records and extension totals, the in-transaction verification (IMP-05), and the commit.</summary>

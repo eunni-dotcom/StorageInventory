@@ -104,6 +104,11 @@ internal sealed class ReaderWriterGate
         return task;
     }
 
+    /// <summary>The synchronous form of <see cref="AcquireWriterAsync"/>, for the open and recovery path (LIB-08), which runs on the
+    /// caller's thread under the start-up or an Open, Create or Prepare lease (CONC-06: a writer takes the gate before it opens its
+    /// connection).</summary>
+    internal WriterTicket AcquireWriter(CancellationToken cancellation = default) => AcquireWriterAsync(cancellation).GetAwaiter().GetResult();
+
     private ReaderTicket NewReaderLocked(CancellationToken cancellation)
     {
         var ticket = new ReaderTicket(this, cancellation);

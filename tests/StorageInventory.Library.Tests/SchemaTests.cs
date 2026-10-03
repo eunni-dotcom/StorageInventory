@@ -22,7 +22,7 @@ public static class SchemaTests
         Assert.Equal(LibrarySchema.Schema1Fingerprint, LibrarySchema.Compute(rows), "the fingerprint of a freshly created Library is the frozen constant");
         Assert.Equal(0, LibrarySchema.Differences(rows).Count);
         Assert.SequenceEqual(LibrarySchema.Schema1Objects, rows.Select(r => r.Type + " " + r.Name).Order(StringComparer.Ordinal), "the object list");
-        Assert.Equal("8f96f561b6f811559bf56fe26322ae43e6835ea4f61c1c15df5200078b773457", LibrarySchema.Schema1Fingerprint, "a change to the constant needs a reviewed schema change");
+        Assert.Equal("1d1a977f5e90563cd03fd8b397f57da4f104835e8309c3ae81da3709ee90e922", LibrarySchema.Schema1Fingerprint, "a change to the constant needs a reviewed schema change");
         Assert.Equal(1397313110L, session.Read(r => r.Long(OpenSql.GetApplicationId)), "application_id = 0x53494E56");
         Assert.Equal(1L, session.Read(r => r.Long(OpenSql.GetUserVersion)), "user_version = 1");
         Assert.Equal(0x53494E56, LibraryNames.ApplicationId);

@@ -78,8 +78,8 @@ public static class QueryPlanTests
         var session = world.CreatedSession();
         using (var lease = World.Lease(session, MutationKind.Prepare, 1))
         {
-            using var writer = LibraryDatabase.OpenWriter(lease, world.Main, "pragmas", [MutationKind.Prepare], importCache: false, null);
-            var q = new WriterQueryRunner(writer, lease);
+            using var writer = LibraryDatabase.OpenWriter(lease, session.Interlock, world.Main, "pragmas", [MutationKind.Prepare], false, null);
+            var q = WriterQueries.Of(writer, lease);
             Assert.Equal("truncate", Convert.ToString(q.Scalar(OpenSql.GetJournalMode)), "journal_mode");
             Assert.Equal(2L, Convert.ToInt64(q.Scalar(OpenSql.GetSynchronous)), "synchronous = FULL");
             Assert.Equal("normal", Convert.ToString(q.Scalar(OpenSql.GetLockingMode)), "locking_mode");
@@ -92,9 +92,9 @@ public static class QueryPlanTests
         var captureId = session.NewCaptureId();
         var prepare = World.Lease(session, MutationKind.Prepare, captureId);
         var save = prepare.HandOffToObservation().HandOffToSave(out _);
-        using (var writer = LibraryDatabase.OpenWriter(save, world.Main, "import pragmas", [MutationKind.Save], importCache: true, null))
+        using (var writer = LibraryDatabase.OpenWriter(save, session.Interlock, world.Main, "import pragmas", [MutationKind.Save], true, null))
         {
-            var q = new WriterQueryRunner(writer, save);
+            var q = WriterQueries.Of(writer, save);
             Assert.Equal(-65536L, Convert.ToInt64(q.Scalar(OpenSql.GetCacheSize)), "the import writer's cache is 64 MiB");
             Assert.Equal("truncate", Convert.ToString(q.Scalar(OpenSql.GetJournalMode)));
         }

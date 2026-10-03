@@ -60,6 +60,7 @@ internal static class LibraryReason
     internal const string Busy = "busy";
     internal const string DiskFull = "disk-full";
     internal const string ReparsePoint = "reparse-point";
+    internal const string Uninitialised = "uninitialised-database";
 }
 
 /// <summary>What a Library open or creation found.</summary>

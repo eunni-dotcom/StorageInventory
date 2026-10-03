@@ -49,16 +49,17 @@ internal static class ImportSql
           $files, $folders, $bytes, $scan_errors, $reparse_points_skipped, $file_reparse_points, $locally_incomplete_folders, $affected_ancestor_folders)
         """;
 
-    // ---- T-IMPORT: dictionaries (names are library-wide, folder paths per source) ----
-    internal const string SelectNameId = "SELECT name_id FROM name WHERE utf16 = $utf16";
+    // ---- T-IMPORT: dictionaries (names and folder paths are both per source, SCH-04, D-52) ----
+    /// <summary>Every dictionary statement is scoped to the import's source: a name seen by two sources is two rows, one for each.</summary>
+    internal const string SelectNameId = "SELECT name_id FROM name WHERE source_id = $source_id AND utf16 = $utf16";
 
     /// <summary>No <c>RETURNING</c>: the engine's ephemeral result table costs about 8 microseconds a statement (TEST-P1's micro
     /// benchmark), so the new id is read with <c>sqlite3_last_insert_rowid</c> instead (<c>WriterStatement.ExecuteInsert</c>).</summary>
-    internal const string InsertName = "INSERT INTO name (utf16) VALUES ($utf16)";
+    internal const string InsertName = "INSERT INTO name (source_id, utf16) VALUES ($source_id, $utf16)";
 
     /// <summary>Insert-first interning for a run of names that are mostly new: one statement instead of a lookup and an insert. A
     /// conflict changes no row, and the importer then looks the existing name up.</summary>
-    internal const string InsertNameIfAbsent = "INSERT INTO name (utf16) VALUES ($utf16) ON CONFLICT (utf16) DO NOTHING";
+    internal const string InsertNameIfAbsent = "INSERT INTO name (source_id, utf16) VALUES ($source_id, $utf16) ON CONFLICT (source_id, utf16) DO NOTHING";
 
     internal const string SelectFolderPathId =
         "SELECT path_id FROM folder_path WHERE source_id = $source_id AND parent_path_id IS $parent_path_id AND name_id = $name_id";
@@ -94,9 +95,10 @@ internal static class ImportSql
         "INSERT INTO snapshot_extension_total (snapshot_id, extension_key, files, bytes) VALUES ($snapshot_id, $extension_key, $files, $bytes)";
 
     // ---- IMP-05: verification inside the transaction, before the final statements ----
-    /// <summary>(d) The attempt exists, belongs to this session and capture, and is still InProgress. Must be 1.</summary>
+    /// <summary>(d) The attempt exists, belongs to this session and capture, carries the snapshot's <c>run_id</c> (invariant 13: a
+    /// NULL or different run id never matches) and is still InProgress. Must be 1.</summary>
     internal const string VerifyAttempt =
-        "SELECT count(*) FROM scan_attempt WHERE attempt_id = $attempt_id AND session_token = $session_token AND capture_token = $capture_token AND outcome = 1";
+        "SELECT count(*) FROM scan_attempt WHERE attempt_id = $attempt_id AND session_token = $session_token AND capture_token = $capture_token AND run_id = $run_id AND outcome = 1";
 
     /// <summary>Invariant 1: the snapshot has exactly one folder row for the source's root path, with discovery_index 0.
     /// Returns (count, minimum discovery_index of those rows); must be (1, 0).</summary>
@@ -139,15 +141,16 @@ internal static class ImportSql
           AND (po.path_id IS NULL OR po.status NOT IN (0, 2) OR po.discovery_index >= o.discovery_index)
         """;
 
-    /// <summary>Invariant 4 (name closure): every file name exists in the dictionary.</summary>
+    /// <summary>Invariant 4 (name closure, per source: REV-M06, D-52): every file name exists in the dictionary WITH the snapshot's own
+    /// <c>source_id</c>. A name id that exists only for another source does not count.</summary>
     internal const string VerifyFileNames = """
-        SELECT count(*) FROM file_obs f LEFT JOIN name n ON n.name_id = f.name_id
+        SELECT count(*) FROM file_obs f LEFT JOIN name n ON n.name_id = f.name_id AND n.source_id = $source_id
         WHERE f.snapshot_id = $snapshot_id AND n.name_id IS NULL
         """;
 
-    /// <summary>Invariant 4 (name closure): every folder's name exists in the dictionary.</summary>
+    /// <summary>Invariant 4 (name closure, per source): every folder's name exists in the dictionary with the snapshot's own source.</summary>
     internal const string VerifyFolderNames = """
-        SELECT count(*) FROM folder_obs o JOIN folder_path p ON p.path_id = o.path_id LEFT JOIN name n ON n.name_id = p.name_id
+        SELECT count(*) FROM folder_obs o JOIN folder_path p ON p.path_id = o.path_id LEFT JOIN name n ON n.name_id = p.name_id AND n.source_id = $source_id
         WHERE o.snapshot_id = $snapshot_id AND n.name_id IS NULL
         """;
 
@@ -206,9 +209,10 @@ internal static class ImportSql
     // ---- IMP-06: the final statements, each required to change exactly one row ----
     internal const string PublishSnapshot = "UPDATE snapshot SET state = 2, published_utc = $published_utc WHERE snapshot_id = $snapshot_id AND state = 1";
 
+    /// <summary>Invariant 13 is established here: the attempt becomes Published only if it carries the snapshot's own <c>run_id</c>.</summary>
     internal const string PublishAttempt = """
         UPDATE scan_attempt SET outcome = 2, source_id = $source_id, ended_utc = $ended_utc
-        WHERE attempt_id = $attempt_id AND session_token = $session_token AND capture_token = $capture_token AND outcome = 1
+        WHERE attempt_id = $attempt_id AND session_token = $session_token AND capture_token = $capture_token AND run_id = $run_id AND outcome = 1
         """;
 
     internal const string AdvanceSnapshotId = "UPDATE library_info SET next_snapshot_id = next_snapshot_id + 1 WHERE next_snapshot_id = $next_snapshot_id";

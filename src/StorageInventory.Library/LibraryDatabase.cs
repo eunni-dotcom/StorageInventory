@@ -44,6 +44,10 @@ internal sealed class LibraryFaultInjection
 
     /// <summary>Called immediately before the lease check that guards <c>COMMIT</c>.</summary>
     internal Action? BeforeCommit { get; init; }
+
+    /// <summary>Called when the writer connection is released, inside the step whose failure ends the lease in Faulted (OBS-13): a
+    /// hook that throws shows that a writer that cannot be closed faults the interlock (TEST-W2).</summary>
+    internal Action? OnWriterRelease { get; init; }
 }
 
 /// <summary>
@@ -75,21 +79,23 @@ internal static class LibraryDatabase
     /// <summary>Opens the one writer connection (<c>Mode=ReadWrite</c>), asserts the engine, sets and verifies the §5.8 pragmas.
     /// The lease must be current and one of <paramref name="allowed"/> (OBS-15); the connection is registered as a resource of the
     /// lease, which can end cleanly only after it is closed (OBS-13).</summary>
-    internal static WriterConnection OpenWriter(MutationLease lease, string mainFile, string operation, MutationKind[] allowed, bool importCache, LibraryFaultInjection? faults)
+    internal static WriterConnection OpenWriter(MutationLease lease, LibraryInterlock interlock, string mainFile, string operation, MutationKind[] allowed, bool importCache, LibraryFaultInjection? faults)
     {
-        lease.Owner?.Require(lease, operation + ": open the writer", allowed);
-        if (lease.Owner is null) throw new LeaseViolationException("Refused before any I/O: no lease.");
+        // OBS-15, before any I/O: the interlock rejects a default lease, a lease of another session, a stale, disposed or handed-off
+        // lease and one of the wrong kind, and enters Faulted. A default lease names no interlock of its own, which is why the
+        // interlock is a parameter: it is the one that must fault.
+        interlock.Require(lease, operation + ": open the writer", allowed);
         EnsureProvider();
 
         var builder = new SqliteConnectionStringBuilder { DataSource = mainFile, Mode = SqliteOpenMode.ReadWrite, Pooling = false };
         var connection = new SqliteConnection(builder.ConnectionString);
         lease.ResourceOpened();
-        var writer = new WriterConnection(connection, lease, operation, allowed, faults);
+        var writer = new WriterConnection(connection, interlock, lease, operation, allowed, faults);
         try
         {
             connection.Open();
-            AssertEngine(connection, faults);
-            writer.Configure(importCache);
+            writer.AssertEngine(lease);
+            writer.Configure(lease, importCache);
             return writer;
         }
         catch
@@ -111,8 +117,8 @@ internal static class LibraryDatabase
         try
         {
             connection.Open();
-            AssertEngine(connection, faults);
             var reader = new ReaderConnection(connection);
+            reader.AssertEngine(faults);
             reader.Configure();
             return reader;
         }
@@ -133,23 +139,6 @@ internal static class LibraryDatabase
         var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
         var version = raw.sqlite3_libversion().utf8_to_string();
         var sourceId = raw.sqlite3_sourceid().utf8_to_string();
-        if (version != expectedVersion || sourceId != expectedSourceId)
-        {
-            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
-        }
-    }
-
-    /// <summary>The first statement of every connection (reads no database page): <c>sqlite_version()</c> and
-    /// <c>sqlite_source_id()</c> must equal the pinned values, exactly (BLD-15). Not a lower bound.</summary>
-    internal static void AssertEngine(SqliteConnection connection, LibraryFaultInjection? faults = null)
-    {
-        var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
-        using var command = connection.CreateCommand();
-        command.CommandText = OpenSql.SelectEngine;
-        using var result = command.ExecuteReader();
-        if (!result.Read()) throw new UnexpectedEngineException("The SQLite engine did not report its version.");
-        var version = result.GetString(0);
-        var sourceId = result.GetString(1);
         if (version != expectedVersion || sourceId != expectedSourceId)
         {
             throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
@@ -178,16 +167,19 @@ internal static class LibraryDatabase
 internal sealed class WriterConnection : IDisposable
 {
     private readonly SqliteConnection _connection;
+    private readonly LibraryInterlock _interlock;
     private readonly MutationLease _openedBy;
     private readonly string _operation;
     private readonly MutationKind[] _allowed;
     private readonly LibraryFaultInjection? _faults;
     private bool _inTransaction;
     private bool _disposed;
+    private CancellationToken _scopeToken;
 
-    internal WriterConnection(SqliteConnection connection, MutationLease openedBy, string operation, MutationKind[] allowed, LibraryFaultInjection? faults)
+    internal WriterConnection(SqliteConnection connection, LibraryInterlock interlock, MutationLease openedBy, string operation, MutationKind[] allowed, LibraryFaultInjection? faults)
     {
         _connection = connection;
+        _interlock = interlock;
         _openedBy = openedBy;
         _operation = operation;
         _allowed = allowed;
@@ -207,8 +199,9 @@ internal sealed class WriterConnection : IDisposable
     /// touches the database file is <c>journal_mode</c>: if a hot journal exists, SQLite rolls it back there, in its default DELETE
     /// mode, and deletes the journal ([E-8] 5). That can only happen inside a mutation lease, because this connection exists only
     /// inside one.</summary>
-    internal void Configure(bool importCache)
+    internal void Configure(MutationLease lease, bool importCache)
     {
+        Guard(lease, "configure the connection");
         SetAndReadBack(_connection, OpenSql.SetJournalMode, OpenSql.GetJournalMode, "truncate", "journal_mode");
         SetAndReadBack(_connection, OpenSql.SetSynchronous, OpenSql.GetSynchronous, "2", "synchronous");
         SetAndReadBack(_connection, OpenSql.SetLockingMode, OpenSql.GetLockingMode, "normal", "locking_mode");
@@ -231,8 +224,53 @@ internal sealed class WriterConnection : IDisposable
         }
     }
 
-    /// <summary>The OBS-15 check, for the importer's row counter and any other long loop. Faults and throws when not current.</summary>
-    internal void CheckCurrent(MutationLease lease) => lease.Owner?.Require(lease, _operation, _allowed);
+    /// <summary>The first statement of every connection (reads no database page): <c>sqlite_version()</c> and
+    /// <c>sqlite_source_id()</c> must equal the pinned values, exactly (BLD-15). Not a lower bound. A command on the writer, so it
+    /// takes the lease.</summary>
+    internal void AssertEngine(MutationLease lease)
+    {
+        Guard(lease, "assert the engine");
+        var (expectedVersion, expectedSourceId) = _faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
+        using var command = _connection.CreateCommand();
+        command.CommandText = OpenSql.SelectEngine;
+        using var result = command.ExecuteReader();
+        if (!result.Read()) throw new UnexpectedEngineException("The SQLite engine did not report its version.");
+        var version = result.GetString(0);
+        var sourceId = result.GetString(1);
+        if (version != expectedVersion || sourceId != expectedSourceId)
+        {
+            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
+        }
+    }
+
+    /// <summary>The OBS-15 check, for the importer's row counter and any other long loop. Faults and throws when not current, or
+    /// when it is not the lease this writer was opened under.</summary>
+    internal void CheckCurrent(MutationLease lease) => Guard(lease, "check the lease");
+
+    /// <summary>The token of the cancellation scope that is active on this connection, if any (a statement interrupted by it is a
+    /// cancellation, not an error).</summary>
+    internal CancellationToken ScopeToken => _scopeToken;
+
+    /// <summary>Starts a cancellation scope: while it lives, the engine's progress callback runs every
+    /// <see cref="ProgressGuard.Opcodes"/> virtual-machine steps of every statement on THIS connection and interrupts the statement
+    /// when the token is cancelled, so no stretch of work on this connection (a verification query over millions of rows) goes
+    /// longer than a few milliseconds without observing it (CAN-01d). It belongs to this writer only: other connections are not
+    /// affected. Disposing it uninstalls the callback.</summary>
+    internal CancellationScope BeginCancellationScope(MutationLease lease, CancellationToken token, TokenChecker checker)
+    {
+        Guard(lease, "start a cancellation scope");
+        var db = _connection.Handle ?? throw new InvalidOperationException("The writer connection is not open.");
+        _scopeToken = token;
+        return new CancellationScope(this, new ProgressGuard(db, checker));
+    }
+
+    internal void EndCancellationScope() => _scopeToken = default;
+
+    /// <summary><c>PRAGMA page_count</c> inside the transaction (IMP-11: the transaction's image of the database, in pages).</summary>
+    internal long PageCount(MutationLease lease) => Convert.ToInt64(Scalar(lease, OpenSql.GetPageCount), System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary><c>PRAGMA page_size</c> (IMP-11).</summary>
+    internal long PageSize(MutationLease lease) => Convert.ToInt64(Scalar(lease, OpenSql.GetPageSize), System.Globalization.CultureInfo.InvariantCulture);
 
     internal void Begin(MutationLease lease)
     {
@@ -262,7 +300,7 @@ internal sealed class WriterConnection : IDisposable
     /// interlock has Faulted (best-effort release, OBS-13): it takes the lease for A-25's sake but does not require it current.</summary>
     internal void Rollback(MutationLease lease)
     {
-        _ = lease;
+        _interlock.RequireSameLease(lease, _openedBy, _operation, "roll back");
         if (!_inTransaction) return;
         using var command = _connection.CreateCommand();
         command.CommandText = TransactionSql.Rollback;
@@ -303,8 +341,12 @@ internal sealed class WriterConnection : IDisposable
         using var command = _connection.CreateCommand();
         command.CommandText = sql;
         foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        var result = command.ExecuteScalar();
-        return result is DBNull ? null : result;
+        try
+        {
+            var result = command.ExecuteScalar();
+            return result is DBNull ? null : result;
+        }
+        catch (SqliteException) when (_scopeToken.IsCancellationRequested) { throw new OperationCanceledException(_scopeToken); }
     }
 
     /// <summary>Runs a constant query on the writer and passes each row to <paramref name="each"/>, through the engine's own API (the
@@ -316,7 +358,11 @@ internal sealed class WriterConnection : IDisposable
         statement.ExecuteRows(lease, each);
     }
 
-    internal void Guard(MutationLease lease, string what) => lease.Owner?.Require(lease, _operation, what, _allowed);
+    /// <summary>OBS-15 before every operation on this connection: the lease must be current, of an allowed kind and the very lease
+    /// the connection was opened under. A <c>default</c> lease, a lease of another session (even with an equal id), a stale,
+    /// disposed, handed-off or invalidated lease, and a current lease that did not open this connection are all refused here,
+    /// before any I/O, and enter Faulted.</summary>
+    internal void Guard(MutationLease lease, string what) => _interlock.RequireOpenedBy(lease, _openedBy, _operation, what, _allowed);
 
     /// <summary>Sets a pragma from its constant and asserts it by reading it back (A-22).</summary>
     private static void SetAndReadBack(SqliteConnection connection, string setSql, string getSql, string expected, string name)
@@ -344,6 +390,7 @@ internal sealed class WriterConnection : IDisposable
         Interlocked.Decrement(ref _openWriters);
         try
         {
+            _faults?.OnWriterRelease?.Invoke();
             _connection.Dispose();
             _openedBy.ResourceReleased();
         }
@@ -447,10 +494,18 @@ internal sealed class WriterStatement : IDisposable
         _owner.Guard(lease, "execute");
         var reader = new RawRowReader(_statement);
         var rc = raw.sqlite3_step(_statement);
-        while (rc == raw.SQLITE_ROW)
+        try
         {
-            each(reader);
-            rc = raw.sqlite3_step(_statement);
+            while (rc == raw.SQLITE_ROW)
+            {
+                each(reader);
+                rc = raw.sqlite3_step(_statement);
+            }
+        }
+        catch
+        {
+            raw.sqlite3_reset(_statement);   // a row callback that throws (a cancellation, a refusal) leaves no statement running
+            throw;
         }
         Finish(rc, CancellationToken.None);
     }
@@ -512,7 +567,9 @@ internal sealed class WriterStatement : IDisposable
         }
         var error = Error(_db, resultCode);
         raw.sqlite3_reset(_statement);
+        // a statement interrupted by a cancellation (the caller's token, or the scope's progress callback) is a cancellation
         if (cancellation.IsCancellationRequested) throw new OperationCanceledException(cancellation);
+        if (_owner.ScopeToken.IsCancellationRequested) throw new OperationCanceledException(_owner.ScopeToken);
         throw error;
     }
 
@@ -530,6 +587,31 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
     /// <summary>Cancelled by the in-process gate when a writer asks for it (CONC-06): the running command is interrupted and
     /// the read surfaces as <see cref="OperationCanceledException"/>, to be re-run by its page.</summary>
     internal CancellationToken Token { get; set; }
+
+    /// <summary>The first statement of every connection: the engine must be exactly the pinned build (BLD-15). Reads no page.</summary>
+    internal void AssertEngine(LibraryFaultInjection? faults)
+    {
+        var (expectedVersion, expectedSourceId) = faults?.ExpectedEngine ?? (LibraryNames.PinnedSqliteVersion, LibraryNames.PinnedSqliteSourceId);
+        using var command = _connection.CreateCommand();
+        command.CommandText = OpenSql.SelectEngine;
+        using var result = command.ExecuteReader();
+        if (!result.Read()) throw new UnexpectedEngineException("The SQLite engine did not report its version.");
+        var version = result.GetString(0);
+        var sourceId = result.GetString(1);
+        if (version != expectedVersion || sourceId != expectedSourceId)
+        {
+            throw new UnexpectedEngineException($"Unexpected SQLite engine: {version} ({sourceId}); expected {expectedVersion} ({expectedSourceId}).");
+        }
+    }
+
+    /// <summary>Puts the engine's progress callback on THIS reader connection for the lifetime of the returned scope, so that a long
+    /// aggregate (the dictionary-footprint query before T-IMPORT) observes the save token as the verification does (CAN-01d). The
+    /// callback is removed when the scope is disposed; other connections are unaffected.</summary>
+    internal IDisposable BeginProgress(TokenChecker checker)
+    {
+        var db = _connection.Handle ?? throw new InvalidOperationException("The reader connection is not open.");
+        return new ProgressGuard(db, checker);
+    }
 
     /// <summary>The reader's settings: the build's default cache (2 MiB), no temp files, no schema-defined functions. These
     /// statements read the schema, so a reader that meets a hot journal fails here with <c>SQLITE_READONLY_ROLLBACK</c> and
