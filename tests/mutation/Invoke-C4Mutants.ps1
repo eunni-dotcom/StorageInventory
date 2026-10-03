@@ -12,7 +12,9 @@
 
     The mutants C4-01 to C4-A4 are the original C4 suite (22). The C4 implementation repair adds C4R-* (tests\mutation\C4RepairMutants.ps1,
     dot-sourced below); a mutant may carry its own Filter, the test classes it is MEANT to be caught by, so that a kill is for the
-    intended reason and a run of the whole set takes minutes, not hours. -Set Original runs only the first, -Set Repair only the second.
+    intended reason and a run of the whole set takes minutes, not hours. The focused repair of the five Mediums of the repair review adds
+    C4F-* (tests\mutation\C4FixMutants.ps1: the cadence inside one big folder and TEST-L9's inputs). -Set Original runs only the first,
+    -Set Repair only the second, -Set Fixes only the third.
 
     The scratch copy holds git-tracked files only, so the NuGet cache and the SDK are not in it: the script uses -Source's own
     tools\dotnet and packages (restore finds everything in the cache; the committed lock files are part of the copy).
@@ -26,7 +28,7 @@ param(
     [string] $Source = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string] $Work = (Join-Path ([IO.Path]::GetTempPath()) ('SiC4Mutants_' + [guid]::NewGuid().ToString('N').Substring(0, 8))),
     [string[]] $Only,
-    [ValidateSet('All', 'Original', 'Repair')] [string] $Set = 'All',
+    [ValidateSet('All', 'Original', 'Repair', 'Fixes')] [string] $Set = 'All',
     [string] $Out,
     [switch] $KeepWork
 )
@@ -97,7 +99,8 @@ $mutants = @(
        Edits = @(@{ File = "$L/Sql/OpenSql.cs"; Find = 'internal const string SetSynchronous = "PRAGMA synchronous = FULL";'; Replace = "internal const string SetSynchronous = ""PRAGMA synchronous = FULL"";`n    internal const string MutantAttach = ""ATTACH DATABASE 'x.db' AS other"";" }) }
 )
 . (Join-Path $PSScriptRoot 'C4RepairMutants.ps1')
-if ($Set -eq 'Original') { } elseif ($Set -eq 'Repair') { $mutants = @($repairMutants) } else { $mutants = @($mutants) + @($repairMutants) }
+. (Join-Path $PSScriptRoot 'C4FixMutants.ps1')
+if ($Set -eq 'Original') { } elseif ($Set -eq 'Repair') { $mutants = @($repairMutants) } elseif ($Set -eq 'Fixes') { $mutants = @($fixMutants) } else { $mutants = @($mutants) + @($repairMutants) + @($fixMutants) }
 if ($Only) { $mutants = @($mutants | Where-Object { $Only -contains $_.Id }) }
 
 # ---------------------------------------------------------------- the scratch copy
