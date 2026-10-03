@@ -151,10 +151,14 @@ public static class SpaceGuardTests
         Assert.Equal(1, checks.Count(c => c.Kind == SpaceCheckKind.Final), "one final check");
         Assert.Equal(0L, checks[0].RowsInserted, "nothing inserted at BEGIN");
         var rows = checks.Where(c => c.Kind == SpaceCheckKind.Rows).ToList();
+        // rows of ANY table (IMP-11 (3), CAN-01d): the observation rows and the dictionary rows (a new source: every name and every folder path is new)
         var observationRows = result.Files + result.Folders + result.ScanErrors + Convert.ToInt64(session.Read(r => r.Long("SELECT count(*) FROM snapshot_extension_total")));
-        Assert.Equal(observationRows / 4096, (long)rows.Count, "a row check after every 4,096 inserted observation rows (IMP-11, CAN-01d)");
-        for (var i = 0; i < rows.Count; i++) Assert.True(rows[i].RowsInserted >= (i + 1) * 4096L, $"row check {i + 1} came after at least {(i + 1) * 4096} rows");
-        Assert.Equal(observationRows, checks[^1].RowsInserted, "the final check came after every row");
+        var dictionaryRows = result.NewNames + Convert.ToInt64(session.Read(r => r.Long("SELECT count(*) FROM folder_path")));
+        var insertedRows = observationRows + dictionaryRows;
+        Assert.Equal(session.Read(r => r.Long("SELECT count(*) FROM name")), result.NewNames, "every name of the first import of a source is new");
+        Assert.Equal(insertedRows / 4096, (long)rows.Count, "a row check after every 4,096 inserted rows of any table (IMP-11, CAN-01d)");
+        for (var i = 0; i < rows.Count; i++) Assert.True(rows[i].RowsInserted >= (i + 1) * 4096L && rows[i].RowsInserted < (i + 1) * 4096L + 16, $"row check {i + 1} fell after {(i + 1) * 4096} rows, not later than one batch past them: {rows[i].RowsInserted}");
+        Assert.Equal(insertedRows, checks[^1].RowsInserted, "the final check came after every row");
         foreach (var c in checks)
         {
             Assert.Equal(Math.Max(0L, c.PageCount * c.PageSize - c.MainFileLength), c.PendingGrowth, $"{c.Kind}: Λ = max(0, page_count × page_size − main length)");
