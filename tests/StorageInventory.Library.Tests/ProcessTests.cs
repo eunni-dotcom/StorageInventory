@@ -66,33 +66,61 @@ public static class ProcessTests
     [Test]
     public static void Two_processes_racing_to_create_the_Library_produce_exactly_one_Library_and_one_In_use_never_Leftover_files()
     {
-        for (var round = 0; round < 6; round++)
+        // TEST-K1, C4-M06: the race is CONTESTED, not merely two processes started close together. Each child announces that its open
+        // found no library.lock and waits until its rival has announced the same, so both reach FileMode.CreateNew together; the
+        // parent's handshake is a pair of ready files and one barrier file (no sleeps), and each child reports which branch of the
+        // lock acquisition it took.
+        const int Rounds = 8;
+        var collisions = 0;
+        for (var round = 0; round < Rounds; round++)
         {
             var world = World.Create("race" + round);
             Directory.CreateDirectory(world.AppData);
+            var rendezvous = Path.Combine(world.Root, "rendezvous");
+            Directory.CreateDirectory(rendezvous);
             var barrier = Flag(world, "go");
             var stop = Flag(world, "stop");
-            using var one = Child.Start(world, "race", Args(world, barrier, Flag(world, "one"), stop));
-            using var two = Child.Start(world, "race", Args(world, barrier, Flag(world, "two"), stop));
-            // both have started, opened (Not created, no lock) and wait at the barrier: give them time to reach it
-            Thread.Sleep(1500);
+            using var one = Child.Start(world, "race", Args(world, "1", rendezvous, barrier, Flag(world, "one"), stop));
+            using var two = Child.Start(world, "race", Args(world, "2", rendezvous, barrier, Flag(world, "two"), stop));
+            // the handshake: both children have opened (Not created, no lock) and are spinning on the barrier
+            one.WaitFor(Path.Combine(rendezvous, "ready-1"));
+            two.WaitFor(Path.Combine(rendezvous, "ready-2"));
+            Assert.False(File.Exists(world.Lock), $"round {round}: nobody has created the lock before the barrier");
             File.WriteAllText(barrier, "");
-            var outcomes = new[] { one.WaitFor(Flag(world, "one")), two.WaitFor(Flag(world, "two")) };
+            var reports = new[] { Parse(one.WaitFor(Flag(world, "one"), 90_000)), Parse(two.WaitFor(Flag(world, "two"), 90_000)) };
             File.WriteAllText(stop, "");
             Assert.True(one.WaitForExit() && two.WaitForExit());
 
-            foreach (var outcome in outcomes) Assert.True(outcome.StartsWith("NotCreated|", StringComparison.Ordinal), $"round {round}: each started with Not created ({outcome})");
-            var results = outcomes.Select(o => o.Split("=>")[1]).ToList();
-            Assert.Equal(1, results.Count(r => r.StartsWith("Available|", StringComparison.Ordinal)), $"round {round}: exactly one process created the Library ({string.Join(" / ", outcomes)})");
-            Assert.Equal(1, results.Count(r => r.StartsWith("InUse|", StringComparison.Ordinal)), $"round {round}: exactly one process was told In use");
-            Assert.False(results.Any(r => r.StartsWith("LeftoverFiles", StringComparison.Ordinal)), $"round {round}: never Leftover files");
+            foreach (var report in reports)
+            {
+                Assert.True(report["open"].StartsWith("NotCreated|", StringComparison.Ordinal), $"round {round}: each started with Not created ({report["open"]})");
+                Assert.True(report["events"].StartsWith("before-create", StringComparison.Ordinal), $"round {round}: BOTH reached the creation arbitration ({report["events"]}): the race was contested");
+            }
+            var winners = reports.Where(r => r["events"].Split(',').Contains("created")).ToList();
+            var losers = reports.Where(r => !r["events"].Split(',').Contains("created")).ToList();
+            Assert.Equal(1, winners.Count, $"round {round}: exactly one process created library.lock ({string.Join(" / ", reports.Select(r => r["events"]))})");
+            Assert.Equal(1, losers.Count, $"round {round}: exactly one lost");
+            Assert.True(winners[0]["status"].StartsWith("Available|", StringComparison.Ordinal), $"round {round}: the winner created the Library ({winners[0]["status"]})");
+            Assert.True(losers[0]["status"].StartsWith("InUse|", StringComparison.Ordinal), $"round {round}: the loser was told In use ({losers[0]["status"]})");
+            Assert.False(reports.Any(r => r["status"].StartsWith("LeftoverFiles", StringComparison.Ordinal)), $"round {round}: never Leftover files");
+            var loserEvents = losers[0]["events"].Split(',');
+            Assert.True(loserEvents.Contains("create-collision") || loserEvents.Contains("in-use"), $"round {round}: the loser's CreateNew met the winner ({losers[0]["events"]})");
+            Assert.False(loserEvents.Contains("opened-existing"), $"round {round}: the loser never took the lock");
+            if (loserEvents.Contains("create-collision")) collisions++;
+            Assert.Equal("0", losers[0]["writers"], $"round {round}: the loser opened no writer connection");
+            Assert.Equal("0", losers[0]["readers"], $"round {round}: and no reader connection: it never opened SQLite");
+            Assert.True(int.Parse(winners[0]["writers"]) >= 1, $"round {round}: the winner did open the database");
 
             var check = world.OpenedSession();
             Assert.Equal(LibraryState.Available, check.Status.State, $"round {round}: one valid Library exists");
             check.TestOnlyShutdown();
-            Assert.True(world.Names().All(n => n is LibraryNames.LockFile or LibraryNames.MainFile or LibraryNames.JournalFile), $"round {round}: only owned members: {string.Join(", ", world.Names())}");
+            Assert.True(world.Names().All(n => n is LibraryNames.LockFile or LibraryNames.MainFile or LibraryNames.JournalFile), $"round {round}: only owned members, the loser mutated nothing else: {string.Join(", ", world.Names())}");
         }
+        Assert.True(collisions >= 1, $"at least one round recorded a CreateNew collision (the loser's FileMode.CreateNew found the file already created): {collisions} of {Rounds}");
     }
+
+    private static Dictionary<string, string> Parse(string report) =>
+        report.Split(';').Select(part => part.Split('=', 2)).ToDictionary(p => p[0], p => p[1]);
 
     [Test]
     public static void The_sequential_case_of_a_Library_created_by_another_process_after_this_one_started_is_opened_never_set_aside()

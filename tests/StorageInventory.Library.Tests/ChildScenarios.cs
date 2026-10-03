@@ -84,20 +84,51 @@ internal static class ChildScenarios
         return 0;
     }
 
-    /// <summary>race &lt;dir&gt; &lt;appdata&gt; &lt;barrier&gt; &lt;out&gt; &lt;stop&gt;: starts with no Library, waits at the barrier, then opens and
-    /// saves for the first time (Prepare lease: lock first, state re-derived under it) at the same instant as its rival.</summary>
+    /// <summary>Busy-waits for a file with no sleep (a tight, cooperative spin), so that two processes released by the same file leave
+    /// their wait within microseconds of each other. Fails the scenario when the file never appears.</summary>
+    private static void SpinFor(string path, int timeoutMilliseconds = 30_000)
+    {
+        var started = Stopwatch.StartNew();
+        var spinner = new SpinWait();
+        while (!File.Exists(path))
+        {
+            if (started.ElapsedMilliseconds > timeoutMilliseconds) throw new TimeoutException("timed out waiting for " + path);
+            spinner.SpinOnce(sleep1Threshold: -1);
+        }
+    }
+
+    /// <summary>race &lt;dir&gt; &lt;appdata&gt; &lt;id&gt; &lt;rendezvous&gt; &lt;barrier&gt; &lt;out&gt; &lt;stop&gt;: a process that starts with no Library. It opens (Not created,
+    /// no lock), writes its ready file (the parent's handshake), spins on the barrier, then saves for the first time (a Prepare lease:
+    /// lock first, state re-derived under it). The rendezvous makes the creation CONTESTED: when its open finds no <c>library.lock</c>
+    /// and is about to create it, it announces that and waits (spinning) until its rival has announced the same, so both are at the
+    /// <c>CreateNew</c> arbitration together. It reports the status, the lock branches it took, and how many SQLite connections it
+    /// ever opened.</summary>
     private static int Race(string[] args)
     {
-        var (dir, appData, barrier, outFile, stop) = (args[0], args[1], args[2], args[3], args[4]);
-        var session = new LibrarySession(dir, appData);
+        var (dir, appData, id, rendezvous, barrier, outFile, stop) = (args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+        var events = new List<string>();
+        var hooks = new LibraryStoreHooks
+        {
+            BeforeLockCreate = () =>
+            {
+                events.Add("before-create");
+                Publish(Path.Combine(rendezvous, "at-create-" + id), "");
+                SpinFor(Path.Combine(rendezvous, "at-create-1"));
+                SpinFor(Path.Combine(rendezvous, "at-create-2"));
+            },
+            OnLockBranch = events.Add,
+        };
+        var session = new LibrarySession(dir, appData, new LibrarySessionOptions { StoreHooks = hooks });
         var open = session.RunStartupOpen();
-        WaitForFile(barrier);
+        Publish(Path.Combine(rendezvous, "ready-" + id), Describe(open));
+        SpinFor(barrier);
         LibraryStatus status;
         using (var prepare = Lease(session, MutationKind.Prepare, 1))
         {
             status = session.PrepareForSave(prepare);
         }
-        Publish(outFile, Describe(open) + "=>" + Describe(status));
+        Publish(outFile, string.Join(';', $"open={Describe(open)}", $"status={Describe(status)}", $"events={string.Join(',', events)}",
+            $"writers={WriterConnection.WritersOpenedTotal}", $"readers={ReaderConnection.ReadersOpenedTotal}"));
         WaitForFile(stop);
         return 0;
     }

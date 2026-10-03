@@ -45,6 +45,11 @@ internal sealed class LibraryFaultInjection
     /// <summary>Called immediately before the lease check that guards <c>COMMIT</c>.</summary>
     internal Action? BeforeCommit { get; init; }
 
+    /// <summary>Called after each statement of T-DELETE with the statement's name (<c>mark</c>, <c>file_obs</c>, <c>folder_obs</c>,
+     /// <c>scan_error</c>, <c>extension_total</c>, <c>snapshot_row</c>): a place to fail or cancel part-way, so that the rollback of a
+     /// partial deletion is tested where it matters (C4-M12).</summary>
+    internal Action<string>? AfterDeleteStep { get; init; }
+
     /// <summary>Called when the writer connection is released, inside the step whose failure ends the lease in Faulted (OBS-13): a
     /// hook that throws shows that a writer that cannot be closed faults the interlock (TEST-W2).</summary>
     internal Action? OnWriterRelease { get; init; }
@@ -185,11 +190,17 @@ internal sealed class WriterConnection : IDisposable
         _allowed = allowed;
         _faults = faults;
         Interlocked.Increment(ref _openWriters);
+        Interlocked.Increment(ref _writersOpenedTotal);
     }
 
     internal bool InTransaction => _inTransaction;
 
     private static int _openWriters;
+    private static long _writersOpenedTotal;
+
+    /// <summary>How many writer connections this process has EVER opened. A process that was refused (In use) must show 0: it never
+    /// opened a connection to a Library it does not own (CONC-02, TEST-K1).</summary>
+    internal static long WritersOpenedTotal => Interlocked.Read(ref _writersOpenedTotal);
 
     /// <summary>How many writer connections are open in this process right now. The writer exists only inside a mutation lease
     /// (OBS-12), so this is 0 during every observation window: TEST-W1 asserts it.</summary>
@@ -582,7 +593,16 @@ internal sealed class ReaderConnection : IQueryRunner, IDisposable
     private readonly SqliteConnection _connection;
     private bool _disposed;
 
-    internal ReaderConnection(SqliteConnection connection) => _connection = connection;
+    private static long _readersOpenedTotal;
+
+    /// <summary>How many reader connections this process has ever opened (TEST-K1: a process that is In use opens none).</summary>
+    internal static long ReadersOpenedTotal => Interlocked.Read(ref _readersOpenedTotal);
+
+    internal ReaderConnection(SqliteConnection connection)
+    {
+        _connection = connection;
+        Interlocked.Increment(ref _readersOpenedTotal);
+    }
 
     /// <summary>Cancelled by the in-process gate when a writer asks for it (CONC-06): the running command is interrupted and
     /// the read surfaces as <see cref="OperationCanceledException"/>, to be re-run by its page.</summary>

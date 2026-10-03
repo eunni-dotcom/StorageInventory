@@ -92,6 +92,16 @@ internal sealed record QuarantineResult(string? Stem, IReadOnlyList<string> Move
 internal sealed class LibraryStoreHooks
 {
     internal Action<int>? AfterRename { get; init; }
+
+    /// <summary>Called when this process is about to create <c>library.lock</c> (<c>FileMode.CreateNew</c>) because its open found no
+    /// such file. A test uses it as a rendezvous so that two processes are both at the creation arbitration at the same moment
+    /// (TEST-K1: the race is shown to be contested, not merely started close together).</summary>
+    internal Action? BeforeLockCreate { get; init; }
+
+    /// <summary>Called with the branch the lock acquisition took: <c>opened-existing</c>, <c>created</c>, <c>create-collision</c> (the
+    /// <c>CreateNew</c> found the file already there and the second open followed), <c>in-use</c> (a sharing violation) or
+    /// <c>unavailable</c>.</summary>
+    internal Action<string>? OnLockBranch { get; init; }
 }
 
 /// <summary>
@@ -253,6 +263,7 @@ internal sealed class LibraryStore
         {
             _lockHandle = new FileStream(LockPath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 1);
             _lockPreExisted = true;
+            _hooks?.OnLockBranch?.Invoke("opened-existing");
             return new WriterLockResult(LockOutcome.Held, true, null);
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
@@ -261,43 +272,53 @@ internal sealed class LibraryStore
         }
         catch (Exception ex) when (IsSharingViolation(ex))
         {
+            _hooks?.OnLockBranch?.Invoke("in-use");
             return new WriterLockResult(LockOutcome.InUse, false, null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            _hooks?.OnLockBranch?.Invoke("unavailable");
             return new WriterLockResult(LockOutcome.Unavailable, false, ex.Message);
         }
 
+        _hooks?.BeforeLockCreate?.Invoke();
         try
         {
             _lockHandle = new FileStream(LockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1);
             _lockPreExisted = false;
+            _hooks?.OnLockBranch?.Invoke("created");
             return new WriterLockResult(LockOutcome.Held, false, null);
         }
         catch (Exception ex) when (IsSharingViolation(ex))
         {
+            _hooks?.OnLockBranch?.Invoke("in-use");
             return new WriterLockResult(LockOutcome.InUse, false, null);
         }
         catch (Exception ex) when (ex is IOException)
         {
             // Another process won the race to create it: open it once more, as above.
+            _hooks?.OnLockBranch?.Invoke("create-collision");
             try
             {
                 _lockHandle = new FileStream(LockPath, FileMode.Open, FileAccess.Read, FileShare.None, bufferSize: 1);
                 _lockPreExisted = true;
+                _hooks?.OnLockBranch?.Invoke("opened-existing");
                 return new WriterLockResult(LockOutcome.Held, true, null);
             }
             catch (Exception second) when (IsSharingViolation(second))
             {
+                _hooks?.OnLockBranch?.Invoke("in-use");
                 return new WriterLockResult(LockOutcome.InUse, false, null);
             }
             catch (Exception second) when (second is IOException or UnauthorizedAccessException)
             {
+                _hooks?.OnLockBranch?.Invoke("unavailable");
                 return new WriterLockResult(LockOutcome.Unavailable, false, second.Message);
             }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or DirectoryNotFoundException)
         {
+            _hooks?.OnLockBranch?.Invoke("unavailable");
             return new WriterLockResult(LockOutcome.Unavailable, false, ex.Message);
         }
     }

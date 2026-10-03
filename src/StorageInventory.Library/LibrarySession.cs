@@ -698,12 +698,12 @@ internal sealed class LibrarySession
         {
             RevalidateWriter(writer, lease, "T-DELETE");
             writer.Begin(lease);
-            Delete(writer, lease, DeleteSql.MarkDeleting, snapshotId, expectOne: true, "mark the snapshot as deleting (it is not a published snapshot)", cancellation);
-            Delete(writer, lease, DeleteSql.DeleteFileObs, snapshotId, expectOne: false, "", cancellation);
-            Delete(writer, lease, DeleteSql.DeleteFolderObs, snapshotId, expectOne: false, "", cancellation);
-            Delete(writer, lease, DeleteSql.DeleteScanErrors, snapshotId, expectOne: false, "", cancellation);
-            Delete(writer, lease, DeleteSql.DeleteExtensionTotals, snapshotId, expectOne: false, "", cancellation);
-            Delete(writer, lease, DeleteSql.DeleteSnapshotRow, snapshotId, expectOne: true, "delete the snapshot row", cancellation);
+            Delete(writer, lease, DeleteSql.MarkDeleting, snapshotId, expectOne: true, "mark the snapshot as deleting (it is not a published snapshot)", cancellation, "mark");
+            Delete(writer, lease, DeleteSql.DeleteFileObs, snapshotId, expectOne: false, "", cancellation, "file_obs");
+            Delete(writer, lease, DeleteSql.DeleteFolderObs, snapshotId, expectOne: false, "", cancellation, "folder_obs");
+            Delete(writer, lease, DeleteSql.DeleteScanErrors, snapshotId, expectOne: false, "", cancellation, "scan_error");
+            Delete(writer, lease, DeleteSql.DeleteExtensionTotals, snapshotId, expectOne: false, "", cancellation, "extension_total");
+            Delete(writer, lease, DeleteSql.DeleteSnapshotRow, snapshotId, expectOne: true, "delete the snapshot row", cancellation, "snapshot_row");
             writer.Commit(lease);
         }
         catch (SqliteException ex)
@@ -718,12 +718,13 @@ internal sealed class LibrarySession
         }
     }
 
-    private static void Delete(WriterConnection writer, MutationLease lease, string sql, long snapshotId, bool expectOne, string what, CancellationToken cancellation)
+    private void Delete(WriterConnection writer, MutationLease lease, string sql, long snapshotId, bool expectOne, string what, CancellationToken cancellation, string step)
     {
         cancellation.ThrowIfCancellationRequested();
         using var statement = writer.Prepare(lease, sql, "$snapshot_id");
         var changed = statement.Set(0, snapshotId).ExecuteNonQuery(lease, cancellation);
         if (expectOne && changed != 1) throw new DeleteException($"Could not {what}: {changed} rows changed.");
+        _faults?.AfterDeleteStep?.Invoke(step);
     }
 
     private void RequireWritable()

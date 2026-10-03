@@ -427,11 +427,14 @@ public static class LibraryStateTests
             var session = world.NewSession();
             var open = session.RunStartupOpen();
             AssertState(LibraryState.Available, open, "an untouched observation table is not examined at open (no quick_check at every open)");
+            var namesBeforeRead = world.Names();
+            var hashesBeforeRead = world.ContentHashes();
             var failure = Assert.Throws<Exception>(() => session.Read(r => r.Long("SELECT count(*) FROM file_obs")));
             Assert.Equal("SqliteException", failure.GetType().Name, "the engine reports the corruption when the damaged table is read");
             AssertState(LibraryState.Damaged, session.Status, "quick_check confirmed it after the read failed");
             Assert.Throws<LibraryUnavailableException>(() => session.Read(r => r.Long("SELECT 1")));   // a Damaged Library is not read again
-            Assert.Equal(World.Length(world.Main), World.Length(world.Main), "nothing deleted");
+            Assert.SequenceEqual(namesBeforeRead, world.Names(), "no member was created, renamed or deleted by the failed read or by the quick_check");
+            Assert.SequenceEqual(hashesBeforeRead.OrderBy(p => p.Key).Select(p => p.Key + p.Value), world.ContentHashes().OrderBy(p => p.Key).Select(p => p.Key + p.Value), "and no member's contents changed");
             session.TestOnlyShutdown();
         }
     }
