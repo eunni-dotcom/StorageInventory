@@ -226,6 +226,32 @@ public static class HeaderPreCheckTests
     }
 
     [Test]
+    public static void A_non_empty_journal_beside_an_uninitialised_database_is_Leftover_files_and_SQLite_never_plays_it_back()
+    {
+        // an empty database is uninitialised, but a journal beside it is recovery material for a file that is not ours: SQLite would
+        // play it back into the database during a creation, so creation is refused and nothing is opened or changed
+        var world = EmptiedDatabase();
+        var page = new byte[4096];
+        Array.Fill(page, (byte)0xAB);
+        File.WriteAllBytes(world.Journal, ForgedHotJournal(originalPages: (uint)(World.Length(world.Main) / 4096), (1u, page)));
+        var main = Sha(world.Main);
+        var journal = Sha(world.Journal);
+        var writers = WriterConnection.WritersOpenedTotal;
+        var session = world.NewSession();
+        var status = session.RunStartupOpen();
+        Assert.Equal(LibraryState.LeftoverFiles, status.State, $"{status.Reason}: {status.Message}");
+        Assert.Equal(LibraryReason.JournalBesideUninitialised, status.Reason);
+        using (var prepare = World.Lease(session, MutationKind.Prepare, 1))
+        {
+            Assert.Equal(LibraryState.LeftoverFiles, session.PrepareForSave(prepare).State, "a save does not create over it either");
+        }
+        Assert.Equal(main, Sha(world.Main), "the database is byte-identical");
+        Assert.Equal(journal, Sha(world.Journal), "and so is the journal: SQLite never played it back");
+        Assert.Equal(writers, WriterConnection.WritersOpenedTotal, "no connection was opened");
+        session.TestOnlyShutdown();
+    }
+
+    [Test]
     public static void An_empty_schema_with_a_user_version_or_a_remaining_table_is_not_uninitialised_and_is_never_overwritten()
     {
         foreach (var (name, world) in new (string, World)[] { ("user_version 1", EmptiedDatabase(userVersion: 1)), ("a table left behind", EmptiedDatabase(leaveATable: true)) })

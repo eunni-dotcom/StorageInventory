@@ -1,4 +1,5 @@
-# The code has no package references; only the pinned GitHub Actions need update proposals.
+# The only package references are the four pinned ones of StorageInventory.Library (an upgrade of any of them is a separate,
+# reviewed change, BLD-15), so Dependabot proposes updates for the pinned GitHub Actions only.
 version: 2
 updates:
   - package-ecosystem: github-actions

@@ -196,7 +196,7 @@ internal sealed class LibrarySession
         }
         if (mainUsable)
         {
-            var existing = OpenExisting(lease, mode);
+            var existing = OpenExisting(lease, mode, members);
             if (existing.Status is { } decided) return decided;
             // LIB-07 step 7: a database with application_id 0, user_version 0 and no schema objects is uninitialised, like a 0-byte
             // file. A crash during T-CREATE leaves exactly this once SQLite has rolled its journal back. Look at the members again:
@@ -287,7 +287,7 @@ internal sealed class LibrarySession
     }
 
     /// <summary>LIB-08 steps 4 to 9 for a main file that is present and not empty.</summary>
-    private Opened OpenExisting(MutationLease lease, OpenMode mode)
+    private Opened OpenExisting(MutationLease lease, OpenMode mode, MemberSet members)
     {
         _ = mode;
 
@@ -310,7 +310,12 @@ internal sealed class LibrarySession
             case HeaderOutcome.NewerSchema:
                 return new Opened(State(LibraryState.Incompatible, LibraryReason.NewerSchema, $"This Library was created by a newer StorageInventory (schema {header.UserVersion}). Update the app."));
             case HeaderOutcome.EmptyDatabase:
-                return Opened.Uninitialised;   // application_id 0, user_version 0, no schema: uninitialised (LIB-07 step 7); SQLite is not opened here
+                // application_id 0, user_version 0, no schema: uninitialised (LIB-07 step 7); SQLite is not opened here. But a non-empty
+                // journal beside it is recovery material that SQLite would play back into the file the moment a creation opened it, and
+                // the file is not ours (we cannot tell what that journal restores): it is refused as Leftover files, never opened.
+                return members.Journal.NonEmpty
+                    ? new Opened(State(LibraryState.LeftoverFiles, LibraryReason.JournalBesideUninitialised, "Files from an interrupted operation remain beside an empty database."))
+                    : Opened.Uninitialised;
         }
 
         // Step 5: the writer connection, every pragma, the engine assertion. A hot journal is rolled back by SQLite here, so the

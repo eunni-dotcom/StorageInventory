@@ -128,7 +128,8 @@ installed machine-wide, and CLI telemetry is switched off.
 ```
 
 `build.ps1` keeps all .NET and NuGet state inside the repository and restores your environment afterwards. Exactly
-four packages are referenced, all by the one project that talks to the History database (`src/StorageInventory.Library`):
+four packages are referenced, all by the one project that holds the Library code (`src/StorageInventory.Library`; the shipped
+application does not call it yet, so nothing is stored anywhere in this release):
 `Microsoft.Data.Sqlite.Core` 10.0.12, `SQLitePCLRaw.core`, `SQLitePCLRaw.provider.e_sqlite3` and
 `SQLitePCLRaw.lib.e_sqlite3` 2.1.12, which carries `e_sqlite3.dll` (SQLite 3.53.3, win-x64). Their versions and content
 hashes are pinned by the committed `packages.lock.json` files, which a CI or publish restore must match exactly, and
@@ -187,7 +188,8 @@ CI builds, tests and publishes every change on GitHub Actions. Tests that need s
 - **Counting:** hard links are counted once per link. Sizes are file lengths, not space used on disk (compression,
   sparse files and cluster slack aren't reflected). Alternate data streams aren't counted.
 - **Not code-signed**, so SmartScreen may warn (see above).
-- **Single-file extraction:** WPF's native libraries are unpacked to `%TEMP%\.net\StorageInventory\` on first run.
+- **Single-file extraction:** WPF's native libraries, and `e_sqlite3.dll` (the SQLite engine bundled for the Library code,
+  not yet used by the application), are unpacked to `%TEMP%\.net\StorageInventory\` on first run.
 - **Windows only**, x64 only.
 
 ## Roadmap
@@ -207,5 +209,5 @@ non-goals (content inspection, hashing, deleting or moving files, telemetry) are
 
 ## Licence
 
-[MIT](LICENSE) © 2026 eunni-dotcom. The release executable bundles the MIT-licensed .NET runtime; see
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE) © 2026 eunni-dotcom. The release executable bundles the MIT-licensed .NET runtime, `Microsoft.Data.Sqlite`
+(MIT), SQLitePCLRaw (Apache-2.0) and SQLite (public domain); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
