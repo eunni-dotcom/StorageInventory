@@ -50,7 +50,8 @@ internal sealed class World
 
     internal static World Create([System.Runtime.CompilerServices.CallerMemberName] string name = "world")
     {
-        var world = new World(Path.Combine(RunRoot, name + "-" + Guid.NewGuid().ToString("N")[..6]));
+        // a short folder name: the longest test names would pass MAX_PATH under a hosted runner's longer temp folder
+        var world = new World(Path.Combine(RunRoot, (name.Length > 40 ? name[..40] : name) + "-" + Guid.NewGuid().ToString("N")[..6]));
         Directory.CreateDirectory(world.AppData);
         return world;
     }
