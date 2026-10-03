@@ -210,6 +210,9 @@ internal static class GateRunner
 
     // ------------------------------------------------------------------------------------------------------------ the run
 
+    /// <summary>An in-process test does not echo the record and the cancellation line to the console.</summary>
+    internal static bool Quiet { get; set; }
+
     /// <summary>The measuring child runs at high priority, as the C4 benchmark did (no elevation needed); an in-process test turns it off.</summary>
     internal static bool RaisePriority { get; set; } = true;
 
@@ -372,7 +375,7 @@ internal static class GateRunner
                 var published = result is not null;
                 if (!published) rollback = CheckRolledBack(session, dbBefore, dbAfter, journalAfter, namesBefore, snapshotsBefore);
                 cancelRecord = new CancelRecord(cancelPoint, cancelPointName, seconds, cancelRows, journalAtCancel, outcome, rollback, published && o.Mode == "cancel-after-final");
-                Console.WriteLine($"cancelled at {cancelPointName} ({journalAtCancel / 1048576.0:0.0} MiB of journal, {cancelRows:N0} rows): returned after {seconds:0.000} s; {outcome}");
+                if (!Quiet) Console.WriteLine($"cancelled at {cancelPointName} ({journalAtCancel / 1048576.0:0.0} MiB of journal, {cancelRows:N0} rows): returned after {seconds:0.000} s; {outcome}");
             }
 
             DeleteRecord? deleted = null;
@@ -393,7 +396,7 @@ internal static class GateRunner
                     GC.GetTotalPauseDuration().TotalMilliseconds - gcPause.TotalMilliseconds, GC.CollectionCount(2) - gen2, checks, samples, dbAfter),
                 attribution, cancelRecord, deleted);
             session.TestOnlyShutdown();
-            Console.WriteLine(RecordJson.Serialize(record));
+            if (!Quiet) Console.WriteLine(RecordJson.Serialize(record));
             return record;
         }
         finally
