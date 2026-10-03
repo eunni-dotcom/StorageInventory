@@ -17,8 +17,10 @@ internal static class SyntheticIl
 
     /// <summary>Writes the assembly and returns its path. Methods (all public static unless noted):
     /// <c>CalliNoLease</c>, <c>CalliWithLease(lease)</c>; <c>CommandNoLease(object)</c>, <c>CommandWithLease(lease, object)</c>;
-    /// <c>CommitNoLease(object)</c>, <c>BeginTransactionNoLease(object)</c>; <c>StepNoLease(stmt)</c>; and the type
-    /// <c>LeaseBoundCommandRunner</c>, whose instance method <c>Run</c> executes a command with no lease parameter.</summary>
+    /// <c>CommitNoLease(object)</c>, <c>BeginTransactionNoLease(object)</c>; <c>StepNoLease(stmt)</c>; <c>Dup</c> and <c>Twin</c>, two
+    /// methods each that share one identity; and the types <c>LeaseBoundCommandRunner</c>, whose instance method <c>Run</c> executes a command
+    /// with no lease parameter, and <c>Closures</c>, delegates over a method that creates a directory: <c>InvokedInTheHost</c> runs it
+    /// there, <c>Unresolved</c> builds it and then leaves the audit unable to follow it.</summary>
     internal static string Build(string directory)
     {
         var name = "SynthFixtures_" + Guid.NewGuid().ToString("N")[..8];
@@ -82,7 +84,59 @@ internal static class SyntheticIl
         var ctor = bound.DefineDefaultConstructor(MethodAttributes.Public);
         _ = ctor;
 
+        // two methods of one type with one identity (C4R-M05): they differ only by their return type, or by being static or an instance
+        // method, which a signature of parameters alone does not tell apart. The audit refuses such a pair.
+        var dupVoid = type.DefineMethod("Dup", publicStatic, typeof(void), [typeof(string)]);
+        dupVoid.GetILGenerator().Emit(OpCodes.Ret);
+        var dupInt = type.DefineMethod("Dup", publicStatic, typeof(int), [typeof(string)]);
+        var dupIntIl = dupInt.GetILGenerator();
+        dupIntIl.Emit(OpCodes.Ldc_I4_0);
+        dupIntIl.Emit(OpCodes.Ret);
+        var twinStatic = type.DefineMethod("Twin", publicStatic, typeof(void), [typeof(string)]);
+        twinStatic.GetILGenerator().Emit(OpCodes.Ret);
+        var twinInstance = type.DefineMethod("Twin", MethodAttributes.Public, typeof(void), [typeof(string)]);
+        twinInstance.GetILGenerator().Emit(OpCodes.Ret);
+
+        // delegates: a method that reaches a mutation (a directory creation) bound to an Action<string> by ldftn + newobj
+        var closures = module.DefineType(Namespace + "Closures", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
+        var createDirectory = typeof(Directory).GetMethod(nameof(Directory.CreateDirectory), [typeof(string)])!;
+        var action = typeof(Action<string>);
+        var actionConstructor = action.GetConstructor([typeof(object), typeof(IntPtr)])!;
+        var closureTarget = closures.DefineMethod("Target", MethodAttributes.Private | MethodAttributes.Static, typeof(void), [typeof(string)]);
+        var closureTargetIl = closureTarget.GetILGenerator();
+        closureTargetIl.Emit(OpCodes.Ldarg_0);
+        closureTargetIl.Emit(OpCodes.Call, createDirectory);
+        closureTargetIl.Emit(OpCodes.Pop);
+        closureTargetIl.Emit(OpCodes.Ret);
+
+        // the delegate is built and run inside the host: accepted
+        var invoked = closures.DefineMethod("InvokedInTheHost", publicStatic, typeof(void), [typeof(MutationLease)]);
+        var invokedIl = invoked.GetILGenerator();
+        invokedIl.Emit(OpCodes.Ldnull);
+        invokedIl.Emit(OpCodes.Ldftn, closureTarget);
+        invokedIl.Emit(OpCodes.Newobj, actionConstructor);
+        invokedIl.Emit(OpCodes.Ldstr, "x");
+        invokedIl.Emit(OpCodes.Callvirt, action.GetMethod("Invoke")!);
+        invokedIl.Emit(OpCodes.Ret);
+
+        // the delegate is built, and then the evaluation stack differs between the two paths that meet: the audit cannot follow the
+        // value any further, so it fails closed
+        var unresolved = closures.DefineMethod("Unresolved", publicStatic, typeof(void), [typeof(MutationLease)]);
+        var unresolvedIl = unresolved.GetILGenerator();
+        var join = unresolvedIl.DefineLabel();
+        unresolvedIl.Emit(OpCodes.Ldnull);
+        unresolvedIl.Emit(OpCodes.Ldftn, closureTarget);
+        unresolvedIl.Emit(OpCodes.Newobj, actionConstructor);
+        unresolvedIl.Emit(OpCodes.Pop);
+        unresolvedIl.Emit(OpCodes.Ldc_I4_0);
+        unresolvedIl.Emit(OpCodes.Brtrue_S, join);
+        unresolvedIl.Emit(OpCodes.Ldnull);
+        unresolvedIl.MarkLabel(join);
+        unresolvedIl.Emit(OpCodes.Pop);
+        unresolvedIl.Emit(OpCodes.Ret);
+
         type.CreateType();
+        closures.CreateType();
         bound.CreateType();
         assembly.Save(path);
         return path;

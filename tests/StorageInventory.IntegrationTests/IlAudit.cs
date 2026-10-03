@@ -20,11 +20,14 @@ namespace StorageInventory.IntegrationTests;
 /// <c>ldvirtftn</c>) to a BCL or SQLite primitive (<see cref="IsPrimitive"/>); to a first-party method that takes a
 /// <c>MutationLease</c> outside the interlock's own authority types (stricter than the literal list, and intended); through
 /// interface or virtual dispatch, to any implementer or override in the model that itself directly reaches one; and any
-/// <c>calli</c> (an indirect call cannot be resolved, so it counts as reaching a mutation: only a method with authority may make one).
-/// Callees are matched by full signature (declaring type, name and parameter types), so an overload cannot hide behind another.</para>
+/// <c>calli</c> (an indirect call cannot be resolved, so it counts as reaching a mutation: only a method with authority may make one);
+/// and the invocation of a delegate that takes a <c>MutationLease</c> (<see cref="InvokesLeaseTakingDelegate"/>), outside the interlock.
+/// Callees are matched by <see cref="MethodKey"/>: declaring type, name, generic arity and the full parameter signature, so an overload
+/// cannot hide behind another; two methods that still share a key are rejected (<see cref="RuleAmbiguousMethod"/>).</para>
 /// <para>The compiler's wrappers are folded back into the method the author wrote: an async method's state machine, a lambda and a
 /// local function belong to the method that holds them. A lambda or local function that itself takes a lease is its own unit and has
-/// authority for its own calls; one that merely captures a lease is part of its host, which then needs the parameter.</para>
+/// authority for its own calls; one that merely captures a lease is part of its host, which then needs the parameter, <b>and which
+/// must not leave the host</b>: <see cref="IlClosures"/> follows the delegate and rejects it where it escapes the host's call.</para>
 /// <para>Part (c): a lease is constructed (<c>newobj</c>, <c>initobj</c>) only inside the interlock type.</para>
 /// </summary>
 internal static class IlAudit
@@ -36,15 +39,54 @@ internal static class IlAudit
 
     internal enum CallKind { Call, CallVirt, Newobj, Jmp, Ldftn, Ldvirtftn, Calli }
 
+    /// <summary>The identity of a method, the one string every matching in the audit uses (calls to definitions, overriders, the
+    /// allow-lists): declaring type, name, <b>generic arity</b> (a backtick and the number, for a generic method) and the full parameter
+    /// signature. Parameter types are decoded exactly: generic instantiations with their arguments, by-reference, pointer, array (with
+    /// its rank), function-pointer (with its signature) and modified (<c>modreq</c>, <c>modopt</c>) shapes. Two overloads that differ
+    /// only by generic arity, or by any of those shapes, therefore never share a key. The one thing a signature alone does not
+    /// distinguish is the return type of a conversion operator (C# lets <c>op_Implicit</c> overloads differ only by it), so those carry it.
+    /// Anything else that still shares a key is rejected by <see cref="MutationViolations"/> (<see cref="RuleAmbiguousMethod"/>).</summary>
+    internal static string MethodKey(string type, string name, int genericArity, IReadOnlyList<string> parameters, string returnType) =>
+        $"{type}::{name}{(genericArity > 0 ? "`" + genericArity : "")}({string.Join(",", parameters)}){(name is "op_Implicit" or "op_Explicit" ? "->" + returnType : "")}";
+
     /// <summary>One call instruction: the callee as the metadata names it, and where it sits in the method body.</summary>
     internal sealed record CallSite(string Type, string Name, IReadOnlyList<string> Parameters, CallKind Kind, int Offset, string? Constrained)
     {
+        /// <summary>Type parameters of a generic method (0 for a method that is not generic).</summary>
+        internal int GenericArity { get; init; }
+
+        /// <summary>The callee is an instance method (its signature has <c>this</c>).</summary>
+        internal bool HasThis { get; init; }
+
+        internal string ReturnType { get; init; } = "Void";
+
+        /// <summary>Assembly and metadata token of the callee when the call names a method DEFINITION of the assembly being read (a
+        /// reference to another assembly's method has only its signature).</summary>
+        internal string? Definition { get; init; }
+
+        /// <summary>The type arguments of the declaring type when the callee is a member of a generic instantiation
+        /// (<c>Func&lt;MutationLease,Boolean&gt;::Invoke</c> has <c>MutationLease</c> and <c>Boolean</c>).</summary>
+        internal IReadOnlyList<string> ParentArguments { get; init; } = [];
+
         internal string Short => Type + "::" + Name;
 
-        internal string Key => $"{Type}::{Name}({string.Join(",", Parameters)})";
+        internal string Key => MethodKey(Type, Name, GenericArity, Parameters, ReturnType);
 
         internal bool Dispatches => Kind is CallKind.CallVirt or CallKind.Ldvirtftn;
     }
+
+    /// <summary>One instruction of a method body with its operand resolved: a <see cref="CallSite"/> for a method token, a
+    /// <see cref="FieldRef"/> for a field token, a type name (<c>string</c>) for a type token, the absolute target offset (<c>int</c>) of a
+    /// branch, the absolute targets (<c>int[]</c>) of a <c>switch</c>, the index of an argument or local (<c>int</c>), or a
+    /// <see cref="CalliSite"/>.</summary>
+    internal readonly record struct Instr(int Offset, int Next, OpCode Op, object? Operand);
+
+    internal sealed record FieldRef(string Owner, string Name, string Type);
+
+    internal sealed record CalliSite(int ParameterCount, bool HasThis, bool ReturnsValue);
+
+    /// <summary>One entry of a method body's exception table, as absolute IL offsets (end exclusive).</summary>
+    internal readonly record struct Region(ExceptionRegionKind Kind, int TryStart, int TryEnd, int HandlerStart, int HandlerEnd, int FilterStart);
 
     /// <summary>One method body as the compiler produced it.</summary>
     internal sealed class Physical
@@ -54,19 +96,33 @@ internal static class IlAudit
         public required string OwnerType { get; init; }      // the type with compiler-generated segments cut off (a closure belongs to its outer type)
         public required string Name { get; init; }
         public required IReadOnlyList<string> ParameterTypes { get; init; }
+        public int GenericArity { get; init; }
+        public string ReturnType { get; init; } = "Void";
+        public bool HasThis { get; init; }
+        public int Token { get; init; }                      // the MethodDef row (metadata token) in its assembly
         public required bool IsPrivateLike { get; init; }
         public required bool IsStatic { get; init; }
         public required bool IsVirtual { get; init; }
+        public bool IsAbstract { get; init; }
         public required bool IsGenerated { get; init; }
         public bool IsExplicitImpl { get; set; }
         public required List<CallSite> Calls { get; init; }
         public required List<(string Type, int Offset)> InitTypes { get; init; }
         public required HashSet<string> Touched { get; init; }   // declaring types of the fields, types and methods the body names
-        public string Key => $"{Type}::{Name}({string.Join(",", ParameterTypes)})";
+        public List<Instr> Instructions { get; init; } = [];
+        public List<Region> Regions { get; init; } = [];
+        public bool Decoded { get; set; }                        // false when the body could not be decoded (the escape analysis then fails closed)
+        public string Key => MethodKey(Type, Name, GenericArity, ParameterTypes, ReturnType);
+        public string Definition => $"{Assembly}:0x{Token:X8}";
         public bool TakesLease => ParameterTypes.Any(IsLeaseParameter);
     }
 
-    private static bool IsLeaseParameter(string type) => type is MutationLeaseType or MutationLeaseType + "&";
+    private static readonly Regex ModifierText = new(@" mod(?:req|opt)\([^)]*\)", RegexOptions.Compiled);
+
+    /// <summary>A decoded type without its custom modifiers (<c>in MutationLease</c> is <c>MutationLease&amp; modreq(InAttribute)</c>).</summary>
+    internal static string Unmodified(string type) => type.Contains(" mod", StringComparison.Ordinal) ? ModifierText.Replace(type, "") : type;
+
+    internal static bool IsLeaseParameter(string type) => Unmodified(type) is MutationLeaseType or MutationLeaseType + "&";
 
     /// <summary>A method as its author wrote it (or a lambda or local function that takes a lease of its own): the entry body plus
     /// every compiler-generated body folded into it.</summary>
@@ -91,6 +147,16 @@ internal static class IlAudit
         /// <summary>Methods that implement or override a declared method, by the declared method's key and by "Type::Name/arity".</summary>
         public required Dictionary<string, List<Unit>> Overriders { get; init; }
         public required Dictionary<string, HashSet<string>> SuperTypes { get; init; }
+        /// <summary>Method keys that more than one non-generated method of one assembly carries (see <see cref="MethodKey"/>).</summary>
+        public required List<(string Key, List<Physical> Methods)> AmbiguousKeys { get; init; }
+        /// <summary>The unit each body belongs to (a closure, local function or state machine to the method that holds it).</summary>
+        public required Dictionary<Physical, List<Unit>> UnitOf { get; init; }
+        /// <summary>The fields of every type read, by type full name (for the escape analysis's "may this type hold a delegate").</summary>
+        public required Dictionary<string, List<(string Name, string Type, bool IsStatic)>> Fields { get; init; }
+        /// <summary>Types that are delegates (they derive from <c>MulticastDelegate</c>), by full name.</summary>
+        public required HashSet<string> DelegateTypes { get; init; }
+        /// <summary>Interface types of the assemblies read.</summary>
+        public required HashSet<string> InterfaceTypes { get; init; }
         public IEnumerable<Unit> Units => Methods.Values;
     }
 
@@ -122,6 +188,9 @@ internal static class IlAudit
     internal const string RuleForeignCaller = "A25a/caller-of-another-type";
     internal const string RuleUncalled = "A25a/private-and-uncalled";
     internal const string RuleIndirectCall = "A25a/indirect-call";
+    internal const string RuleAmbiguousMethod = "A25a/ambiguous-method-identity";
+    internal const string RuleClosureEscapes = "A25a/closure-escapes";
+    internal const string RuleUnresolvedFlow = "A25a/unresolved-closure-flow";
     internal const string RuleConstructsLease = "A25c/constructs-lease";
     internal const string RuleDefaultLease = "A25c/default-lease";
     internal const string RuleFileSystemOutsideStore = "C4-M17/file-system-outside-LibraryStore";
@@ -135,13 +204,25 @@ internal static class IlAudit
         .Select(f => (OpCode)f.GetValue(null)!)
         .ToDictionary(o => o.Value, o => o.OperandType);
 
+    private static readonly Dictionary<short, OpCode> OpCodeByValue = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Select(f => (OpCode)f.GetValue(null)!)
+        .ToDictionary(o => o.Value);
+
     internal static Model Read(params string[] assemblyPaths)
     {
         var physicals = new List<Physical>();
         var leaseBound = new Dictionary<string, bool>(StringComparer.Ordinal);
         var direct = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var explicitImpls = new List<(string DeclarationKey, string DeclarationShort, int Arity, Physical Body)>();
-        foreach (var path in assemblyPaths) ReadOne(path, physicals, leaseBound, direct, explicitImpls);
+        var fields = new Dictionary<string, List<(string Name, string Type, bool IsStatic)>>(StringComparer.Ordinal);
+        var delegateTypes = new HashSet<string>(StringComparer.Ordinal);
+        var interfaceTypes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in assemblyPaths) ReadOne(path, physicals, leaseBound, direct, explicitImpls, fields, delegateTypes, interfaceTypes);
+
+        // Two non-generated methods of one assembly with one key cannot be told apart by anything the audit matches on: refuse them.
+        var ambiguous = physicals.Where(p => !p.IsGenerated).GroupBy(p => p.Key, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1).Select(g => (g.Key, g.ToList())).ToList();
 
         // Fold the compiler's bodies into the units they belong to.
         var units = new Dictionary<string, Unit>(StringComparer.Ordinal);
@@ -224,22 +305,43 @@ internal static class IlAudit
             var unit = units[p.Key];
             foreach (var super in Closure(p.Type))
             {
-                AddOverrider($"{super}::{p.Name}({string.Join(",", p.ParameterTypes)})", unit);
-                AddOverrider($"{super}::{p.Name}/{p.ParameterTypes.Count}", unit);
+                AddOverrider(MethodKey(super, p.Name, p.GenericArity, p.ParameterTypes, p.ReturnType), unit);
+                AddOverrider(OverrideShape(super, p.Name, p.GenericArity, p.ParameterTypes.Count), unit);
             }
         }
         foreach (var (declarationKey, declarationShort, arity, body) in explicitImpls)
         {
             if (!units.TryGetValue(body.Key, out var unit)) continue;
             AddOverrider(declarationKey, unit);
-            AddOverrider($"{declarationShort}/{arity}", unit);
+            AddOverrider(OverrideShape(declarationShort, body.GenericArity, arity), unit);
         }
-        return new Model { Methods = units, Physicals = physicals, LeaseBoundTypes = leaseBound, Overriders = overriders, SuperTypes = supers };
+        return new Model
+        {
+            Methods = units, Physicals = physicals, LeaseBoundTypes = leaseBound, Overriders = overriders, SuperTypes = supers, AmbiguousKeys = ambiguous, UnitOf = unitOf,
+            Fields = fields, DelegateTypes = delegateTypes, InterfaceTypes = interfaceTypes,
+        };
     }
+
+    /// <summary>The looser key dispatch falls back on (a generic interface's signature names <c>!0</c> where the implementer names the
+    /// concrete type): declaring type, name, generic arity and parameter COUNT.</summary>
+    internal static string OverrideShape(string declaringType, string name, int genericArity, int parameterCount) => OverrideShape(declaringType + "::" + name, genericArity, parameterCount);
+
+    internal static string OverrideShape(string shortName, int genericArity, int parameterCount) => $"{shortName}{(genericArity > 0 ? "`" + genericArity : "")}/{parameterCount}";
 
     private static readonly Regex StateMachineType = new(@"^<(?<m>.+)>d(__\d+)?(`\d+)?$", RegexOptions.Compiled);
 
     private static bool IsStateMachine(Physical p) => StateMachineType.IsMatch(Last(p.Type));
+
+    /// <summary>The method a state machine body (an async method or lambda, an iterator) was made out of: the type that holds the state
+    /// machine (its nested type is named <c>&lt;Origin&gt;d__N</c>) and the name of the origin; null for any other body.</summary>
+    internal static (string Type, string Name)? StateMachineOriginOf(Physical body)
+    {
+        var match = StateMachineType.Match(Last(body.Type));
+        return match.Success && body.IsGenerated ? (Parent(body.Type), match.Groups["m"].Value) : null;
+    }
+
+    /// <summary>Whether a type (by full name) is the compiler's state machine of an async method or an iterator.</summary>
+    internal static bool IsStateMachineType(string type) => StateMachineType.IsMatch(Last(type));
 
     private static string Last(string type) => type[(type.LastIndexOf('+') + 1)..];
 
@@ -279,7 +381,7 @@ internal static class IlAudit
         p.Name.StartsWith('<') && p.Name.Contains('>', StringComparison.Ordinal) ? p.Name[1..p.Name.IndexOf('>')] : null;
 
     private static void ReadOne(string assemblyPath, List<Physical> physicals, Dictionary<string, bool> leaseBound, Dictionary<string, HashSet<string>> direct,
-        List<(string, string, int, Physical)> explicitImpls)
+        List<(string, string, int, Physical)> explicitImpls, Dictionary<string, List<(string Name, string Type, bool IsStatic)>> fields, HashSet<string> delegateTypes, HashSet<string> interfaceTypes)
     {
         using var stream = File.OpenRead(assemblyPath);
         using var pe = new PEReader(stream);
@@ -293,19 +395,29 @@ internal static class IlAudit
             var type = md.GetTypeDefinition(typeHandle);
             var fullName = FullName(md, type);
             var supers = new HashSet<string>(StringComparer.Ordinal);
-            if (!type.BaseType.IsNil && provider.TypeName(type.BaseType) is { } baseName) supers.Add(baseName);
+            if (!type.BaseType.IsNil && provider.TypeName(type.BaseType) is { } baseName)
+            {
+                supers.Add(baseName);
+                if (baseName is "System.MulticastDelegate" or "System.Delegate") delegateTypes.Add(fullName);
+            }
             foreach (var implementation in type.GetInterfaceImplementations())
             {
                 if (provider.TypeName(md.GetInterfaceImplementation(implementation).Interface) is { } interfaceName) supers.Add(interfaceName);
             }
             direct[fullName] = supers;
+            if ((type.Attributes & TypeAttributes.Interface) != 0) interfaceTypes.Add(fullName);
 
+            var typeFields = new List<(string, string, bool)>();
             foreach (var fieldHandle in type.GetFields())
             {
                 var field = md.GetFieldDefinition(fieldHandle);
-                if ((field.Attributes & FieldAttributes.Static) != 0) continue;
-                if (IsLeaseParameter(field.DecodeSignature(provider, null))) leaseBound[fullName] = true;
+                var fieldType = field.DecodeSignature(provider, null);
+                var isStatic = (field.Attributes & FieldAttributes.Static) != 0;
+                typeFields.Add((md.GetString(field.Name), fieldType, isStatic));
+                if (isStatic) continue;
+                if (IsLeaseParameter(fieldType)) leaseBound[fullName] = true;
             }
+            fields[fullName] = typeFields;
             foreach (var methodHandle in type.GetMethods())
             {
                 var method = md.GetMethodDefinition(methodHandle);
@@ -313,11 +425,21 @@ internal static class IlAudit
                 var calls = new List<CallSite>();
                 var inits = new List<(string, int)>();
                 var touched = new HashSet<string>(StringComparer.Ordinal);
+                var instructions = new List<Instr>();
+                var regions = new List<Region>();
+                var decoded = true;
                 if (method.RelativeVirtualAddress != 0)
                 {
-                    var il = pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes()!;
-                    Decode(provider, il, calls, inits, touched);
+                    var body = pe.GetMethodBody(method.RelativeVirtualAddress);
+                    var il = body.GetILBytes()!;
+                    Decode(provider, il, calls, inits, touched, instructions);
+                    foreach (var region in body.ExceptionRegions)
+                    {
+                        regions.Add(new Region(region.Kind, region.TryOffset, region.TryOffset + region.TryLength, region.HandlerOffset, region.HandlerOffset + region.HandlerLength,
+                            region.Kind == ExceptionRegionKind.Filter ? region.FilterOffset : -1));
+                    }
                 }
+                else decoded = false;   // abstract, extern or runtime-implemented (a delegate's Invoke): no body to read
                 var name = md.GetString(method.Name);
                 var attributes = method.Attributes;
                 var physical = new Physical
@@ -327,13 +449,21 @@ internal static class IlAudit
                     OwnerType = OwnerOf(fullName),
                     Name = name,
                     ParameterTypes = [.. signature.ParameterTypes],
+                    GenericArity = signature.GenericParameterCount,
+                    ReturnType = signature.ReturnType,
+                    HasThis = signature.Header.IsInstance,
+                    Token = MetadataTokens.GetToken(methodHandle),
                     IsPrivateLike = (attributes & MethodAttributes.MemberAccessMask) is MethodAttributes.Private or MethodAttributes.PrivateScope,
                     IsStatic = (attributes & MethodAttributes.Static) != 0,
                     IsVirtual = (attributes & MethodAttributes.Virtual) != 0,
+                    IsAbstract = (attributes & MethodAttributes.Abstract) != 0,
                     IsGenerated = IsGeneratedType(fullName) || name.StartsWith('<'),
                     Calls = calls,
                     InitTypes = inits,
                     Touched = touched,
+                    Instructions = instructions,
+                    Regions = regions,
+                    Decoded = decoded,
                 };
                 physicals.Add(physical);
                 local[methodHandle] = physical;
@@ -361,7 +491,7 @@ internal static class IlAudit
         return ns.Length == 0 ? name : ns + "." + name;
     }
 
-    private static void Decode(NameProvider provider, byte[] il, List<CallSite> calls, List<(string, int)> inits, HashSet<string> touched)
+    private static void Decode(NameProvider provider, byte[] il, List<CallSite> calls, List<(string, int)> inits, HashSet<string> touched, List<Instr> instructions)
     {
         var i = 0;
         string? constrained = null;
@@ -370,7 +500,8 @@ internal static class IlAudit
             var start = i;
             short code = il[i++];
             if (code == 0xFE) code = (short)(0xFE00 | il[i++]);
-            var operand = Operands[code];
+            var op = OpCodeByValue[code];
+            var operand = op.OperandType;
             var size = operand switch
             {
                 OperandType.InlineNone => 0,
@@ -380,6 +511,7 @@ internal static class IlAudit
                 OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, i),
                 _ => 4,
             };
+            object? value = null;
             switch (operand)
             {
                 case OperandType.InlineMethod:
@@ -399,6 +531,7 @@ internal static class IlAudit
                     {
                         calls.Add(call);
                         touched.Add(call.Type);
+                        value = call;
                     }
                     constrained = null;
                     break;
@@ -406,30 +539,60 @@ internal static class IlAudit
                 case OperandType.InlineSig:
                     // calli: an indirect call through a function pointer; the target cannot be known
                     calls.Add(new CallSite("<function pointer>", "calli", [], CallKind.Calli, start, null));
+                    value = provider.Calli(MetadataTokens.EntityHandle(BitConverter.ToInt32(il, i)));
                     constrained = null;
                     break;
                 case OperandType.InlineField:
-                    if (provider.FieldType(MetadataTokens.EntityHandle(BitConverter.ToInt32(il, i))) is { } owner) touched.Add(owner);
+                {
+                    var handle = MetadataTokens.EntityHandle(BitConverter.ToInt32(il, i));
+                    if (provider.FieldType(handle) is { } owner) touched.Add(owner);
+                    value = provider.Field(handle);
                     break;
+                }
                 case OperandType.InlineType or OperandType.InlineTok:
                 {
                     var name = provider.TypeName(MetadataTokens.EntityHandle(BitConverter.ToInt32(il, i)));
                     if (name is not null)
                     {
                         touched.Add(name);
+                        value = name;
                         if (code == unchecked((short)0xFE15)) inits.Add((name, start));        // initobj: what 'default(T)' compiles to
                         if (code == unchecked((short)0xFE16)) constrained = name;               // constrained. (a call through a type parameter)
                     }
                     break;
                 }
+                case OperandType.ShortInlineBrTarget:
+                    value = i + 1 + (sbyte)il[i];                              // relative to the end of the instruction
+                    break;
+                case OperandType.InlineBrTarget:
+                    value = i + 4 + BitConverter.ToInt32(il, i);
+                    break;
+                case OperandType.InlineSwitch:
+                {
+                    var count = BitConverter.ToInt32(il, i);
+                    var end = i + 4 + 4 * count;
+                    var targets = new int[count];
+                    for (var t = 0; t < count; t++) targets[t] = end + BitConverter.ToInt32(il, i + 4 + 4 * t);
+                    value = targets;
+                    break;
+                }
+                case OperandType.ShortInlineVar:
+                    value = (int)il[i];
+                    break;
+                case OperandType.InlineVar:
+                    value = (int)BitConverter.ToUInt16(il, i);
+                    break;
             }
             i += size;
+            instructions.Add(new Instr(start, i, op, value));
         }
     }
 
     /// <summary>Names types and members from metadata tokens, and decodes signatures to type names.</summary>
     private sealed class NameProvider(MetadataReader md) : ISignatureTypeProvider<string, object?>
     {
+        private readonly string _assembly = md.GetString(md.GetAssemblyDefinition().Name);
+
         public CallSite? Method(EntityHandle handle, CallKind kind, int offset, string? constrained)
         {
             switch (handle.Kind)
@@ -438,7 +601,13 @@ internal static class IlAudit
                 {
                     var method = md.GetMethodDefinition((MethodDefinitionHandle)handle);
                     var signature = method.DecodeSignature(this, null);
-                    return new CallSite(FullName(md, md.GetTypeDefinition(method.GetDeclaringType())), md.GetString(method.Name), [.. signature.ParameterTypes], kind, offset, constrained);
+                    return new CallSite(FullName(md, md.GetTypeDefinition(method.GetDeclaringType())), md.GetString(method.Name), [.. signature.ParameterTypes], kind, offset, constrained)
+                    {
+                        GenericArity = signature.GenericParameterCount,
+                        HasThis = signature.Header.IsInstance,
+                        ReturnType = signature.ReturnType,
+                        Definition = $"{_assembly}:0x{MetadataTokens.GetToken((MethodDefinitionHandle)handle):X8}",
+                    };
                 }
                 case HandleKind.MemberReference:
                 {
@@ -447,10 +616,62 @@ internal static class IlAudit
                     var parent = reference.Parent.Kind is HandleKind.TypeReference or HandleKind.TypeDefinition or HandleKind.TypeSpecification ? TypeName(reference.Parent) : null;
                     if (parent is null) return null;
                     var signature = reference.DecodeMethodSignature(this, null);
-                    return new CallSite(parent, md.GetString(reference.Name), [.. signature.ParameterTypes], kind, offset, constrained);
+                    return new CallSite(parent, md.GetString(reference.Name), [.. signature.ParameterTypes], kind, offset, constrained)
+                    {
+                        GenericArity = signature.GenericParameterCount,
+                        HasThis = signature.Header.IsInstance,
+                        ReturnType = signature.ReturnType,
+                        ParentArguments = reference.Parent.Kind == HandleKind.TypeSpecification ? TypeArguments(md.GetTypeSpecification((TypeSpecificationHandle)reference.Parent).DecodeSignature(this, null)) : [],
+                    };
                 }
                 case HandleKind.MethodSpecification:
                     return Method(md.GetMethodSpecification((MethodSpecificationHandle)handle).Method, kind, offset, constrained);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>The indirect call of a <c>calli</c>: how many values it takes off the stack, and whether it leaves one.</summary>
+        public CalliSite? Calli(EntityHandle handle)
+        {
+            if (handle.Kind != HandleKind.StandaloneSignature) return null;
+            var signature = md.GetStandaloneSignature((StandaloneSignatureHandle)handle).DecodeMethodSignature(this, null);
+            return new CalliSite(signature.ParameterTypes.Length, signature.Header.IsInstance, Unmodified(signature.ReturnType) != "Void");
+        }
+
+        /// <summary>The top-level type arguments of a decoded instantiation (<c>Name&lt;A,B&lt;C&gt;&gt;</c> gives <c>A</c> and <c>B&lt;C&gt;</c>).</summary>
+        internal static IReadOnlyList<string> TypeArguments(string text)
+        {
+            var open = text.IndexOf('<', StringComparison.Ordinal);
+            var close = text.LastIndexOf('>');
+            if (open < 0 || close < open) return [];
+            var arguments = new List<string>();
+            int depth = 0, start = open + 1;
+            for (var i = start; i < close; i++)
+            {
+                if (text[i] is '<' or '(') depth++;
+                else if (text[i] is '>' or ')') depth--;
+                else if (text[i] == ',' && depth == 0) { arguments.Add(text[start..i]); start = i + 1; }
+            }
+            arguments.Add(text[start..close]);
+            return arguments;
+        }
+
+        public FieldRef? Field(EntityHandle handle)
+        {
+            switch (handle.Kind)
+            {
+                case HandleKind.FieldDefinition:
+                {
+                    var field = md.GetFieldDefinition((FieldDefinitionHandle)handle);
+                    return new FieldRef(FullName(md, md.GetTypeDefinition(field.GetDeclaringType())), md.GetString(field.Name), field.DecodeSignature(this, null));
+                }
+                case HandleKind.MemberReference:
+                {
+                    var reference = md.GetMemberReference((MemberReferenceHandle)handle);
+                    if (reference.GetKind() != MemberReferenceKind.Field || TypeName(reference.Parent) is not { } owner) return null;
+                    return new FieldRef(owner, md.GetString(reference.Name), reference.DecodeFieldSignature(this, null));
+                }
                 default:
                     return null;
             }
@@ -493,14 +714,15 @@ internal static class IlAudit
         public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) => TypeName(handle) ?? "?";
         public string GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind) => TypeName(handle) ?? "?";
         public string GetSZArrayType(string elementType) => elementType + "[]";
-        public string GetArrayType(string elementType, ArrayShape shape) => elementType + "[,]";
+        public string GetArrayType(string elementType, ArrayShape shape) => elementType + (shape.Rank == 1 ? "[*]" : "[" + new string(',', shape.Rank - 1) + "]");
         public string GetByReferenceType(string elementType) => elementType + "&";
         public string GetPointerType(string elementType) => elementType + "*";
         public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments) => genericType + "<" + string.Join(",", typeArguments) + ">";
-        public string GetFunctionPointerType(MethodSignature<string> signature) => "fnptr";
+        public string GetFunctionPointerType(MethodSignature<string> signature) =>
+            $"fnptr({signature.Header.CallingConvention} {signature.ReturnType}({string.Join(",", signature.ParameterTypes)}){(signature.GenericParameterCount > 0 ? "`" + signature.GenericParameterCount : "")})";
         public string GetGenericMethodParameter(object? genericContext, int index) => "!!" + index;
         public string GetGenericTypeParameter(object? genericContext, int index) => "!" + index;
-        public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired) => unmodifiedType;
+        public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired) => $"{unmodifiedType} {(isRequired ? "modreq" : "modopt")}({modifier})";
         public string GetPinnedType(string elementType) => elementType;
     }
 
@@ -594,7 +816,7 @@ internal static class IlAudit
 
     // ---------------------------------------------------------------- A-25 (a)
 
-    private static bool IsAuthorityType(string type) => type is InterlockType or MutationLeaseType or ObservationLeaseType || type.StartsWith(InterlockType + "+", StringComparison.Ordinal);
+    internal static bool IsAuthorityType(string type) => type is InterlockType or MutationLeaseType or ObservationLeaseType || type.StartsWith(InterlockType + "+", StringComparison.Ordinal);
 
     /// <summary>The leased operations of a model: methods an author wrote that take a <c>MutationLease</c>, outside the interlock's
     /// own authority. Keyed by full signature.</summary>
@@ -606,24 +828,53 @@ internal static class IlAudit
         InterlockType + "::TakeStartupLease", InterlockType + "::TryBeginMutation", InterlockType + "::HandOffToSave", ObservationLeaseType + "::HandOffToSave",
     ];
 
-    /// <summary>What a unit reaches directly (not through dispatch): primitives, leased operations, indirect calls.</summary>
-    private static List<string> DirectReach(Unit unit, HashSet<string> leased)
+    private static readonly string[] BclDelegatePrefixes =
+    [
+        "System.Action", "System.Func", "System.Predicate", "System.Comparison", "System.Converter", "System.EventHandler", "System.AsyncCallback", "System.Delegate", "System.MulticastDelegate",
+        "System.Threading.ThreadStart", "System.Threading.ParameterizedThreadStart", "System.Threading.WaitCallback", "System.Threading.TimerCallback", "System.Threading.SendOrPostCallback",
+        "System.Threading.ContextCallback", "System.Threading.WaitOrTimerCallback", "System.Threading.IOCompletionCallback",
+    ];
+
+    /// <summary>Whether a type (by the name a call site gives it) is a delegate: one of the model's, or a BCL delegate type.</summary>
+    internal static bool IsDelegateType(Model model, string typeName) =>
+        model.DelegateTypes.Contains(typeName) || BclDelegatePrefixes.Any(prefix => typeName.StartsWith(prefix, StringComparison.Ordinal));
+
+    /// <summary>A call to <c>Invoke</c> of a delegate whose signature takes a <c>MutationLease</c> (<c>Func&lt;MutationLease,T&gt;</c>, a declared
+    /// delegate with a lease parameter). It is a leased operation like any method that takes a lease: its caller must hold a lease of its
+    /// own, because a delegate's target is not a call the audit can resolve, and the lease handed to it could be a retained one. Only the
+    /// interlock, which issues leases, is exempt (<see cref="IsAuthorityType"/>: <c>RunStartup</c> and <c>TryRunMutation</c> hand the lease
+    /// they just granted to the lambda as a parameter).</summary>
+    internal static bool InvokesLeaseTakingDelegate(Model model, CallSite c)
+    {
+        if (c.Name != "Invoke" || !c.HasThis || !IsDelegateType(model, c.Type)) return false;
+        if (c.Parameters.Any(IsLeaseParameter)) return true;
+        if (c.ParentArguments.Count == 0) return false;
+        // Func<A, B, TResult> has parameters A and B; every other generic delegate: all its arguments
+        var parameters = c.Type.StartsWith("System.Func", StringComparison.Ordinal) ? c.ParentArguments.Take(c.ParentArguments.Count - 1) : c.ParentArguments;
+        return parameters.Any(IsLeaseParameter);
+    }
+
+    /// <summary>What a unit reaches directly (not through dispatch): primitives, leased operations, indirect calls, and the invocation of
+    /// a delegate that takes a lease.</summary>
+    private static List<string> DirectReach(Model model, Unit unit, HashSet<string> leased)
     {
         var reached = new List<string>();
+        var interlock = IsAuthorityType(unit.Type);
         foreach (var call in unit.Calls)
         {
             if (call.Kind == CallKind.Calli) reached.Add("calli (an indirect call)");
             else if (IsPrimitive(call)) reached.Add(call.Short);
             else if (leased.Contains(call.Key)) reached.Add(call.Short + " (takes a lease)");
+            else if (!interlock && InvokesLeaseTakingDelegate(model, call)) reached.Add(call.Short + " (a delegate that takes a lease)");
         }
         return reached;
     }
 
-    private static IEnumerable<Unit> DispatchTargets(Model model, CallSite call)
+    internal static IEnumerable<Unit> DispatchTargets(Model model, CallSite call)
     {
         if (!call.Dispatches) yield break;
         var seen = new HashSet<Unit>();
-        foreach (var key in new[] { call.Key, $"{call.Short}/{call.Parameters.Count}" })
+        foreach (var key in new[] { call.Key, OverrideShape(call.Type, call.Name, call.GenericArity, call.Parameters.Count) })
         {
             if (!model.Overriders.TryGetValue(key, out var list)) continue;
             foreach (var unit in list) if (seen.Add(unit)) yield return unit;
@@ -637,7 +888,7 @@ internal static class IlAudit
     {
         options ??= Options.Frozen;
         var allow = new HashSet<string>(allowList ?? ReadOnlyAllowList, StringComparer.Ordinal);
-        var direct = model.Units.ToDictionary(u => u.Key, u => DirectReach(u, leasedOperations), StringComparer.Ordinal);
+        var direct = model.Units.ToDictionary(u => u.Key, u => DirectReach(model, u, leasedOperations), StringComparer.Ordinal);
 
         // callers by unit, resolving dispatch: a call through an interface or a virtual reaches every implementer
         var callers = new Dictionary<string, List<Unit>>(StringComparer.Ordinal);
@@ -710,6 +961,16 @@ internal static class IlAudit
             }
             violations.Add(new Violation(unit.Key, rule, $"reaches {reachedText} without a MutationLease: {why}"));
         }
+
+        // methods that cannot be told apart are not judged at all: refuse them (a missing or aliased unit would hide a violation)
+        foreach (var (key, methods) in model.AmbiguousKeys.Where(a => a.Methods.Any(m => inScope(m.OwnerType))))
+        {
+            var which = string.Join(", ", methods.Select(m => $"{m.Definition}{(m.IsStatic ? " static" : "")}{(m.IsPrivateLike ? " private" : "")} returning {m.ReturnType}"));
+            violations.Add(new Violation(key, RuleAmbiguousMethod, $"{methods.Count} methods share this identity ({which}), so the audit cannot tell them apart and would judge them as one"));
+        }
+
+        // a delegate that borrows its host's authority must stay inside the host's call
+        violations.AddRange(IlClosures.Violations(model, inScope, leasedOperations, allow));
         return violations;
     }
 

@@ -11,6 +11,11 @@ namespace StorageInventory.Library.Tests;
 /// if it ran (a primary-key conflict, an integer overflow) raises the lease refusal instead; <c>BEGIN IMMEDIATE</c> would call the
 /// AfterBegin hook; <c>COMMIT</c> and <c>ROLLBACK</c> would clear <see cref="WriterConnection.InTransaction"/>; a cancellation scope would
 /// install the token. Each case uses a fresh session, because a failed OBS-15 check faults the interlock that was asked.
+/// <para>The same operations are also run through <b>a delegate that captured the lease</b> (C4R-M05): the audit (A-25 a) now rejects a
+/// closure that carries a lease out of its host, but the run-time check is the last defence and does not depend on it, so a delegate
+/// that retained a lease, or that takes one, is invoked (a) while the lease is current: it works; (b) after the lease was disposed;
+/// (c) after it was handed off to the next lease of the interlock; (d) by a caller that has no lease to give it. Each refusal is the
+/// same refusal, before any I/O, with the same side channels, and the interlock Faulted.</para>
 /// </summary>
 public static class LeaseRuntimeAbuseTests
 {
@@ -147,7 +152,12 @@ public static class LeaseRuntimeAbuseTests
     private static void MakeEngineBogus(Rig rig) =>
         typeof(LibraryFaultInjection).GetProperty(nameof(LibraryFaultInjection.ExpectedEngine), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.SetValue(rig.Faults, ("0.0.0", "bogus"));
 
-    private static void RunAbuse(Abuse abuse)
+    /// <summary>How an operation reaches the writer in a case: directly with the lease the abuse produces, through a delegate that
+    /// captured the opener's lease while it was current and runs after the abuse has ended it, or through a delegate that TAKES a lease
+    /// and is run by a caller that has none (it can only pass a default one).</summary>
+    private enum Form { Direct, CapturedDelegate, LeaseTakingDelegate }
+
+    private static void RunAbuse(Abuse abuse, Form form = Form.Direct)
     {
         var failures = new List<string>();
         foreach (var operation in Operations)
@@ -156,19 +166,44 @@ public static class LeaseRuntimeAbuseTests
             var allowedRollback = operation.Name == "WriterConnection.Rollback" && abuse.OwnLease;
             using var rig = Open(abuse, operation.NeedsTransaction, operation.NeedsStatements);
             if (operation.Name == "WriterConnection.AssertEngine") MakeEngineBogus(rig);   // if it ran, it would throw UnexpectedEngineException
-            var lease = abuse.Make(rig);
+            MutationLease lease;
+            Action<Rig, MutationLease> run = operation.Run;
+            switch (form)
+            {
+                case Form.CapturedDelegate:
+                {
+                    // a method retained a delegate that captured the lease (and the writer) while it was current ...
+                    var captured = rig.Opener;
+                    Action<Rig, MutationLease> retained = (r, _) => operation.Run(r, captured);
+                    _ = abuse.Make(rig);   // ... and the lease then ended (disposed, handed off)
+                    lease = default;       // whoever runs the delegate has no lease to give it: the delegate uses the one it captured
+                    run = retained;
+                    break;
+                }
+                case Form.LeaseTakingDelegate:
+                {
+                    // a delegate that takes the lease it works under, run by a caller that holds none
+                    Action<Rig, MutationLease> retained = (r, l) => operation.Run(r, l);
+                    lease = abuse.Make(rig);
+                    run = retained;
+                    break;
+                }
+                default:
+                    lease = abuse.Make(rig);
+                    break;
+            }
             var hashesBefore = rig.World.ContentHashes();
-            var label = $"{abuse.Name}: {operation.Name}";
+            var label = (form == Form.Direct ? "" : form == Form.CapturedDelegate ? "through a delegate that captured the lease, run after it ended, " : "through a delegate that takes a lease, run by a caller with none, ") + $"{abuse.Name}: {operation.Name}";
             if (allowedRollback)
             {
-                try { operation.Run(rig, lease); }
+                try { run(rig, lease); }
                 catch (Exception ex) { failures.Add($"{label}: the best-effort rollback with the opener's own lease was refused: {ex.GetType().Name}: {ex.Message}"); continue; }
                 if (rig.Writer.InTransaction) failures.Add($"{label}: the rollback did not end the transaction");
                 if (rig.Session.Interlock.IsFaulted) failures.Add($"{label}: an allowed rollback faulted the interlock");
                 continue;
             }
             Exception? thrown = null;
-            try { operation.Run(rig, lease); }
+            try { run(rig, lease); }
             catch (Exception ex) { thrown = ex; }
             if (thrown is not LeaseViolationException refusal) { failures.Add($"{label}: expected a LeaseViolationException (refused before any I/O), got {thrown?.GetType().Name ?? "nothing"}: {thrown?.Message}"); continue; }
             if (!refusal.Message.StartsWith("Refused before any I/O", StringComparison.Ordinal)) failures.Add($"{label}: the refusal does not say it was before any I/O: {refusal.Message}");
@@ -206,6 +241,69 @@ public static class LeaseRuntimeAbuseTests
 
     [Test]
     public static void A_current_lease_of_the_same_interlock_that_did_not_open_the_writer_is_refused_by_every_writer_operation_before_any_io() => RunAbuse(Abuses[7]);
+
+    // ---- a delegate that captured the lease, or takes one (C4R-M05): the run-time check does not depend on how the writer was reached
+
+    [Test]
+    public static void A_delegate_that_captured_the_lease_works_while_the_lease_is_current_for_every_writer_operation()
+    {
+        // (a) the control: the retained delegate is run inside the lease's life, and is not refused (so the refusals below are about the lease)
+        foreach (var operation in Operations.Where(o => o.Name != "WriterConnection.Commit" && o.Name != "WriterConnection.Rollback" && o.Name != "WriterConnection.AssertEngine"))
+        {
+            using var rig = Open(Abuses[0], beginTransaction: false, prepareStatements: operation.NeedsStatements);
+            var captured = rig.Opener;
+            Action retained = () => operation.Run(rig, captured);
+            Exception? thrown = null;
+            try { retained(); }
+            catch (Exception ex) { thrown = ex; }
+            Assert.False(thrown is LeaseViolationException, $"{operation.Name}: the delegate that captured the current lease was refused: {thrown?.Message}");
+            Assert.False(rig.Session.Interlock.IsFaulted, $"{operation.Name}: the interlock is Faulted");
+        }
+        using (var rig = Open(Abuses[0], beginTransaction: false, prepareStatements: false))
+        {
+            var captured = rig.Opener;
+            Func<object?> scalar = () => rig.Writer.Scalar(captured, "SELECT 41 + 1");
+            Action begin = () => rig.Writer.Begin(captured);
+            Action commit = () => rig.Writer.Commit(captured);
+            Assert.Equal(42L, Convert.ToInt64(scalar()), "the retained delegate queries the writer while its lease is current");
+            begin();
+            Assert.True(rig.Writer.InTransaction, "and begins a transaction");
+            commit();
+            Assert.False(rig.Writer.InTransaction, "and commits it");
+            Assert.False(rig.Session.Interlock.IsFaulted);
+        }
+    }
+
+    [Test]
+    public static void A_delegate_that_captured_the_lease_is_refused_after_the_lease_was_disposed_by_every_writer_operation_before_any_io() => RunAbuse(Abuses[4], Form.CapturedDelegate);
+
+    [Test]
+    public static void A_delegate_that_captured_the_lease_is_refused_after_a_hand_off_by_every_writer_operation_before_any_io() => RunAbuse(Abuses[5], Form.CapturedDelegate);
+
+    [Test]
+    public static void A_delegate_that_captured_the_lease_is_refused_after_the_interlock_granted_a_newer_lease_of_the_same_kind_by_every_writer_operation_before_any_io()
+    {
+        // (c) an interlock transition other than a hand-off: the lease ended and the interlock is Mutating (Prepare) again, under a NEWER
+        // lease. Only the id tells the captured lease from the current one (ids are never reused)
+        var abuse = new Abuse("the opener's lease after the interlock granted a newer lease of the same kind", [MutationKind.Prepare], false, r =>
+        {
+            r.Opener.ResourceReleased();
+            r.Opener.Dispose();
+            r.SaveLease = World.Lease(r.Session, MutationKind.Prepare, 1);   // (disposed with the rig)
+            Assert.True(r.Session.Interlock.IsCurrent(r.SaveLease.Value) && !r.Session.Interlock.IsCurrent(r.Opener), "the premise: a newer lease is current, the opener's is not");
+            return r.Opener;
+        }, "stale, disposed or was handed off", true);
+        RunAbuse(abuse, Form.CapturedDelegate);
+    }
+
+    [Test]
+    public static void A_delegate_that_takes_a_lease_is_refused_when_a_caller_offers_a_stale_lease_of_an_earlier_grant_for_every_writer_operation_before_any_io() => RunAbuse(Abuses[3], Form.LeaseTakingDelegate);
+
+    [Test]
+    public static void A_delegate_that_takes_a_lease_is_refused_when_a_caller_that_has_none_passes_a_default_lease_for_every_writer_operation_before_any_io() => RunAbuse(Abuses[0], Form.LeaseTakingDelegate);
+
+    [Test]
+    public static void A_delegate_that_takes_a_lease_is_refused_when_a_caller_passes_the_lease_of_another_session_for_every_writer_operation_before_any_io() => RunAbuse(Abuses[1], Form.LeaseTakingDelegate);
 
     [Test]
     public static void Every_lease_taking_member_of_the_writer_types_has_an_abuse_case()

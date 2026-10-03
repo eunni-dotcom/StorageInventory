@@ -39,10 +39,103 @@ internal static class CompliantLambdaWithItsOwnLease
     };
 }
 
-/// <summary>A lambda that captures a lease inside a host that takes the lease.</summary>
+/// <summary>A lambda that captures a lease inside a host that takes the lease, and runs inside the host's call (it is built and
+/// invoked there; it is never stored, returned or handed to code that keeps it).</summary>
 internal static class CompliantLambdaCapturingAHostLease
 {
-    internal static Func<bool> Build(LibraryStore store, MutationLease lease) => () => store.CreateEmptyDatabase(lease);
+    internal static bool Build(LibraryStore store, MutationLease lease)
+    {
+        Func<bool> create = () => store.CreateEmptyDatabase(lease);
+        return create();
+    }
+}
+
+/// <summary>The accepted shape of the Library's verification: the host that takes the lease builds a query runner out of delegates that
+/// capture it and hands the runner to code that only queries through it (<c>SnapshotVerifier.Verify</c>), which neither stores nor returns
+/// it. The runner is also used by the host itself.</summary>
+internal static class CompliantRunnerForTheVerifier
+{
+    internal static string? Run(WriterConnection writer, MutationLease lease)
+    {
+        var runner = new DelegateQueryRunner(
+            (sql, parameters) => writer.Scalar(lease, sql, parameters),
+            (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+        _ = runner.Scalar(OpenSql.GetApplicationId);
+        return SnapshotVerifier.Verify(runner, 1, 1, 0, 0, 0, 0, true);
+    }
+}
+
+/// <summary>A carrier that keeps a delegate in one field and a name in another. Only the field the delegate was stored in carries it:
+/// handing the carrier to code that reads the name is not an escape of the delegate (the analysis is field-sensitive).</summary>
+internal sealed class FixtureHolder(Func<bool> action, string name)
+{
+    internal string Name => name;
+
+    internal Func<bool> Action => action;
+
+    internal bool Run() => action();
+}
+
+internal static class CompliantCarrierFieldSensitivity
+{
+    internal static string Run(LibraryStore store, MutationLease lease)
+    {
+        var holder = new FixtureHolder(() => store.CreateEmptyDatabase(lease), "n");
+        _ = holder.Run();
+        return Describe(holder);
+    }
+
+    private static string Describe(FixtureHolder holder) => holder.Name;
+}
+
+internal delegate bool FixtureApply(Func<bool> action);
+
+/// <summary>A closure handed to a delegate of a declared type, whose only target runs what it is given: the arguments of a delegate
+/// invocation are judged against every method ever bound to that delegate type.</summary>
+internal static class CompliantClosurePassedThroughADelegate
+{
+    internal static bool Run(LibraryStore store, MutationLease lease)
+    {
+        FixtureApply apply = action => action();
+        return apply(() => store.CreateEmptyDatabase(lease));
+    }
+}
+
+/// <summary>A closure handed to a first-party helper that only runs it: proven by the helper's own body (the delegate is the receiver of
+/// <c>Invoke</c> and nothing else), so the closure stays inside the host's call.</summary>
+internal static class CompliantSynchronousHelper
+{
+    internal static bool Run(LibraryStore store, MutationLease lease) => Apply(() => store.CreateEmptyDatabase(lease));
+
+    private static bool Apply(Func<bool> action) => action();
+}
+
+/// <summary>A lambda that takes a lease parameter is a unit of its own and borrows nothing, so it may be stored: whoever runs it must
+/// hold a lease to give it. The invocation, in a method that takes a lease, is accepted.</summary>
+internal static class CompliantLeaseTakingDelegate
+{
+    private static readonly Func<LibraryStore, MutationLease, bool> Create = static (store, lease) => store.CreateEmptyDatabase(lease);
+
+    internal static bool Run(LibraryStore store, MutationLease lease) => Create(store, lease);
+}
+
+/// <summary>Overloads that differ only by generic arity, all private and called only from the one method that takes a lease: accepted
+/// (each is a method of its own).</summary>
+internal static class CompliantGenericOverloads
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Make(path);
+        Make<int>(path);
+        Make<int, string>(path);
+    }
+
+    private static void Make(string path) => Directory.CreateDirectory(path);
+
+    private static void Make<T>(string path) => Directory.CreateDirectory(path + typeof(T).Name);
+
+    private static void Make<T, U>(string path) => Directory.CreateDirectory(path + typeof(T).Name + typeof(U).Name);
 }
 
 /// <summary>A local function with a lease parameter of its own: a unit of its own, accepted for its own calls.</summary>
@@ -96,6 +189,15 @@ internal static class CompliantHarmlessOverloadCaller
 internal static class CompliantReadOnly
 {
     internal static HeaderRead Header(LibraryStore store) => store.ReadHeader();
+}
+
+/// <summary>The one place C# lets overloads share a name AND parameters: conversion operators that differ by their return type. Their
+/// identity carries the return type, so they are two methods, not one (and not ambiguous).</summary>
+internal sealed class ConversionSource
+{
+    public static implicit operator int(ConversionSource source) => source is null ? 0 : 1;
+
+    public static implicit operator long(ConversionSource source) => source is null ? 0L : 2L;
 }
 
 // ================================================================ violations: each must be rejected, for a named rule
@@ -327,6 +429,385 @@ internal static class DirectFileSystemMutation
     internal static void Write(string path) => File.WriteAllText(path, "x");
 
     internal static void Info(string path) => new FileInfo(path).Delete();
+}
+
+// ================================================================ method identity: overloads that differ in generic arity or in shape (C4R-M05)
+
+/// <summary>Violation (A25a/not-private): the reviewer's evasion. A private generic helper is called from a method that takes a lease; an
+/// internal NON-generic overload with the same name and parameters, declared after it, runs the mutation without one. The earlier keys had
+/// no generic arity, so both shared one unit, which took its privacy and its callers from the first.</summary>
+internal static class ArityAliasNonGenericAfterGeneric
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Pick<int>(path);
+    }
+
+    private static void Pick<T>(string path) => _ = path.Length + typeof(T).Name.Length;
+
+    internal static void Pick(string path) => Directory.CreateDirectory(path);
+}
+
+/// <summary>Violation (A25a/not-private): the same with the order reversed: the private non-generic helper first, the lease-less generic
+/// overload after it.</summary>
+internal static class ArityAliasGenericAfterNonGeneric
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Pick(path);
+    }
+
+    private static void Pick(string path) => _ = path.Length;
+
+    internal static void Pick<T>(string path) => Directory.CreateDirectory(path + typeof(T).Name);
+}
+
+/// <summary>Violation (A25a/not-private): overloads that differ only by HOW MANY type parameters they have. The private one is
+/// called under a lease; the one with two type parameters is internal, lease-less and mutates.</summary>
+internal static class ArityDiffers
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Make<int>(path);
+    }
+
+    private static void Make<T>(string path) => _ = path.Length + typeof(T).Name.Length;
+
+    internal static void Make<T, U>(string path) => Directory.CreateDirectory(path + typeof(T).Name + typeof(U).Name);
+}
+
+/// <summary>Violation (A25a/caller-without-lease): a mutation primitive that is reachable ONLY through the generic overload. A lease-less
+/// method calls the private generic helper that creates the directory; the non-generic private helper next to it, called under a lease,
+/// does nothing. The two must not be judged as one.</summary>
+internal static class GenericPathOnly
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Helper(path);
+    }
+
+    private static void Helper(string path) => _ = path.Length;
+
+    internal static void Poke(string path) => Helper<int>(path);
+
+    private static void Helper<T>(string path) => Directory.CreateDirectory(path + typeof(T).Name);
+}
+
+/// <summary>Violation (A25a/not-private): same parameter COUNT, different types. The private overload takes a string, the lease-less
+/// internal one an int; the instantiations of one generic type differ only by their arguments; arrays differ only by their rank.</summary>
+internal static class ParameterTypesDiffer
+{
+    internal static void Run(string path, MutationLease lease)
+    {
+        _ = lease;
+        Do(path);
+        Do(new List<int>());
+        Do(new int[1, 1]);
+    }
+
+    private static void Do(string path) => _ = path.Length;
+
+    internal static void Do(int number) => Directory.CreateDirectory("x" + number);
+
+    private static void Do(List<int> numbers) => _ = numbers.Count;
+
+    internal static void Do(List<string> names) => Directory.CreateDirectory("x" + names.Count);
+
+    private static void Do(int[,] grid) => _ = grid.Length;
+
+    internal static void Do(int[,,] cube) => Directory.CreateDirectory("x" + cube.Length);
+}
+
+/// <summary>Violation (A25a/not-private): overloads that differ only by a by-reference parameter.</summary>
+internal static class ByReferenceDiffers
+{
+    internal static void Run(int number, MutationLease lease)
+    {
+        _ = lease;
+        Do(number);
+    }
+
+    private static void Do(int number) => _ = number;
+
+    internal static void Do(ref int number) => Directory.CreateDirectory("x" + number);
+}
+
+// ================================================================ delegates and closures: authority borrowed by capture must stay in the host (C4R-M05)
+
+/// <summary>Violation (A25a/closure-escapes): a closure that captures the lease is stored in an instance field by a method that takes the
+/// lease, and run later by a method that takes none (the reviewer's evasion, with the lease-taking host and the lease-less invoker).</summary>
+internal sealed class ClosureStoredInAField
+{
+    private Func<bool>? _retained;
+
+    internal void Arm(LibraryStore store, MutationLease lease) => _retained = () => store.CreateEmptyDatabase(lease);
+
+    internal bool Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the same through a static field.</summary>
+internal static class ClosureStoredInAStaticField
+{
+    private static Func<bool>? _retained;
+
+    internal static void Arm(LibraryStore store, MutationLease lease) => _retained = () => store.CreateEmptyDatabase(lease);
+
+    internal static bool Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is put in an array.</summary>
+internal static class ClosureStoredInAnArray
+{
+    internal static Func<bool>[] Arm(LibraryStore store, MutationLease lease) => [() => store.CreateEmptyDatabase(lease)];
+}
+
+/// <summary>Violation (A25a/closure-escapes): a lease-taking method returns the closure it built.</summary>
+internal static class ClosureReturned
+{
+    internal static Func<bool> Build(LibraryStore store, MutationLease lease) => () => store.CreateEmptyDatabase(lease);
+}
+
+/// <summary>Violation (A25a/not-private and A25a/closure-escapes): a lease-less method returns a closure that runs a mutation with a lease
+/// it kept in a field.</summary>
+internal sealed class ClosureReturnedByALeaselessMethod(LibraryStore store, MutationLease lease)
+{
+    internal Func<bool> Build() => () => store.CreateEmptyDatabase(lease);
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is handed to a lease-less helper that keeps it in a field.</summary>
+internal sealed class ClosurePassedToAMethodThatKeepsIt
+{
+    private Func<bool>? _kept;
+
+    internal void Run(LibraryStore store, MutationLease lease) => Keep(() => store.CreateEmptyDatabase(lease));
+
+    private void Keep(Func<bool> action) => _kept = action;
+
+    internal bool Later() => _kept!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is handed to a helper that returns it, so its caller could keep it.</summary>
+internal static class ClosurePassedToAMethodThatReturnsIt
+{
+    internal static bool Run(LibraryStore store, MutationLease lease) => Echo(() => store.CreateEmptyDatabase(lease)) is not null;
+
+    private static Func<bool> Echo(Func<bool> action) => action;
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is handed to code the audit cannot read (the thread pool), which runs it when it
+/// likes.</summary>
+internal static class ClosurePassedToTheThreadPool
+{
+    internal static Task<bool> Run(LibraryStore store, MutationLease lease) => Task.Run(() => store.CreateEmptyDatabase(lease));
+}
+
+/// <summary>Violation (A25a/closure-escapes): a local function converted to a delegate, which is stored.</summary>
+internal sealed class LocalFunctionStoredAsADelegate
+{
+    private Func<bool>? _retained;
+
+    internal void Arm(LibraryStore store, MutationLease lease)
+    {
+        _retained = Create;
+
+        bool Create() => store.CreateEmptyDatabase(lease);
+    }
+
+    internal bool Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the carrier is handed to code that returns the field the delegate was stored in.</summary>
+internal static class CarrierDelegateReturned
+{
+    internal static bool Run(LibraryStore store, MutationLease lease) => Leak(new FixtureHolder(() => store.CreateEmptyDatabase(lease), "n")) is not null;
+
+    private static Func<bool> Leak(FixtureHolder holder) => holder.Action;
+}
+
+internal delegate void FixtureKeep(Func<bool> action);
+
+/// <summary>Violation (A25a/closure-escapes): the closure is handed to a delegate whose target keeps what it is given.</summary>
+internal sealed class ClosurePassedThroughADelegateThatKeepsIt
+{
+    private Func<bool>? _kept;
+
+    internal void Run(LibraryStore store, MutationLease lease)
+    {
+        FixtureKeep keep = action => _kept = action;
+        keep(() => store.CreateEmptyDatabase(lease));
+    }
+
+    internal bool Later() => _kept!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is stored through a property setter, whose body keeps it in the backing field.</summary>
+internal sealed class ClosureStoredThroughAProperty
+{
+    internal Func<bool>? Retained { get; set; }
+
+    internal void Arm(LibraryStore store, MutationLease lease) => Retained = () => store.CreateEmptyDatabase(lease);
+
+    internal bool Poke() => Retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes, failing closed): the closure is run through <c>DynamicInvoke</c>, a call into code the audit
+/// cannot read. Running it there would be harmless; the audit cannot tell, so it refuses (use <c>Invoke</c>).</summary>
+internal static class ClosureRunByDynamicInvoke
+{
+    internal static object? Run(LibraryStore store, MutationLease lease)
+    {
+        Func<bool> create = () => store.CreateEmptyDatabase(lease);
+        return create.DynamicInvoke();
+    }
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is subscribed to an event, which keeps it.</summary>
+internal sealed class ClosureSubscribedToAnEvent
+{
+    internal event Func<bool>? Fired;
+
+    internal void Arm(LibraryStore store, MutationLease lease) => Fired += () => store.CreateEmptyDatabase(lease);
+
+    internal bool Raise() => Fired?.Invoke() ?? false;
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is captured by a second closure, which is stored.</summary>
+internal sealed class ClosureCapturedByAnotherClosure
+{
+    private Func<bool>? _outer;
+
+    internal void Arm(LibraryStore store, MutationLease lease)
+    {
+        Func<bool> inner = () => store.CreateEmptyDatabase(lease);
+        _outer = () => inner();
+    }
+
+    internal bool Poke() => _outer!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): an ASYNC lambda that captures the lease, stored. Its work is in the <c>MoveNext</c> of a
+/// state machine the compiler made out of it, so the method bound to the delegate is only the stub that starts it.</summary>
+internal sealed class AsyncClosureStoredInAField
+{
+    private Func<Task<bool>>? _retained;
+
+    internal void Arm(LibraryStore store, MutationLease lease) => _retained = async () =>
+    {
+        await Task.Yield();
+        return store.CreateEmptyDatabase(lease);
+    };
+
+    internal Task<bool> Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): an iterator that holds the lease and creates the database when somebody enumerates it, which
+/// can be after the method that took the lease has returned.</summary>
+internal static class IteratorHoldingALease
+{
+    internal static IEnumerable<bool> Run(LibraryStore store, MutationLease lease)
+    {
+        yield return store.CreateEmptyDatabase(lease);
+    }
+}
+
+/// <summary>Violation (A25a/closure-escapes): the closure is kept across an <c>await</c>, so it lives in the state machine's field.</summary>
+internal static class ClosureHeldAcrossAnAwait
+{
+    internal static async Task<bool> Run(LibraryStore store, MutationLease lease)
+    {
+        Func<bool> create = () => store.CreateEmptyDatabase(lease);
+        await Task.Yield();
+        return create();
+    }
+}
+
+/// <summary>Violation (A25a/closure-escapes): a private lease-less host (called only by a method that takes the lease, so the frozen
+/// rule accepts it) builds a closure that uses a lease kept in a field, and stores it.</summary>
+internal sealed class ClosureStoredByAPrivateHelper(LibraryStore store, MutationLease lease)
+{
+    private Func<bool>? _retained;
+
+    internal void Run(MutationLease own)
+    {
+        _ = own;
+        Arm();
+    }
+
+    private void Arm() => _retained = () => store.CreateEmptyDatabase(lease);
+
+    internal bool Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): a method group over a PRIVATE helper that reaches a mutation (the helper's authority comes
+/// from the lease-taking method that calls it, and building the delegate counts as that call; binding it to a delegate that is stored
+/// lets any caller run it).</summary>
+internal sealed class MethodGroupOfAPrivateHelperStored
+{
+    private Action? _retained;
+
+    internal void Run(MutationLease lease)
+    {
+        _ = lease;
+        Create();
+        _retained = Create;
+    }
+
+    private void Create() => Directory.CreateDirectory("armed");
+
+    internal void Poke() => _retained!();
+}
+
+/// <summary>Violation (A25a/closure-escapes): the Library's own runner, built from closures that capture the lease, is kept in a field
+/// instead of being used inside the host and handed to the verifier.</summary>
+internal sealed class RunnerRetainedInAField
+{
+    private DelegateQueryRunner? _runner;
+
+    internal void Arm(WriterConnection writer, MutationLease lease) => _runner = new DelegateQueryRunner(
+        (sql, parameters) => writer.Scalar(lease, sql, parameters),
+        (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+
+    internal object? Poke() => _runner!.Scalar(OpenSql.GetApplicationId);
+}
+
+/// <summary>Violation (A25a/closure-escapes): the runner is returned.</summary>
+internal static class RunnerReturned
+{
+    internal static IQueryRunner Build(WriterConnection writer, MutationLease lease) => new DelegateQueryRunner(
+        (sql, parameters) => writer.Scalar(lease, sql, parameters),
+        (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+}
+
+/// <summary>Violation (A25a/closure-escapes): the runner is handed to a first-party method that stores it (a verifier that keeps its
+/// query runner), so the closures outlive the call.</summary>
+internal sealed class RunnerHandedToAKeeper
+{
+    private IQueryRunner? _kept;
+
+    internal string? Run(WriterConnection writer, MutationLease lease)
+    {
+        var runner = new DelegateQueryRunner(
+            (sql, parameters) => writer.Scalar(lease, sql, parameters),
+            (sql, each, parameters) => writer.Rows(lease, sql, each, parameters));
+        return Verify(runner);
+    }
+
+    private string? Verify(IQueryRunner runner)
+    {
+        _kept = runner;
+        return SnapshotVerifier.Verify(runner, 1, 1, 0, 0, 0, 0, true);
+    }
+}
+
+/// <summary>Violation (A25a/not-private): a delegate that takes a lease, invoked by a method that has none, with a lease it kept in a
+/// field. (The invocation of a delegate is not a call the audit can resolve, so it counts as a call to a method that takes a lease.)</summary>
+internal sealed class RetainedLeaseTakingDelegate(Func<LibraryStore, MutationLease, bool> operation, LibraryStore store, MutationLease lease)
+{
+    internal bool Poke() => operation(store, lease);
 }
 
 // ================================================================ part (c)

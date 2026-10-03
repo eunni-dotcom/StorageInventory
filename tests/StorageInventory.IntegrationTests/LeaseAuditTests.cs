@@ -106,7 +106,9 @@ public static class LeaseAuditTests
             var found = Real(allow: everything.Where(e => e != entry));
             Assert.True(found.Any(v => v.Method == entry), "the allow-list entry is not needed: " + entry);
             // a method that dispatches to the entry (an IQueryRunner consumer, with ReaderConnection's Scalar and Rows) is rejected with it, and only that
-            Assert.True(found.All(v => v.Method == entry || v.Detail.Contains("(dispatch)", StringComparison.Ordinal) && v.Detail.Contains(entry, StringComparison.Ordinal)),
+            // (and a closure that calls the entry borrows authority once the entry is no longer read-only: the closure rule judges it too)
+            Assert.True(found.All(v => v.Method == entry || v.Rule == IlAudit.RuleClosureEscapes && v.Detail.Contains("reaches a mutation", StringComparison.Ordinal)
+                    || v.Detail.Contains("(dispatch)", StringComparison.Ordinal) && v.Detail.Contains(entry, StringComparison.Ordinal)),
                 "removing one entry rejects more than that method and its dispatchers: " + entry + " -> " + string.Join(" | ", found));
         }
         // nothing that runs a command on the WRITER is allow-listed: the writer's members all take the lease (A-25 d)
@@ -248,10 +250,50 @@ public static class LeaseAuditTests
         new("Cases::BeginTransactionNoLease(", IlAudit.RuleNotPrivate, "SqliteConnection::BeginTransaction"),
         new("Cases::StepNoLease(", IlAudit.RuleNotPrivate, "raw::sqlite3_step"),
         new("LeaseBoundCommandRunner::Run(", IlAudit.RuleNotPrivate, "SqliteCommand::ExecuteNonQuery"),
+
+        // C4R-M05 (1): overloads that differ in generic arity or in shape are different methods, each judged on its own
+        new("ArityAliasNonGenericAfterGeneric::Pick(String)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("ArityAliasGenericAfterNonGeneric::Pick`1(String)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("ArityDiffers::Make`2(String)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("GenericPathOnly::Helper`1(String)", IlAudit.RuleCallerWithoutLease, "GenericPathOnly::Poke("),
+        new("ParameterTypesDiffer::Do(Int32)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("ParameterTypesDiffer::Do(System.Collections.Generic.List`1<String>)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("ParameterTypesDiffer::Do(Int32[,,])", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("ByReferenceDiffers::Do(Int32&)", IlAudit.RuleNotPrivate, "Directory::CreateDirectory"),
+        new("Cases::Dup(String)", IlAudit.RuleAmbiguousMethod, "2 methods share this identity"),
+        new("Cases::Twin(String)", IlAudit.RuleAmbiguousMethod, "2 methods share this identity"),
+
+        // C4R-M05 (2): a delegate that borrows its host's authority must stay inside the host's call
+        new("ClosureStoredInAField::Arm(", IlAudit.RuleClosureEscapes, "the field StorageInventory.IntegrationTests.LeaseAuditFixtures.ClosureStoredInAField::_retained"),
+        new("ClosureStoredInAStaticField::Arm(", IlAudit.RuleClosureEscapes, "the static field StorageInventory.IntegrationTests.LeaseAuditFixtures.ClosureStoredInAStaticField::_retained"),
+        new("ClosureStoredInAnArray::Arm(", IlAudit.RuleClosureEscapes, "an array element"),
+        new("ClosureReturned::Build(", IlAudit.RuleClosureEscapes, "is returned"),
+        new("ClosureReturnedByALeaselessMethod::Build(", IlAudit.RuleClosureEscapes, "is returned"),
+        new("ClosureReturnedByALeaselessMethod::Build(", IlAudit.RuleNotPrivate, "CreateEmptyDatabase"),
+        new("ClosurePassedToAMethodThatKeepsIt::Run(", IlAudit.RuleClosureEscapes, "ClosurePassedToAMethodThatKeepsIt::Keep (parameter 1), which is stored in the field"),
+        new("ClosurePassedToAMethodThatReturnsIt::Run(", IlAudit.RuleClosureEscapes, "ClosurePassedToAMethodThatReturnsIt::Echo (parameter 0), which is returned"),
+        new("ClosurePassedToTheThreadPool::Run(", IlAudit.RuleClosureEscapes, "System.Threading.Tasks.Task::Run, which the audit cannot read"),
+        new("LocalFunctionStoredAsADelegate::Arm(", IlAudit.RuleClosureEscapes, "the local function"),
+        new("ClosureSubscribedToAnEvent::Arm(", IlAudit.RuleClosureEscapes, "add_Fired"),
+        new("ClosureStoredThroughAProperty::Arm(", IlAudit.RuleClosureEscapes, "set_Retained (parameter 1), which is stored in the field"),
+        new("ClosureRunByDynamicInvoke::Run(", IlAudit.RuleClosureEscapes, "System.Delegate::DynamicInvoke, which the audit cannot read"),
+        new("ClosureCapturedByAnotherClosure::Arm(", IlAudit.RuleClosureEscapes, "is captured by another closure"),
+        new("ClosureHeldAcrossAnAwait::Run(", IlAudit.RuleClosureEscapes, "is kept across an await or a yield"),
+        new("AsyncClosureStoredInAField::Arm(", IlAudit.RuleClosureEscapes, "AsyncClosureStoredInAField::_retained"),
+        new("CarrierDelegateReturned::Run(", IlAudit.RuleClosureEscapes, "FixtureHolder::get_Action (parameter 0), which is returned"),
+        new("ClosurePassedThroughADelegateThatKeepsIt::Run(", IlAudit.RuleClosureEscapes, "FixtureKeep::Invoke, which can run"),
+        new("IteratorHoldingALease::Run(", IlAudit.RuleClosureEscapes, "the iterator"),
+        new("ClosureStoredByAPrivateHelper::Arm(", IlAudit.RuleClosureEscapes, "ClosureStoredByAPrivateHelper::_retained"),
+        new("MethodGroupOfAPrivateHelperStored::Run(", IlAudit.RuleClosureEscapes, "the method group"),
+        new("RunnerRetainedInAField::Arm(", IlAudit.RuleClosureEscapes, "RunnerRetainedInAField::_runner"),
+        new("RunnerReturned::Build(", IlAudit.RuleClosureEscapes, "is returned"),
+        new("RunnerHandedToAKeeper::Run(", IlAudit.RuleClosureEscapes, "RunnerHandedToAKeeper::Verify (parameter 1), which is stored in the field"),
+        new("RetainedLeaseTakingDelegate::Poke(", IlAudit.RuleNotPrivate, "a delegate that takes a lease"),
+        new("Closures::Unresolved(", IlAudit.RuleUnresolvedFlow, "evaluation stack"),
     ];
 
     private static string Qualified(string method) =>
-        (method.StartsWith("Cases::", StringComparison.Ordinal) || method.StartsWith("LeaseBoundCommandRunner::", StringComparison.Ordinal) ? SyntheticIl.Namespace : Ns) + method;
+        (method.StartsWith("Cases::", StringComparison.Ordinal) || method.StartsWith("LeaseBoundCommandRunner::", StringComparison.Ordinal) || method.StartsWith("Closures::", StringComparison.Ordinal) ? SyntheticIl.Namespace : Ns) + method;
 
     private static bool Matches(IlAudit.Violation v, Expect e) => v.Method.Contains(Qualified(e.Method), StringComparison.Ordinal);
 
@@ -284,6 +326,9 @@ public static class LeaseAuditTests
             "CompliantLambdaCapturingAHostLease::Build(", "CompliantLocalFunction::Run(", "CompliantAsync::Delete(", "CompliantLeasedImplementation::Run(", "CompliantLeasedDispatch::Use(",
             "OverloadHiding::Make(String,StorageInventory.Library.MutationLease)", "OverloadedCallee::Do(", "CompliantHarmlessOverloadCaller::Harmless(", "CompliantReadOnly::Header(", "InspectsAfterTheLock::Derive(",
             "Cases::CalliWithLease(", "Cases::CommandWithLease(",
+            "CompliantRunnerForTheVerifier::Run(", "CompliantSynchronousHelper::Run(", "CompliantSynchronousHelper::Apply(", "CompliantLeaseTakingDelegate::Run(", "CompliantGenericOverloads::Run(",
+            "CompliantGenericOverloads::Make(String)", "CompliantGenericOverloads::Make`1(String)", "CompliantGenericOverloads::Make`2(String)", "Closures::InvokedInTheHost(", "ConversionSource::op_Implicit(",
+            "CompliantCarrierFieldSensitivity::Run(", "CompliantCarrierFieldSensitivity::Describe(", "CompliantClosurePassedThroughADelegate::Run(",
         ];
         foreach (var method in accepted)
         {
@@ -332,6 +377,125 @@ public static class LeaseAuditTests
         Assert.True(Has(onlyTransitive, "RetainedLease::Create(") && Has(onlyTransitive, "ProducerWithoutAParameter::Run("), "...and nothing else");
         // and even the relaxed audit rejects a plain lease-less wrapper
         Assert.True(Has(relaxed, "LeaselessPublicWrapper::Make(") && Has(relaxed, "DirectFileSystemMutation::Rename(") && Has(relaxed, "OverloadHiding::Make(String)"), "even the relaxed audit rejects a plain lease-less wrapper");
+    }
+
+    // ================================================================ A-25 (a): method identity and closures (C4R-M05)
+
+    [Test]
+    public static void A_25_the_real_assemblies_have_unambiguous_methods_and_closures_that_stay_in_their_hosts()
+    {
+        var model = FirstParty.Value;
+        var leased = IlAudit.LeasedOperations(model);
+        var allow = new HashSet<string>(IlAudit.ReadOnlyAllowList.Concat(V1ReportOutput), StringComparer.Ordinal);
+
+        // identity: no two non-generated methods of the four assemblies share a key, and generic methods are seen with their arity
+        Assert.Equal(0, model.AmbiguousKeys.Count, "methods that share one identity: " + string.Join("; ", model.AmbiguousKeys.Select(a => a.Key)));
+        var generic = model.Physicals.Where(p => !p.IsGenerated && p.GenericArity > 0).Select(p => p.Key).ToList();
+        Assert.True(generic.Count >= 8 && generic.All(k => k.Contains('`', StringComparison.Ordinal)), "generic methods carry their arity in the key: " + string.Join(", ", generic));
+        foreach (var expected in new[] { "StorageInventory.Library.LibraryInterlock::RunStartup`1(", "StorageInventory.Library.LibrarySession::ReadAsync`1(", "StorageInventory.Library.LibrarySession::Read`1(" })
+        {
+            Assert.True(generic.Any(k => k.StartsWith(expected, StringComparison.Ordinal)), "the analysis sees " + expected);
+        }
+
+        // closures: exactly four delegates in the product borrow their host's authority (the Scalar and Rows closures of the runner built
+        // by the importer's verification, and of the one built by the open-time identity check); the analysis follows them into everything
+        // that receives them and finds no escape
+        var closures = IlClosures.AuthorityClosures(model, leased, allow).Select(c => $"{c.Host.Type}::{c.Host.Name} -> {c.Closure.Name}").Distinct().Order(StringComparer.Ordinal).ToList();
+        Assert.SequenceEqual(
+            ["StorageInventory.Library.LibrarySession::CheckIdentity -> <CheckIdentity>b__0", "StorageInventory.Library.LibrarySession::CheckIdentity -> <CheckIdentity>b__1",
+             "StorageInventory.Library.SnapshotImporter::Execute -> <Execute>b__0", "StorageInventory.Library.SnapshotImporter::Execute -> <Execute>b__1"],
+            closures, "the delegates of the product that borrow authority");
+        var escapes = IlClosures.Violations(model, _ => true, leased, allow);
+        Assert.Equal(0, escapes.Count, string.Join(Environment.NewLine, escapes));
+
+        // the interlock is the only code that invokes a delegate that takes a lease (it hands over the lease it has just granted)
+        var invokers = model.Units.Where(u => u.Calls.Any(c => IlAudit.InvokesLeaseTakingDelegate(model, c))).Select(u => u.Type + "::" + u.Name).Distinct().Order(StringComparer.Ordinal).ToList();
+        Assert.SequenceEqual(["StorageInventory.Library.LibraryInterlock::RunStartup", "StorageInventory.Library.LibraryInterlock::TryRunMutation"], invokers, "who invokes a delegate that takes a lease");
+    }
+
+    [Test]
+    public static void A_25_the_closure_analysis_reads_every_method_body_of_the_product()
+    {
+        // The escape analysis follows a value through method bodies; one it cannot read to the end (a stack it cannot reconcile, an
+        // instruction it does not model) would make it blind exactly there. Every body of the four assemblies is simulated, plain and with
+        // its first argument carrying a delegate, and none may be unreadable.
+        var model = FirstParty.Value;
+        var leased = IlAudit.LeasedOperations(model);
+        var allow = new HashSet<string>(IlAudit.ReadOnlyAllowList.Concat(V1ReportOutput), StringComparer.Ordinal);
+        Assert.True(model.Physicals.Count(p => p.Decoded && p.Instructions.Count > 0) > 3000, "the analysis sees the bodies of the product");
+        Assert.True(model.Physicals.Where(p => p.Decoded).All(p => p.Instructions.Count > 0), "every body was decoded to instructions");
+        var plain = IlClosures.UnreadableBodies(model, leased, allow, _ => true);
+        Assert.Equal(0, plain.Count, string.Join(Environment.NewLine, plain.Take(20)));
+        var tainted = IlClosures.UnreadableBodies(model, leased, allow, _ => true, taintFirstArgument: true);
+        Assert.Equal(0, tainted.Count, string.Join(Environment.NewLine, tainted.Take(20)));
+    }
+
+    [Test]
+    public static void A_25_overloads_that_differ_only_by_generic_arity_or_shape_are_different_methods()
+    {
+        var model = Fixtures.Value;
+        // the earlier key: no generic arity, no modifiers, and every multi-dimensional array written "[,]"
+        string OldKey(IlAudit.Physical p) => $"{p.Type}::{p.Name}({string.Join(",", p.ParameterTypes.Select(t => Regex.Replace(IlAudit.Unmodified(t), @"\[(,+|\*)\]", "[,]")))})";
+
+        // the earlier key (declaring type, name, parameters) could not tell these apart: the fixtures are real aliases of the earlier audit
+        var aliases = model.Physicals.Where(p => !p.IsGenerated && p.Type.StartsWith(Ns, StringComparison.Ordinal)).GroupBy(OldKey).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        foreach (var expected in new[] { "ArityAliasNonGenericAfterGeneric::Pick(String)", "ArityAliasGenericAfterNonGeneric::Pick(String)", "ArityDiffers::Make(String)", "GenericPathOnly::Helper(String)", "ParameterTypesDiffer::Do(Int32[,])" })
+        {
+            Assert.True(aliases.Any(a => a.EndsWith(expected, StringComparison.Ordinal)), $"under the earlier key, {expected} is shared by two methods");
+        }
+
+        // now each is a unit of its own, with its own privacy and callers
+        IlAudit.Unit Single(string type, string name, int arity) => model.Units.Single(u => u.Type == Ns + type && u.Name == name && u.Entry.GenericArity == arity);
+        Assert.True(Single("ArityAliasNonGenericAfterGeneric", "Pick", 1).IsPrivate && !Single("ArityAliasNonGenericAfterGeneric", "Pick", 0).IsPrivate, "the private generic helper and the internal non-generic overload");
+        Assert.True(!Single("ArityAliasGenericAfterNonGeneric", "Pick", 1).IsPrivate && Single("ArityAliasGenericAfterNonGeneric", "Pick", 0).IsPrivate, "...and in the other order");
+        Assert.True(Single("ArityDiffers", "Make", 1).IsPrivate && !Single("ArityDiffers", "Make", 2).IsPrivate, "arity 1 and arity 2");
+        Assert.True(Single("GenericPathOnly", "Helper", 0).Calls.All(c => !IlAudit.IsPrimitive(c)) && Single("GenericPathOnly", "Helper", 1).Calls.Any(IlAudit.IsPrimitive), "the primitive is reached only through the generic overload");
+        Assert.Equal(6, model.Units.Count(u => u.Type == Ns + "ParameterTypesDiffer" && u.Name == "Do"), "six overloads of Do: a string, an int, two instantiations of List, two ranks of array");
+        Assert.True(model.Methods.ContainsKey(Ns + "ParameterTypesDiffer::Do(Int32[,])") && model.Methods.ContainsKey(Ns + "ParameterTypesDiffer::Do(Int32[,,])"), "array rank is part of the identity");
+        Assert.True(model.Methods.ContainsKey(Ns + "ByReferenceDiffers::Do(Int32&)") && model.Methods.ContainsKey(Ns + "ByReferenceDiffers::Do(Int32)"), "by-reference is part of the identity");
+
+        // the generic arity is part of the key of the method and of every call to it (a call through a method specification)
+        Assert.True(IlAudit.MethodKey("T", "M", 0, ["String"], "Void") != IlAudit.MethodKey("T", "M", 1, ["String"], "Void"), "arity 0 and 1");
+        Assert.True(IlAudit.MethodKey("T", "M", 1, ["String"], "Void") != IlAudit.MethodKey("T", "M", 2, ["String"], "Void"), "arity 1 and 2");
+        var caller = model.Units.Single(u => u.Type == Ns + "ArityAliasNonGenericAfterGeneric" && u.Name == "Run");
+        Assert.True(caller.Calls.Any(c => c.Name == "Pick" && c.GenericArity == 1 && c.Key.EndsWith("Pick`1(String)", StringComparison.Ordinal)), "the call Pick<int>(path) names the generic method");
+
+        // conversion operators may share name and parameters in C#, and differ by return type: two methods, not ambiguous
+        var conversions = model.Units.Where(u => u.Type == Ns + "ConversionSource" && u.Name == "op_Implicit").Select(u => u.Key).Order(StringComparer.Ordinal).ToList();
+        Assert.SequenceEqual([Ns + "ConversionSource::op_Implicit(" + Ns + "ConversionSource)->Int32", Ns + "ConversionSource::op_Implicit(" + Ns + "ConversionSource)->Int64"], conversions, "conversion operators carry their return type");
+        Assert.False(model.AmbiguousKeys.Any(a => a.Key.Contains("ConversionSource", StringComparison.Ordinal)), "and are not ambiguous");
+
+        // two non-generated methods with one identity (different return types; a static and an instance method): ambiguous, and rejected
+        var ambiguous = model.AmbiguousKeys.Where(a => a.Key.StartsWith("Synth.Cases::", StringComparison.Ordinal)).Select(a => $"{a.Key}={a.Methods.Count}").Order(StringComparer.Ordinal).ToList();
+        Assert.SequenceEqual(["Synth.Cases::Dup(String)=2", "Synth.Cases::Twin(String)=2"], ambiguous, "ambiguous identities of the synthetic fixtures");
+        var violations = IlAudit.MutationViolations(model, InFixtures, IlAudit.LeasedOperations(model));
+        Assert.Equal(2, violations.Count(v => v.Rule == IlAudit.RuleAmbiguousMethod), "each ambiguous key is rejected once");
+    }
+
+    [Test]
+    public static void A_25_the_frozen_wording_alone_accepted_what_the_closure_rule_rejects()
+    {
+        // The closure fixtures are accepted by every rule that existed before C4R-M05 (the host takes a lease, or is private and called by
+        // one; the invocation of a delegate is not a call the audit resolves). Only the closure rule rejects them: it is load-bearing.
+        var model = Fixtures.Value;
+        var violations = IlAudit.MutationViolations(model, InFixtures, IlAudit.LeasedOperations(model));
+        string[] hosts =
+        [
+            "ClosureStoredInAField::Arm(", "ClosureStoredInAStaticField::Arm(", "ClosureStoredInAnArray::Arm(", "ClosureReturned::Build(", "ClosurePassedToAMethodThatKeepsIt::Run(",
+            "ClosurePassedToAMethodThatReturnsIt::Run(", "ClosurePassedToTheThreadPool::Run(", "LocalFunctionStoredAsADelegate::Arm(", "ClosureSubscribedToAnEvent::Arm(",
+            "ClosureCapturedByAnotherClosure::Arm(", "ClosureHeldAcrossAnAwait::Run(", "ClosureStoredByAPrivateHelper::Arm(", "MethodGroupOfAPrivateHelperStored::Run(", "AsyncClosureStoredInAField::Arm(", "IteratorHoldingALease::Run(", "ClosureStoredThroughAProperty::Arm(", "ClosureRunByDynamicInvoke::Run(", "CarrierDelegateReturned::Run(", "ClosurePassedThroughADelegateThatKeepsIt::Run(",
+            "RunnerRetainedInAField::Arm(", "RunnerReturned::Build(", "RunnerHandedToAKeeper::Run(",
+        ];
+        foreach (var host in hosts)
+        {
+            var mine = violations.Where(v => v.Method.Contains(Ns + host, StringComparison.Ordinal)).ToList();
+            Assert.True(mine.Count > 0 && mine.All(v => v.Rule == IlAudit.RuleClosureEscapes), $"{host}: rejected only by the closure rule: " + string.Join(" | ", mine));
+        }
+        // the lease-less invokers of those stored delegates are accepted: nothing resolves the invocation of a delegate (the escape is the defect)
+        foreach (var poke in new[] { "ClosureStoredInAField::Poke(", "ClosureStoredInAStaticField::Poke(", "LocalFunctionStoredAsADelegate::Poke(", "ClosureCapturedByAnotherClosure::Poke(", "MethodGroupOfAPrivateHelperStored::Poke(", "RunnerRetainedInAField::Poke(", "ClosurePassedToAMethodThatKeepsIt::Later(" })
+        {
+            Assert.False(violations.Any(v => v.Method.Contains(Ns + poke, StringComparison.Ordinal)), $"{poke}: the invoker itself is not rejected");
+        }
     }
 
     // ================================================================ A-25 (c)
@@ -472,7 +636,8 @@ public static class LeaseAuditTests
         foreach (var touch in TouchingCalls) Assert.True(model.Units.Any(u => $"{u.Type}::{u.Name}" == touch), "LibraryStore has " + touch);
         Assert.True(model.Units.Any(u => $"{u.Type}::{u.Name}" == policy.Acquire), "LibraryStore has " + policy.Acquire);
         foreach (var entry in RuntimeGuardedEntries) Assert.True(model.Units.Any(u => $"{u.Type}::{u.Name}" == entry), "the declared entry exists: " + entry);
-        var requiring = IlAudit.LockRequiring(model, InLibrary, policy).Select(k => k[..k.IndexOf('(', StringComparison.Ordinal)]).Distinct().Order(StringComparer.Ordinal).ToList();
+        // (a method key carries its generic arity, "Read`1"; the policy names methods by type and name)
+        var requiring = IlAudit.LockRequiring(model, InLibrary, policy).Select(k => Regex.Replace(k[..k.IndexOf('(', StringComparison.Ordinal)], @"`\d+$", "")).Distinct().Order(StringComparer.Ordinal).ToList();
         Assert.SequenceEqual([.. RuntimeGuardedEntries.Order(StringComparer.Ordinal)], requiring, "the entries that touch a member without taking the lock are exactly the declared ones");
 
         // the two methods the review names: the lock call comes first in IL, and every member call follows it

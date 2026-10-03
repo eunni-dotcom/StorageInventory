@@ -710,6 +710,8 @@ public static class LibrarySecurityAuditTests
             ("A-22", nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back), nameof(A_22_pragmas_are_set_only_at_open_from_constants_and_read_back)),
             ("SEC-15", nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path), nameof(SEC_15_data_read_from_the_Library_is_never_used_as_a_path)),
             ("A-25 (a)", nameof(LeaseAuditTests.A_25_every_mutation_in_every_first_party_assembly_needs_a_lease_part_a), nameof(LeaseAuditTests.A_25_part_a_rejects_every_violating_fixture_for_its_specific_rule)),
+            ("A-25 (a) method identity", nameof(LeaseAuditTests.A_25_the_real_assemblies_have_unambiguous_methods_and_closures_that_stay_in_their_hosts), nameof(LeaseAuditTests.A_25_overloads_that_differ_only_by_generic_arity_or_shape_are_different_methods)),
+            ("A-25 (a) closures", nameof(LeaseAuditTests.A_25_the_real_assemblies_have_unambiguous_methods_and_closures_that_stay_in_their_hosts), nameof(LeaseAuditTests.A_25_the_frozen_wording_alone_accepted_what_the_closure_rule_rejects)),
             ("A-25 (c)", nameof(LeaseAuditTests.A_25_part_c_leases_are_constructed_only_by_the_interlock_and_no_public_member_exposes_one), nameof(LeaseAuditTests.A_25_part_c_rejects_forged_leases_and_public_exposure)),
             ("C4-M17 (file system)", nameof(LeaseAuditTests.C4_M17_only_LibraryStore_touches_the_file_system), nameof(LeaseAuditTests.C4_M17_file_system_rule_rejects_a_call_outside_LibraryStore)),
             ("C4-M17 (lock first)", nameof(LeaseAuditTests.C4_M17_every_member_access_follows_the_writer_lock), nameof(LeaseAuditTests.C4_M17_lock_first_rule_rejects_an_inspection_before_the_lock)),
