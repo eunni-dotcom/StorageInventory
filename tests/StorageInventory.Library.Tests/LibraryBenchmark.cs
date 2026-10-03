@@ -29,6 +29,7 @@ internal static class LibraryBenchmark
         if (args is ["child", ..]) return Child(args[1..]);
         var which = args.Length > 0 ? args[0] : "quick";
         if (which == "micro") return EngineMicroBenchmark.Run();
+        if (which == "gate") return PerfGate.GateBenchmark.Run(args[1..]);   // TEST-P1's gate tooling (tests/perf/README.md)
         var output = args.Length > 1 ? args[1] : null;
         return Orchestrate(which, output);
     }
