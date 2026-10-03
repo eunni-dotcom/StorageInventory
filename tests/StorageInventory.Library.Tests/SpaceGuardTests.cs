@@ -150,8 +150,8 @@ public static class SpaceGuardTests
         Assert.Equal(0L, checks[0].RowsInserted, "nothing inserted at BEGIN");
         var rows = checks.Where(c => c.Kind == SpaceCheckKind.Rows).ToList();
         var observationRows = result.Files + result.Folders + result.ScanErrors + Convert.ToInt64(session.Read(r => r.Long("SELECT count(*) FROM snapshot_extension_total")));
-        Assert.Equal(observationRows / SnapshotImporter.GuardInterval, (long)rows.Count, "a row check after every 4,096 inserted observation rows");
-        for (var i = 0; i < rows.Count; i++) Assert.True(rows[i].RowsInserted >= (i + 1) * (long)SnapshotImporter.GuardInterval, $"row check {i + 1} came after at least {(i + 1) * SnapshotImporter.GuardInterval} rows");
+        Assert.Equal(observationRows / 4096, (long)rows.Count, "a row check after every 4,096 inserted observation rows (IMP-11, CAN-01d)");
+        for (var i = 0; i < rows.Count; i++) Assert.True(rows[i].RowsInserted >= (i + 1) * 4096L, $"row check {i + 1} came after at least {(i + 1) * 4096} rows");
         Assert.Equal(observationRows, checks[^1].RowsInserted, "the final check came after every row");
         foreach (var c in checks)
         {

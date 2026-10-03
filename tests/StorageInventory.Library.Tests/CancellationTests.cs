@@ -160,10 +160,13 @@ public static class CancellationTests
     {
         var world = World.Create();
         var session = world.CreatedSession();
-        var result = Imports.Synthetic(session, new SyntheticSnapshot(1500, seed: 1), "run-1");
+        var result = Imports.Synthetic(session, new SyntheticSnapshot(2500, seed: 1), "run-1");
         var checks = result.Checks!;
-        Assert.True(checks.SpaceChecks >= 3, "at least BEGIN, one row check and the final check");
+        Assert.True(checks.SpaceChecks >= 4, "at least BEGIN, two row checks and the final check");
         Assert.True(checks.TokenObservations >= checks.SpaceChecks, $"every space check looked at the token ({checks.TokenObservations} looks, {checks.SpaceChecks} checks)");
+        // the engine's progress callback ran inside the verification's statements: far more looks than explicit checks (a verification of
+        // about 13,000 rows executes over a million virtual-machine steps, a callback every 20,000)
+        Assert.True(checks.TokenObservations >= checks.SpaceChecks + 30, $"the progress callback observed the token inside the verification ({checks.TokenObservations} looks)");
         Assert.True(checks.MaxTokenGap < TimeSpan.FromSeconds(0.5), "no two looks at the save token were 0.5 s apart (CAN-01d): " + checks.MaxTokenGap);
         session.TestOnlyShutdown();
     }

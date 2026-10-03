@@ -10,6 +10,10 @@
     Suites:  Library = tests\StorageInventory.Library.Tests (interlock, store, open, import, real processes)
              Audit   = tests\StorageInventory.IntegrationTests filtered to SecurityAuditTests and LibrarySecurityAuditTests
 
+    The mutants C4-01 to C4-A4 are the original C4 suite (22). The C4 implementation repair adds C4R-* (tests\mutation\C4RepairMutants.ps1,
+    dot-sourced below); a mutant may carry its own Filter, the test classes it is MEANT to be caught by, so that a kill is for the
+    intended reason and a run of the whole set takes minutes, not hours. -Set Original runs only the first, -Set Repair only the second.
+
     The scratch copy holds git-tracked files only, so the NuGet cache and the SDK are not in it: the script uses -Source's own
     tools\dotnet and packages (restore finds everything in the cache; the committed lock files are part of the copy).
 .PARAMETER Source      The git working tree to mutate (default: this repository).
@@ -22,6 +26,7 @@ param(
     [string] $Source = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string] $Work = (Join-Path ([IO.Path]::GetTempPath()) ('SiC4Mutants_' + [guid]::NewGuid().ToString('N').Substring(0, 8))),
     [string[]] $Only,
+    [ValidateSet('All', 'Original', 'Repair')] [string] $Set = 'All',
     [string] $Out,
     [switch] $KeepWork
 )
@@ -91,6 +96,8 @@ $mutants = @(
     @{ Id = 'C4-A4'; Suite = 'Audit'; What = 'an ATTACH statement appears in the Library SQL (A-06)'
        Edits = @(@{ File = "$L/Sql/OpenSql.cs"; Find = 'internal const string SetSynchronous = "PRAGMA synchronous = FULL";'; Replace = "internal const string SetSynchronous = ""PRAGMA synchronous = FULL"";`n    internal const string MutantAttach = ""ATTACH DATABASE 'x.db' AS other"";" }) }
 )
+. (Join-Path $PSScriptRoot 'C4RepairMutants.ps1')
+if ($Set -eq 'Original') { } elseif ($Set -eq 'Repair') { $mutants = @($repairMutants) } else { $mutants = @($mutants) + @($repairMutants) }
 if ($Only) { $mutants = @($mutants | Where-Object { $Only -contains $_.Id }) }
 
 # ---------------------------------------------------------------- the scratch copy
@@ -124,15 +131,16 @@ $suites = @{
     Audit   = @{ Project = 'tests/StorageInventory.IntegrationTests'; Dll = 'StorageInventory.IntegrationTests.dll'; Filter = @('SecurityAuditTests', 'LibrarySecurityAuditTests') }
 }
 
-function Invoke-Suite([string] $Name) {
+function Invoke-Suite([string] $Name, [string[]] $FilterOverride) {
     $suite = $suites[$Name]
+    $filter = if ($FilterOverride) { $FilterOverride } else { $suite.Filter }
     $project = Join-Path $copy $suite.Project
     $build = Invoke-Native $Dotnet (@('build', $project, '-c', 'Release', '--nologo', '-v', 'q') + $BuildArgs) $copy
     if ($build.Code -ne 0) { return @{ Compiled = $false; Failed = @(); Summary = ($build.Output -split "`r?`n" | Where-Object { $_ -match 'error' } | Select-Object -First 3) -join ' | ' } }
     $dll = Get-ChildItem -LiteralPath (Join-Path $project 'bin/Release') -Recurse -Filter $suite.Dll | Select-Object -First 1
     # the real-process tests start their own executable again (--child): run the apphost, not 'dotnet <dll>'
     $exe = [IO.Path]::ChangeExtension($dll.FullName, '.exe')
-    $run = Invoke-Native $exe $suite.Filter $copy
+    $run = Invoke-Native $exe $filter $copy
     $failed = @($run.Output -split "`r?`n" | Where-Object { $_ -match '^FAIL\s+(\S+)' } | ForEach-Object { ($_ -replace '^FAIL\s+(\S+).*', '$1') })
     $summary = ($run.Output -split "`r?`n" | Where-Object { $_ -match '^RESULT ' } | Select-Object -Last 1)
     return @{ Compiled = $true; Failed = $failed; Summary = $summary }
@@ -150,10 +158,12 @@ foreach ($m in $mutants) {
 $results = New-Object System.Collections.Generic.List[object]
 try {
     $baseline = @{}
-    foreach ($name in @($mutants | ForEach-Object { $_.Suite } | Select-Object -Unique)) {
-        $baseline[$name] = Invoke-Suite $name
-        if (-not $baseline[$name].Compiled) { throw "The unmutated $name suite does not build: $($baseline[$name].Summary)" }
-        Write-Host ("baseline {0,-8} {1}" -f $name, $baseline[$name].Summary)
+    function Key($m) { "$($m.Suite)|$(@($m.Filter) -join ',')" }
+    foreach ($key in @($mutants | ForEach-Object { Key $_ } | Select-Object -Unique)) {
+        $first = @($mutants | Where-Object { (Key $_) -eq $key })[0]
+        $baseline[$key] = Invoke-Suite $first.Suite $first.Filter
+        if (-not $baseline[$key].Compiled) { throw "The unmutated $key suite does not build: $($baseline[$key].Summary)" }
+        Write-Host ("baseline {0,-60} {1}" -f $key, $baseline[$key].Summary)
     }
 
     foreach ($m in $mutants) {
@@ -168,10 +178,10 @@ try {
                 if ($count -ne 1) { throw "mutant $($m.Id): '$find' occurs $count times in $($edit.File), expected exactly once" }
                 [IO.File]::WriteAllText($path, $text.Replace($find, $replace), (New-Object Text.UTF8Encoding($false)))
             }
-            $r = Invoke-Suite $m.Suite
+            $r = Invoke-Suite $m.Suite $m.Filter
             if (-not $r.Compiled) { $verdict = 'NOT COMPILED'; $killers = @(); $detail = $r.Summary }
             else {
-                $killers = @($r.Failed | Where-Object { $baseline[$m.Suite].Failed -notcontains $_ })
+                $killers = @($r.Failed | Where-Object { $baseline[(Key $m)].Failed -notcontains $_ })
                 $verdict = if ($killers.Count -gt 0) { 'KILLED' } else { 'SURVIVED' }
                 $detail = $r.Summary
             }

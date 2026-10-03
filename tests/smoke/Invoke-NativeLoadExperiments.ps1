@@ -11,11 +11,23 @@
       Q-11  1. run it: e_sqlite3.dll is loaded from the extraction directory, and its SHA-256 equals the package's native DLL;
             2. plant a dummy e_sqlite3.dll (text) and then a byte-identical COPY of the real one beside the exe: neither is loaded
                (the module path is still the extraction directory's) and the engine still reports SQLite 3.53.3;
-            3. delete the extracted DLL while the app is closed and run again: the host re-extracts it, same hash.
+            3. delete the extracted DLL while the app is closed, PLANT a dummy beside the exe in that same moment, and run again: the
+               host re-extracts (it does not fall back to the executable's folder), the app loads the re-extracted file, same hash;
+            C. the positive control of the predicate: the same predicate ("the module is under the extraction directory"), applied to a
+               NORMAL (non-single-file) build of the probe, where e_sqlite3.dll really does load from beside the executable, must
+               FAIL. Without it the predicate in 1 to 3 could be true of any path.
       Q-22  4. plant a managed decoy named SQLitePCLRaw.batteries_v2.dll (which writes a marker file if it is ever initialised)
-               beside the exe: it is not loaded;
-            5. the control: the same decoy beside a NON-single-file build of the probe IS found by name, so the experiment can
-               tell "loaded" from "ignored".
+               beside the exe: it is not loaded, and the probe's AssemblyResolve / AssemblyLoadContext.Resolving hooks show that the
+               runtime ASKED for SQLitePCLRaw.batteries_v2 (Microsoft.Data.Sqlite's by-name lookup) and that the request was refused,
+               so "not found" means "asked and refused", not "never asked";
+            5. the controls: (a) a by-name Assembly.Load of the decoy from the single-file exe, and from a normal build, is also
+               refused (the runtime resolves assemblies from the application's dependency list, so an undeclared assembly beside the
+               exe is not found by name in either build); (b) the decoy, loaded by explicit path and initialised, writes its marker,
+               so the experiment can tell "ignored" from "a dud".
+
+    The probe is StorageInventory.Library.Tests, not the App: the App does not call the Library before C5, and the loading mechanism
+    (single-file extraction and the runtime's probing) is a property of the host and the publish properties, not of the application
+    code. Q-11 and Q-22 therefore stay PARTIALLY answered until both experiments are repeated with the real App at C5 and C12 (BLD-10).
 
     Writes only under -Work and %TEMP%\.net\<probe name>, which the .NET host owns. Exit code 0 only when every check passes.
 .PARAMETER Work       Scratch folder (default: a new folder under %TEMP%).
@@ -47,6 +59,10 @@ function Run-Probe([string] $exe, [hashtable] $environment = @{}) {
         [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = @($output) }
     }
     finally { foreach ($k in $environment.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
+}
+function Test-IsExtracted([string] $modulePath, [string] $extractionRoot) {
+    # the one predicate of Q-11: the module is a file under the host's single-file extraction directory
+    [bool]($modulePath -and $modulePath.StartsWith($extractionRoot + '\', [StringComparison]::OrdinalIgnoreCase))
 }
 function Field($result, [string] $prefix) { @($result.Lines | Where-Object { $_.StartsWith($prefix) } | ForEach-Object { $_.Substring($prefix.Length) }) }
 
@@ -101,10 +117,14 @@ try {
     if ($module) {
         Remove-Item -LiteralPath $module -Force
         Check 'the extracted DLL is gone while the app is closed' (-not (Test-Path -LiteralPath $module)) | Out-Null
+        # the dummy is planted NOW, in the run that has to re-extract: this is the case in which a host that fell back to the
+        # executable's folder would load it
+        Set-Content -LiteralPath $planted -Value 'this is not a DLL: planted while the extraction is missing' -Encoding ascii
         $fourth = Run-Probe $exe
         $again = Field $fourth 'module=' | Where-Object { $_ -like '*e_sqlite3.dll' } | Select-Object -First 1
-        Check 'the host re-extracted it and the app loaded the re-extracted file' ($fourth.ExitCode -eq 0 -and (Test-Path -LiteralPath $module) -and $again -and $again.StartsWith($extractionRoot + '\', [StringComparison]::OrdinalIgnoreCase)) $again | Out-Null
+        Check 'with a dummy planted beside the exe during the run that must re-extract, the host re-extracted the DLL and the app loaded the re-extracted file, not the dummy' ($fourth.ExitCode -eq 0 -and (Test-Path -LiteralPath $module) -and (Test-IsExtracted $again $extractionRoot) -and $again -ne $planted) $again | Out-Null
         Check 'the re-extracted DLL has the pinned hash' ((Get-FileHash -LiteralPath $module -Algorithm SHA256).Hash -eq $pinnedHash) | Out-Null
+        Remove-Item -LiteralPath $planted -Force
     }
 
     # ---- Q-22: the managed decoy
@@ -113,6 +133,8 @@ try {
     $fifth = Run-Probe $exe @{ SI_PLANT_MARKER = $marker }
     Check 'with SQLitePCLRaw.batteries_v2.dll planted beside the single-file exe the probe still opens its Library' ($fifth.ExitCode -eq 0) | Out-Null
     Check 'the planted managed assembly is not loaded (no assembly of that name, no module, no marker)' (-not (Test-Path -LiteralPath $marker) -and @($fifth.Lines | Where-Object { $_ -like 'assembly=SQLitePCLRaw.batteries_v2*' -or $_ -like 'module=*batteries_v2*' }).Count -eq 0) | Out-Null
+    $asked = @(Field $fifth 'resolve-request=' | Where-Object { $_ -like '*SQLitePCLRaw.batteries_v2*' })
+    Check 'the runtime ASKED the application for SQLitePCLRaw.batteries_v2 (Microsoft.Data.Sqlite''s by-name lookup) and the request was refused: not found means asked and refused' ($asked.Count -ge 1) ($asked -join ' | ') | Out-Null
     Remove-Item -LiteralPath (Join-Path $runDir 'SQLitePCLRaw.batteries_v2.dll') -Force
 
     # ---- the controls. The product never asks for the decoy (A-25). These ask on the experiment's behalf so that "ignored" can be
@@ -134,6 +156,14 @@ try {
     if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force }
     $loaded = Run-Probe (Join-Path $control 'StorageInventory.Library.Tests.exe') ($controlEnv + @{ SI_PROBE_LOAD_DECOY = (Join-Path $control 'SQLitePCLRaw.batteries_v2.dll'); SI_PLANT_MARKER = $marker })
     Check 'CONTROL: the decoy, loaded by explicit path and initialised, writes its marker (it is a working decoy)' ((Test-Path -LiteralPath $marker) -and @(Field $loaded 'marker-after=') -contains 'PLANTED-ASSEMBLY-WAS-INITIALISED') | Out-Null
+
+    # ---- the positive control of Q-11's predicate: a normal build loads e_sqlite3.dll from beside the executable, and the SAME
+    #      predicate that passed for the single-file exe must FAIL for it (otherwise it proved nothing)
+    $normal = Run-Probe (Join-Path $control 'StorageInventory.Library.Tests.exe') $controlEnv
+    $normalModule = Field $normal 'module=' | Where-Object { $_ -like '*e_sqlite3.dll' } | Select-Object -First 1
+    Check 'CONTROL: in a normal (non-single-file) build e_sqlite3.dll loads from the build folder beside the executable' ($normal.ExitCode -eq 0 -and $normalModule -and $normalModule.StartsWith($control + '\', [StringComparison]::OrdinalIgnoreCase)) $normalModule | Out-Null
+    Check 'CONTROL: the Q-11 predicate (under the single-file extraction directory) FAILS for that load, so it can tell the two apart' (-not (Test-IsExtracted $normalModule $extractionRoot)) $normalModule | Out-Null
+    Check 'the Q-11 predicate PASSES for the single-file exe (re-stated beside its control)' (Test-IsExtracted $module $extractionRoot) $module | Out-Null
 }
 finally {
     if (Test-Path -LiteralPath (Join-Path $env:TEMP ".net\$name")) { Remove-Item -LiteralPath (Join-Path $env:TEMP ".net\$name") -Recurse -Force -ErrorAction SilentlyContinue }

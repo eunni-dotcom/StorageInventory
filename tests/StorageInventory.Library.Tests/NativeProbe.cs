@@ -14,6 +14,22 @@ internal static class NativeProbe
 {
     internal static int Run(string scratch)
     {
+        // Q-22 (C4-M14): record every assembly the runtime had to ASK the application for because its own dependency list did not
+        // answer. The hooks refuse every request (they return null), and exist only to show that a planted assembly was asked for and
+        // refused, rather than never asked for. They are installed before the first Library call, so before Microsoft.Data.Sqlite's
+        // static constructor looks up SQLitePCL.Batteries_V2 by name.
+        var requests = new List<string>();
+        AppDomain.CurrentDomain.AssemblyResolve += (_, e) =>
+        {
+            lock (requests) requests.Add("AssemblyResolve " + e.Name + " requested by " + (e.RequestingAssembly?.GetName().Name ?? "?"));
+            return null;
+        };
+        System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_, name) =>
+        {
+            lock (requests) requests.Add("Resolving " + name.Name);
+            return null;
+        };
+
         Directory.CreateDirectory(scratch);
         var library = Path.Combine(scratch, "Library");
         var session = new LibrarySession(library, scratch);
@@ -42,6 +58,7 @@ internal static class NativeProbe
                 Console.WriteLine($"assembly={name} location={(assembly.Location.Length == 0 ? "<bundle>" : assembly.Location)}");
             }
         }
+        lock (requests) foreach (var request in requests) Console.WriteLine("resolve-request=" + request);
         Console.WriteLine("exe=" + Environment.ProcessPath);
         Console.WriteLine("marker=" + (File.Exists(Environment.GetEnvironmentVariable("SI_PLANT_MARKER") ?? "") ? "PLANTED-ASSEMBLY-WAS-LOADED" : "absent"));
         // The experiment's own question to the runtime (set by the script, never by the product): "can a plain by-name load find the
