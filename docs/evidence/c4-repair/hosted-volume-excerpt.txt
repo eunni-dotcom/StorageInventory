@@ -1,0 +1,23 @@
+=== 2M, the volume fills up
+  prefilled: 3 snapshots of about 100,000 files in 2 sources; database 39.8 MB
+  synthetic target: 1,997,023 files in 500,000 folders
+  GC during the import: pause 218 ms, gen0 37, gen2 4; allocated 749 MB so far
+  import wall time 7.07 s; peak working set 221 MB (before: 98 MB)
+  after the failure: 3 snapshots, older snapshots intact: True, database 39.8 MB (was 39.8 MB)
+  1,997,023 files, 7.07 s, 0 file rows/s, peak journal 0.8 MB, DB 39.8 MB
+
+| Run | File rows | Folder rows | Import (BEGIN to COMMIT) | File rows/s | Peak journal | Journal / snapshot growth | DB before | DB after | Growth per file row | Peak working set above the baseline |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+
+| Failure run | File rows attempted | Failure classified as | Time to fail and roll back | Database size before / after the failed import | Older snapshots intact |
+|---|---:|---|---:|---|---|
+| 2M, the volume fills up | 2,000,000 | LibraryFull (201) | 7.07 s (rollback alone) | 39.8 MB / 39.8 MB | yes |
+
+| Run | File rows | Folder rows | Import (BEGIN to COMMIT) | File rows/s | Peak journal | Journal / snapshot growth | DB before | DB after | Growth per file row | Peak working set above the baseline |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+
+| Failure run | File rows attempted | Failure classified as | Time to fail and roll back | Database size before / after the failed import | Older snapshots intact |
+|---|---:|---|---:|---|---|
+| 2M, the volume fills up | 2,000,000 | LibraryFull (201) | 7.07 s (rollback alone) | 39.8 MB / 39.8 MB | yes |
+
+Name     Used      Free

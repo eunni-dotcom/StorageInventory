@@ -1,0 +1,22 @@
+{
+ "what": "objective quiet check before a TEST-P1 gate session (section 15.4), tests/perf/loadsource.py, 120 collections of 500 ms",
+ "machine": "development workstation (12th Gen Intel Core i7-1270P, Windows 11 Pro 10.0.26200), on the day of the repair, after the mutant runs had finished",
+ "verdict": "NOT QUIET",
+ "U": {
+  "mean": 61.0861,
+  "p95": 76.484,
+  "max": 82.571
+ },
+ "limits": {
+  "meanMax": 5.0,
+  "p95Max": 15.0
+ },
+ "breakdown_mean": {
+  "own": 0.0,
+  "external_counted": 24.9314,
+  "induced_counted": 9.9741,
+  "unattributed": 26.1808,
+  "dpc_interrupt": 1.8523
+ },
+ "consequence": "no gate session was declared or run; PERF-01 NOT MEASURED; the user's applications were not closed"
+}

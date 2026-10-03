@@ -100,6 +100,17 @@ A change to a package version is a reviewed change to a lock file.
 publish (temporary evidence workflow, run 37006608313) gave the same 133,620,553 bytes and SHA-256, and passed the native file set check.
 Details: [v1.1-c4-implementation-evidence.md](v1.1-c4-implementation-evidence.md).
 
+**After the C4 repair (`v1.1/c4-repair`).** The per-source dictionary and the repaired importer change the published exe to **133,650,249 bytes**, SHA-256 `DF3B3AAA53D9823D1BF6DBE8D5A731DF5AD1ECDF5B4F1E3E7E6E6D618ADDCBF4`, reproduced by four independent publishes: the development tree, two fresh clones of the commit (each with an empty package cache, the SDK shared by junction), and the hosted `windows-2025` run 37123441372. Sizes by baseline:
+
+| Build | Bytes | Difference from v1.0.0 | Difference from the C3-final build |
+|---|---:|---:|---:|
+| v1.0.0 | 130,947,561 | | |
+| v1.1 C3 final | 131,046,889 | +99,328 | |
+| v1.1 blocked C4 implementation (`523260b`) | 133,620,553 | +2,672,992 | +2,573,664 |
+| v1.1 C4 repair | 133,650,249 | +2,702,688 | +2,603,360 |
+
+The increase over v1.0.0 is the SQLite engine (`e_sqlite3.dll`, 1,978,880 bytes, unchanged, SHA-256 `B7385D72…FB2E`) and the managed SQLite packages; the repair adds 29,696 bytes over the blocked implementation. `tests\smoke\Test-NativeFileSet.ps1` passes on all four builds.
+
 ## Smoke test
 
 `tests\smoke\Invoke-ReleaseSmokeTest.ps1` copies the exe **outside the repository**, starts it with **no
